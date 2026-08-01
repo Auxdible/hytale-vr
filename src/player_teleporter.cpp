@@ -352,6 +352,8 @@ float g_head_turn_mouse_remainder = 0.0f;
 ULONGLONG g_last_stick_turn_tick = 0;
 bool g_left_mouse_down = false;
 bool g_right_mouse_down = false;
+bool g_prev_right_trigger = false;
+bool g_prev_left_trigger = false;
 float g_turn_mouse_remainder = 0.0f;
 ULONGLONG g_last_turn_tick = 0;
 bool g_menu_mouse_active = false;
@@ -1857,6 +1859,19 @@ void set_injected_right_mouse(bool down) {
                               MOUSEEVENTF_RIGHTUP, down);
 }
 
+void send_injected_mouse_click(bool& state, DWORD down_flag, DWORD up_flag) {
+    // Menu buttons expect a complete click at one cursor position. Release a
+    // possible gameplay hold first, then enqueue down/up as one input batch.
+    if (state) {
+        set_injected_mouse_button(state, down_flag, up_flag, false);
+    }
+    INPUT inputs[2]{};
+    for (auto& input : inputs) input.type = INPUT_MOUSE;
+    inputs[0].mi.dwFlags = down_flag;
+    inputs[1].mi.dwFlags = up_flag;
+    SendInput(static_cast<UINT>(std::size(inputs)), inputs, sizeof(INPUT));
+}
+
 void send_key_tap(WORD virtual_key) {
     const WORD scan_code = scan_code_for_virtual_key(virtual_key);
     if (scan_code == 0) return;
@@ -1869,12 +1884,34 @@ void send_key_tap(WORD virtual_key) {
     SendInput(static_cast<UINT>(std::size(inputs)), inputs, sizeof(INPUT));
 }
 
+bool send_key_tap_with_hold(WORD virtual_key, DWORD hold_ms) {
+    const WORD scan_code = scan_code_for_virtual_key(virtual_key);
+    if (scan_code == 0) return false;
+    INPUT input{};
+    input.type = INPUT_KEYBOARD;
+    input.ki.wScan = scan_code;
+    input.ki.dwFlags = KEYEVENTF_SCANCODE;
+    if (SendInput(1, &input, sizeof(input)) != 1) return false;
+    Sleep(hold_ms);
+    input.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
+    return SendInput(1, &input, sizeof(input)) == 1;
+}
+
 void focus_hytale_window_and_tap_f7() {
     focus_hytale_window();
-    Sleep(80);
-    if (hytale_has_input_focus()) {
-        send_key_tap(VK_F7);
+    for (int attempt = 0; attempt < 12 && !hytale_has_input_focus(); ++attempt) {
+        Sleep(25);
+        if ((attempt % 4) == 3) focus_hytale_window();
     }
+    if (!hytale_has_input_focus()) return;
+
+    // Hytale's first F7 press can open an intermediate debug/menu layer. The
+    // second press reaches the camera state used by the VR hook. Holding each
+    // press briefly also prevents the game from missing an instantaneous tap.
+    if (!send_key_tap_with_hold(VK_F7, 35)) return;
+    Sleep(180);
+    if (!hytale_has_input_focus()) focus_hytale_window();
+    if (hytale_has_input_focus()) send_key_tap_with_hold(VK_F7, 35);
 }
 
 void send_virtual_key_tap(WORD virtual_key) {
@@ -1924,8 +1961,27 @@ void update_right_hand_attack() {
 
     const bool trigger_can_click =
         pointer_enabled && ray_ready && pose_ready && focused;
-    set_injected_left_mouse(trigger_can_click && right_trigger);
-    set_injected_right_mouse(trigger_can_click && left_trigger);
+    const bool menu_click_mode = trigger_can_click && g_menu_mouse_active &&
+        g_vr_camera_shared->pointer_menu_mode != 0;
+    if (menu_click_mode) {
+        // Do not carry a held gameplay button into Noesis menus. A short,
+        // complete click is more reliable for small buttons such as Respawn.
+        set_injected_left_mouse(false);
+        set_injected_right_mouse(false);
+        if (right_trigger && !g_prev_right_trigger) {
+            send_injected_mouse_click(g_left_mouse_down, MOUSEEVENTF_LEFTDOWN,
+                                      MOUSEEVENTF_LEFTUP);
+        }
+        if (left_trigger && !g_prev_left_trigger) {
+            send_injected_mouse_click(g_right_mouse_down, MOUSEEVENTF_RIGHTDOWN,
+                                      MOUSEEVENTF_RIGHTUP);
+        }
+    } else {
+        set_injected_left_mouse(trigger_can_click && right_trigger);
+        set_injected_right_mouse(trigger_can_click && left_trigger);
+    }
+    g_prev_right_trigger = right_trigger;
+    g_prev_left_trigger = left_trigger;
 }
 
 void update_quest_button_actions() {
@@ -2035,7 +2091,16 @@ void update_vr_menu_mouse() {
         static_cast<float>(g_vr_camera_shared->pointer_y) / texture_height, 0.0f, 1.0f);
     const float target_x = normalized_x * (client_width - 1);
     const float target_y = (1.0f - normalized_y) * (client_height - 1);
-    if (!g_menu_mouse_filter_valid) {
+    const bool right_trigger =
+        g_vr_camera_shared->controller_right_trigger_pressed != 0;
+    const bool left_trigger =
+        g_vr_camera_shared->controller_left_trigger_pressed != 0;
+    const bool trigger_pressed_now =
+        (right_trigger && !g_prev_right_trigger) ||
+        (left_trigger && !g_prev_left_trigger);
+    if (!g_menu_mouse_filter_valid || trigger_pressed_now) {
+        // The SteamVR cursor is unfiltered. Snap the Windows cursor to the same
+        // pixel before a click so the visible pointer and Noesis hit test agree.
         g_menu_mouse_filtered_x = target_x;
         g_menu_mouse_filtered_y = target_y;
         g_menu_mouse_filter_valid = true;
@@ -2562,6 +2627,8 @@ void shutdown_vr() {
     set_injected_right_mouse(false);
     g_menu_mouse_filter_valid = false;
     g_menu_mouse_active = false;
+    g_prev_right_trigger = false;
+    g_prev_left_trigger = false;
     g_prev_button_x = false;
     g_prev_button_y = false;
     g_prev_button_b = false;
@@ -3256,6 +3323,24 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             }
             update_advanced_visibility();
             populate_candidate_list();
+            return 0;
+        case IDC_VR_SUPERSAMPLING:
+            if (HIWORD(wparam) == BN_CLICKED &&
+                IsDlgButtonChecked(g_window, IDC_VR_SUPERSAMPLING) == BST_CHECKED) {
+                const int choice = MessageBoxW(
+                    g_window,
+                    L"Source supersampling requires Hytale to run in Windowed mode.\n\n"
+                    L"Fullscreen and maximized windows cannot be resized to the larger render resolution, "
+                    L"so they fall back to output scaling and do not gain the same image detail.\n\n"
+                    L"Switch Hytale to Windowed mode before continuing. Supersampling also increases GPU usage.",
+                    L"Supersampling requires Windowed mode",
+                    MB_ICONWARNING | MB_OKCANCEL | MB_DEFBUTTON2);
+                if (choice != IDOK) {
+                    CheckDlgButton(g_window, IDC_VR_SUPERSAMPLING, BST_UNCHECKED);
+                    set_status(L"Supersampling was not enabled.");
+                }
+            }
+            if (g_vr_tracking) publish_vr_controls(true, false);
             return 0;
         case IDC_VR_CENTER: recenter_vr_tracking(); return 0;
         case IDC_VR_STOP:

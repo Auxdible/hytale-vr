@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.0.1] - 2026-08-01
+
+### Menu input
+
+- Fixed intermittent clicks on small Noesis buttons such as Respawn by snapping the Windows cursor to the visible SteamVR pointer when the trigger is pressed.
+- Changed menu trigger input to emit a complete mouse click while preserving held mouse buttons during gameplay interactions.
+
+### Startup and supersampling
+
+- Made VR startup send two deliberate F7 presses after Hytale receives focus, matching the two-step camera/menu transition used by the current client.
+- Added a confirmation warning when enabling supersampling to explain that source supersampling requires Windowed mode and increases GPU usage.
+- Updated the compiled dashboard version to 1.0.1 so automatic update checks correctly recognize this release after installation.
+
 ## [1.0.0] - 2026-07-17
 
 ### VR hands and held items
