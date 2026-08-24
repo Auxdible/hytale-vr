@@ -5,8 +5,16 @@ project(hytale_camera_tool VERSION 1.0.3 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(HYTALEVR_DASHBOARD_VERSION "${PROJECT_VERSION}" CACHE STRING
-    "Version reported by the dashboard updater")
+set(HYTALEVR_DASHBOARD_VERSION_OVERRIDE "" CACHE STRING
+    "Optional dashboard version override for updater testing")
+# Older builds cached HYTALEVR_DASHBOARD_VERSION directly, which could leave a
+# newly rebuilt dashboard reporting the version of a previous release.
+unset(HYTALEVR_DASHBOARD_VERSION CACHE)
+set(HYTALEVR_DASHBOARD_VERSION "${PROJECT_VERSION}")
+if(NOT HYTALEVR_DASHBOARD_VERSION_OVERRIDE STREQUAL "")
+    set(HYTALEVR_DASHBOARD_VERSION
+        "${HYTALEVR_DASHBOARD_VERSION_OVERRIDE}")
+endif()
 
 option(HYTALE_BUILD_EXPERIMENTAL_PROBE "Build the crash-prone OpenGL probe" OFF)
 
