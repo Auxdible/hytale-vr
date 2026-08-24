@@ -14,6 +14,12 @@ inline constexpr wchar_t kUiScaleMappingNameW[] =
 inline constexpr uint32_t kUiScaleMagic = 0x48595549; // HYUI
 inline constexpr uint32_t kUiScaleVersion = 2;
 
+inline constexpr uint32_t kUiDiagBatcher2D = 1u << 0;
+inline constexpr uint32_t kUiDiagShadowProgram = 1u << 1;
+inline constexpr uint32_t kUiDiagEffectProgram = 1u << 2;
+inline constexpr uint32_t kUiDiagSceneDataBlock = 1u << 3;
+inline constexpr uint32_t kUiDiagSceneDataPatched = 1u << 4;
+
 struct UiScaleSharedData {
     uint32_t magic;
     uint32_t version;

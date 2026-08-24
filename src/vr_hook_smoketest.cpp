@@ -6,20 +6,10 @@
 #include <iostream>
 #include <string>
 
+#include "ui_scale_shared.h"
 #include "vr_camera_shared.h"
 
 namespace {
-
-constexpr uintptr_t kCameraHookOffset = 0x5EC7F3;
-constexpr uintptr_t kInteractionHookOffset = 0x4BF5F1;
-constexpr std::array<unsigned char, 16> kExpectedCameraBytes{
-    0x0F, 0x28, 0xB4, 0x24, 0x80, 0x03, 0x00, 0x00,
-    0x0F, 0x28, 0xBC, 0x24, 0x70, 0x03, 0x00, 0x00,
-};
-constexpr std::array<unsigned char, 15> kExpectedInteractionBytes{
-    0x0F, 0x29, 0xBD, 0x20, 0xFE, 0xFF, 0xFF,
-    0x44, 0x0F, 0x29, 0x85, 0x10, 0xFE, 0xFF, 0xFF,
-};
 
 struct ModuleInfo {
     uintptr_t base = 0;
@@ -183,10 +173,93 @@ void publish_runtime(VrCameraShared* shared) {
     end_control_write(shared);
 }
 
+void print_runtime_status(const VrCameraShared& shared) {
+    std::wcout
+        << L"hook=" << shared.hook_active
+        << L" hookError=" << shared.hook_error
+        << L" enabled=" << shared.enabled
+        << L" stereoEnabled=" << shared.stereo_enabled
+        << L" swapHook=" << shared.swap_hook_active
+        << L" swapCalls=" << shared.swap_calls
+        << L" cameraEntries=" << shared.camera_hook_entries
+        << L" cameraCalls=" << shared.camera_calls
+        << L" primaryCamera=0x" << std::hex << shared.primary_camera << std::dec
+        << L"\nstereoActive=" << shared.stereo_active
+        << L" stereoFrames=" << shared.stereo_frames
+        << L" stereoError=" << shared.stereo_error
+        << L" captureError=" << shared.capture_error
+        << L" submit=" << shared.submit_left_error << L"/"
+        << shared.submit_right_error
+        << L" completedPairs=" << shared.completed_pairs
+        << L" currentEye=" << shared.current_eye
+        << L"\nwaitPoseCalls=" << shared.wait_pose_calls
+        << L" waitPoseUs=" << shared.wait_pose_us
+        << L" sceneFocus=" << shared.scene_focus_pid
+        << L" compositorFocus=" << shared.compositor_focus_pid
+        << L" recommended=" << shared.recommended_width << L"x"
+        << shared.recommended_height
+        << L" backbuffer=" << shared.backbuffer_width << L"x"
+        << shared.backbuffer_height
+        << L" capture=" << shared.capture_width << L"x"
+        << shared.capture_height
+        << L"\ncontroller=" << shared.controller_active
+        << L" interactionHook=" << shared.interaction_hook_active
+        << L" interactionCalls=" << shared.interaction_ray_calls
+        << L" uiOverlay=" << shared.ui_overlay_active
+        << L" uiFrames=" << shared.ui_overlay_frames
+        << L" uiError=" << shared.ui_overlay_error << L".\n";
+}
+
+void print_ui_scale_status() {
+    HANDLE mapping = OpenFileMappingW(
+        FILE_MAP_READ, FALSE, hytalevr::kUiScaleMappingNameW);
+    if (!mapping) {
+        std::wcout << L"uiScaleHook=0.\n";
+        return;
+    }
+    const auto* shared = static_cast<const hytalevr::UiScaleSharedData*>(
+        MapViewOfFile(mapping, FILE_MAP_READ, 0, 0,
+                      sizeof(hytalevr::UiScaleSharedData)));
+    if (!shared || !hytalevr::ui_scale_shared_data_compatible(*shared)) {
+        std::wcout << L"uiScaleHook=invalid.\n";
+    } else {
+        std::wcout
+            << L"uiScaleHook=1 glDiag=0x" << std::hex
+            << shared->reservedHeader << std::dec
+            << L" menuVisible=" << shared->menuVisibleCounter
+            << L" menuLargeDraws=" << shared->menuLargeDrawCounter
+            << L" menuTexture=" << shared->menuTextureId
+            << L" menuSize=" << shared->menuTextureWidth << L"x"
+            << shared->menuTextureHeight
+            << L" menuFrame=" << shared->menuTextureFrame
+            << L" menuCaptureError=" << shared->menuCaptureError
+            << L" renderFrame=" << shared->renderFrameSequence
+            << L"\nsceneDepth=" << shared->sceneDepthTextureId
+            << L" sceneDepthSize=" << shared->sceneDepthTextureWidth << L"x"
+            << shared->sceneDepthTextureHeight
+            << L" sceneDepthFrame=" << shared->sceneDepthTextureFrame
+            << L" distortionTexture=" << shared->distortionTextureId
+            << L" distortionFrame=" << shared->distortionTextureFrame
+            << L" sceneMatrices=" << shared->vrSceneMatricesValid
+            << L" sceneMatrixSequence=" << shared->vrSceneMatrixSequence
+            << L"\nfirstPersonPatches=" << shared->firstPersonMatrixPatches
+            << L" heldItemPatches=" << shared->heldItemMatrixPatches
+            << L" heldItemFrame=" << shared->heldItemMatrixFrame
+            << L" heldItemAtlasMask=" << shared->heldItemAtlasValidMask
+            << L" heldItemAtlasFrame=" << shared->heldItemAtlasFrame
+            << L" disableEffects=" << shared->disableShadows << L"/"
+            << shared->disableParticles << L"/" << shared->disableDistortion
+            << L".\n";
+    }
+    if (shared) UnmapViewOfFile(shared);
+    CloseHandle(mapping);
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
     const bool test_input = argc > 1 && _wcsicmp(argv[1], L"--input") == 0;
+    const bool status_only = argc > 1 && _wcsicmp(argv[1], L"--status") == 0;
     const DWORD pid = find_hytale();
     if (!pid) {
         std::wcerr << L"HytaleClient.exe introuvable.\n";
@@ -201,6 +274,20 @@ int wmain(int argc, wchar_t** argv) {
     if (!shared) {
         CloseHandle(mapping);
         return 4;
+    }
+    if (status_only) {
+        if (!mapping_existed || shared->magic != kVrCameraMagic ||
+            shared->version != kVrCameraVersion) {
+            std::wcerr << L"Aucun runtime VR compatible n'est actif.\n";
+            UnmapViewOfFile(shared);
+            CloseHandle(mapping);
+            return 2;
+        }
+        print_runtime_status(*shared);
+        print_ui_scale_status();
+        UnmapViewOfFile(shared);
+        CloseHandle(mapping);
+        return 0;
     }
     HANDLE process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
                                      PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
@@ -239,8 +326,10 @@ int wmain(int argc, wchar_t** argv) {
     }
     if (!loaded) {
         const std::wstring directory = executable_directory();
-        loaded = remote_load_library(process, directory + L"\\HytaleUIScaleHook.dll") &&
-                 remote_load_library(process, directory + L"\\openvr_api.dll") &&
+        loaded = (module_info(pid, L"HytaleUIScaleHook.dll").base ||
+                  remote_load_library(process, directory + L"\\HytaleUIScaleHook.dll")) &&
+                 (module_info(pid, L"openvr_api.dll").base ||
+                  remote_load_library(process, directory + L"\\openvr_api.dll")) &&
                  remote_load_library(process, directory + L"\\hytale_vr_camera_hook_v122_floor_aligned.dll");
     } else if (rearm_existing) {
         publish_install(shared);
@@ -301,21 +390,7 @@ int wmain(int argc, wchar_t** argv) {
         return 11;
     }
 
-    const uintptr_t base = module_info(pid, L"HytaleClient.exe").base;
-    std::array<unsigned char, 16> bytes{};
-    std::array<unsigned char, 15> interaction_bytes{};
     std::array<unsigned char, 14> restored_swap{};
-    SIZE_T read = 0;
-    const bool restored = base && ReadProcessMemory(
-        process, reinterpret_cast<const void*>(base + kCameraHookOffset),
-        bytes.data(), bytes.size(), &read) && read == bytes.size() &&
-        bytes == kExpectedCameraBytes;
-    SIZE_T interaction_read = 0;
-    const bool interaction_restored = base && ReadProcessMemory(
-        process, reinterpret_cast<const void*>(base + kInteractionHookOffset),
-        interaction_bytes.data(), interaction_bytes.size(), &interaction_read) &&
-        interaction_read == interaction_bytes.size() &&
-        interaction_bytes == kExpectedInteractionBytes;
     SIZE_T restored_swap_read = 0;
     const bool swap_restored = ReadProcessMemory(
         process, reinterpret_cast<const void*>(sdl_swap), restored_swap.data(),
@@ -324,8 +399,8 @@ int wmain(int argc, wchar_t** argv) {
     CloseHandle(process);
     UnmapViewOfFile(shared);
     CloseHandle(mapping);
-    if (!restored || !interaction_restored || !swap_restored) {
-        std::wcerr << L"Les octets camera, interaction ou SDL originaux ne sont pas restaures.\n";
+    if (!swap_restored) {
+        std::wcerr << L"Les octets SDL originaux ne sont pas restaures.\n";
         return 10;
     }
     std::wcout << L"Restauration camera/interaction/SDL et dechargement du module v122 confirmes.\n";

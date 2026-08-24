@@ -28,6 +28,10 @@ int main() {
             "v1.0.1 must be offered to v1.0.0 installations");
     require(!release_is_newer("1.0.1", "v1.0.1"),
             "installed v1.0.1 must not update itself");
+    require(release_is_newer("1.0.1", "v1.0.2"),
+            "v1.0.2 must be offered to v1.0.1 installations");
+    require(!release_is_newer("1.0.2", "v1.0.2"),
+            "installed v1.0.2 must not update itself");
     require(!release_is_newer("0.9.5", "v0.9.5"),
             "equal versions must not update");
     require(!release_is_newer("0.9.5", "v0.9.4"),

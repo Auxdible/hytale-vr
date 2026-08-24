@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <array>
 #include <atomic>
 #include <string>
 #include <vector>
@@ -42,6 +43,8 @@ typedef void (WINAPI *glDrawElements_t)(GLenum mode, GLsizei count, GLenum type,
 typedef void (WINAPI *glUniformMatrix4fv_t)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
 typedef void (WINAPI *glProgramUniformMatrix4fv_t)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
 typedef GLint (WINAPI *glGetUniformLocation_t)(GLuint program, const GLchar *name);
+typedef GLuint (WINAPI *glGetUniformBlockIndex_t)(GLuint program, const GLchar *name);
+typedef void (WINAPI *glGetActiveUniformBlockiv_t)(GLuint program, GLuint uniformBlockIndex, GLenum pname, GLint *params);
 typedef void (WINAPI *glGetUniformiv_t)(GLuint program, GLint location, GLint *params);
 typedef void (WINAPI *glGetUniformfv_t)(GLuint program, GLint location, GLfloat *params);
 typedef GLint (WINAPI *glGetAttribLocation_t)(GLuint program, const GLchar *name);
@@ -110,6 +113,8 @@ glDrawElements_t real_glDrawElements = nullptr;
 glUniformMatrix4fv_t real_glUniformMatrix4fv = nullptr;
 glProgramUniformMatrix4fv_t real_glProgramUniformMatrix4fv = nullptr;
 glGetUniformLocation_t real_glGetUniformLocation = nullptr;
+glGetUniformBlockIndex_t real_glGetUniformBlockIndex = nullptr;
+glGetActiveUniformBlockiv_t real_glGetActiveUniformBlockiv = nullptr;
 glGetUniformiv_t real_glGetUniformiv = nullptr;
 glGetUniformfv_t real_glGetUniformfv = nullptr;
 glGetAttribLocation_t real_glGetAttribLocation = nullptr;
@@ -177,6 +182,13 @@ struct MappedBufferState {
 };
 thread_local std::vector<MappedBufferState> g_mappedBuffers;
 thread_local std::vector<unsigned char> g_bufferUploadScratch;
+struct UniformBufferBindingState {
+    GLuint buffer = 0;
+    GLintptr offset = 0;
+};
+constexpr size_t kTrackedUniformBufferBindings = 96;
+thread_local std::array<UniformBufferBindingState, kTrackedUniformBufferBindings>
+    g_uniformBufferBindings{};
 thread_local GLuint g_sceneDataBuffer = 0;
 thread_local GLintptr g_sceneDataBufferOffset = 0;
 thread_local unsigned long long g_programUseSerial = 0;
@@ -401,6 +413,8 @@ struct ProgramMatrixUniform {
 };
 std::vector<ProgramMatrixUniform> g_ssaoReprojectionUniforms;
 std::vector<ProgramMatrixUniform> g_heldItemModelUniforms;
+std::vector<ProgramMatrixUniform> g_heldItemInterfaceCandidates;
+std::unordered_map<GLuint, GLint> g_sceneDataBindings;
 std::vector<GLuint> g_uiBufferIDs;
 std::unordered_set<GLuint> g_scannedPrograms;
 std::mutex g_programsMutex;
@@ -422,6 +436,7 @@ struct CurrentProgramFlags {
     bool possibleFirstPerson = false;
     bool heldItem = false;
     GLint heldItemModelLocation = -1;
+    GLint sceneDataBinding = -1;
 };
 CurrentProgramFlags g_currentProgramFlags;
 GLuint g_neutralDistortionTexture = 0;
@@ -538,6 +553,10 @@ void RefreshCurrentProgramFlags(GLuint program) {
                 flags.heldItemModelLocation = uniform.location;
                 break;
             }
+        }
+        const auto sceneBinding = g_sceneDataBindings.find(program);
+        if (sceneBinding != g_sceneDataBindings.end()) {
+            flags.sceneDataBinding = sceneBinding->second;
         }
     }
     g_currentProgramFlags = flags;
@@ -1028,6 +1047,72 @@ void NotePossibleFirstPersonProgram(GLuint program, const std::string& label) {
     }
 }
 
+void NoteHeldItemInterfaceCandidate(GLuint program, bool visualInterface) {
+    if (!visualInterface || !real_glGetUniformLocation) return;
+    const GLint modelMatrixLocation =
+        real_glGetUniformLocation(program, "uModelMatrix");
+    if (modelMatrixLocation < 0) return;
+
+    std::lock_guard<std::mutex> lock(g_programsMutex);
+    const bool alreadyRegistered = std::any_of(
+        g_heldItemInterfaceCandidates.begin(),
+        g_heldItemInterfaceCandidates.end(),
+        [&](const ProgramMatrixUniform& candidate) {
+            return candidate.program == program;
+        });
+    if (!alreadyRegistered) {
+        g_heldItemInterfaceCandidates.push_back(
+            {program, modelMatrixLocation});
+        LogMessage("HytaleUIScaleHook: held-item interface candidate ID: " +
+                   std::to_string(program) + ", uModelMatrix=" +
+                   std::to_string(modelMatrixLocation));
+    }
+}
+
+bool PromoteHeldItemInterfaceCandidate(GLuint program,
+                                       GLint location,
+                                       GLsizei count,
+                                       GLboolean transpose,
+                                       const GLfloat* value) {
+    if (program == 0 || count != 1 || transpose != 0 || value == nullptr ||
+        !hytalevr::held_item_model_matrix_has_anchor(value)) {
+        return false;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_programsMutex);
+        const bool candidateFound = std::any_of(
+            g_heldItemInterfaceCandidates.begin(),
+            g_heldItemInterfaceCandidates.end(),
+            [&](const ProgramMatrixUniform& candidate) {
+                return candidate.program == program &&
+                       candidate.location == location;
+            });
+        if (!candidateFound) return false;
+
+        const bool alreadyHeldItem = std::any_of(
+            g_heldItemModelUniforms.begin(), g_heldItemModelUniforms.end(),
+            [&](const ProgramMatrixUniform& uniform) {
+                return uniform.program == program;
+            });
+        if (!alreadyHeldItem) {
+            g_heldItemModelUniforms.push_back({program, location});
+        }
+        if (std::find(g_possibleFirstPersonPrograms.begin(),
+                      g_possibleFirstPersonPrograms.end(), program) ==
+            g_possibleFirstPersonPrograms.end()) {
+            g_possibleFirstPersonPrograms.push_back(program);
+        }
+    }
+
+    if (program == g_currentProgram) {
+        g_currentProgramFlags.heldItem = true;
+        g_currentProgramFlags.heldItemModelLocation = location;
+        g_currentProgramFlags.possibleFirstPerson = true;
+    }
+    return true;
+}
+
 bool ShouldSkipFirstPersonDraw() {
     if (!g_sharedData || g_sharedData->hideFirstPerson == 0 ||
         g_currentProgram == 0 || !g_currentProgramFlags.possibleFirstPerson) {
@@ -1081,6 +1166,8 @@ bool TryPatchHeldItemModelMatrix(GLuint program,
                                  GLboolean transpose,
                                  const GLfloat* value,
                                  GLfloat (&modified)[16]) {
+    PromoteHeldItemInterfaceCandidate(
+        program, location, count, transpose, value);
     const GLint model_location = HeldItemModelMatrixLocation(program);
     if (model_location < 0 || location != model_location) return false;
     if (program == g_currentProgram) {
@@ -1474,31 +1561,109 @@ void RegisterProgramIfUI(GLuint program) {
         if (!g_scannedPrograms.insert(program).second) return;
     }
     
-    if (real_glGetObjectLabel && real_glGetUniformLocation) {
-        GLchar label[256] = {0};
-        GLsizei length = 0;
-        real_glGetObjectLabel(GL_PROGRAM, program, sizeof(label), &length, label);
-        if (length > 0) {
-            std::string labelStr(label, length);
+    if (real_glGetUniformBlockIndex && real_glGetActiveUniformBlockiv) {
+        constexpr GLuint kInvalidIndex = 0xFFFFFFFFu;
+        constexpr GLenum kUniformBlockBinding = 0x8A3F;
+        const GLuint block = real_glGetUniformBlockIndex(program, "uboSceneDataBlock");
+        if (block != kInvalidIndex) {
+            GLint binding = -1;
+            real_glGetActiveUniformBlockiv(
+                program, block, kUniformBlockBinding, &binding);
+            if (binding >= 0 &&
+                static_cast<size_t>(binding) < kTrackedUniformBufferBindings) {
+                std::lock_guard<std::mutex> lock(g_programsMutex);
+                g_sceneDataBindings[program] = binding;
+                if (g_sharedData) {
+                    InterlockedOr(
+                        reinterpret_cast<volatile LONG*>(&g_sharedData->reservedHeader),
+                        static_cast<LONG>(hytalevr::kUiDiagSceneDataBlock));
+                }
+            }
+        }
+    }
+
+    if (real_glGetUniformLocation) {
+            std::string labelStr;
+            if (real_glGetObjectLabel) {
+                GLchar label[256] = {0};
+                GLsizei length = 0;
+                real_glGetObjectLabel(
+                    GL_PROGRAM, program, sizeof(label), &length, label);
+                if (length > 0) labelStr.assign(label, length);
+            }
+            const auto hasUniform = [&](const char* name) {
+                return real_glGetUniformLocation(program, name) >= 0;
+            };
+            const bool batcherByInterface =
+                real_glGetAttribLocation &&
+                hasUniform("uTexture") && hasUniform("uMaskTexture") &&
+                hasUniform("uFontTexture") &&
+                real_glGetAttribLocation(program, "vertPosition") >= 0 &&
+                real_glGetAttribLocation(program, "vertTexCoords") >= 0 &&
+                real_glGetAttribLocation(program, "vertScissor") >= 0;
+            const GLint reprojectionLocation =
+                real_glGetUniformLocation(program, "uReprojectMatrix");
+            const bool shadowByInterface =
+                hasUniform("uShadowMap") || hasUniform("uShadowTexture") ||
+                hasUniform("uDebugShadowMatrix");
+            const bool sunOcclusionByInterface =
+                hasUniform("uSunOcclusionHistory");
+            const bool ssaoByInterface =
+                reprojectionLocation >= 0 && hasUniform("uDepthTexture");
+            const bool cloudShadowByInterface =
+                hasUniform("uCloudShadowTexture");
+            const bool particleByInterface =
+                hasUniform("useSoftParticles") && hasUniform("uDepthTexture");
+            const bool postEffectByInterface =
+                hasUniform("uSceneTexture") && hasUniform("uDistortionTexture");
+            // uNormalMatrix and uTexture0 became optional/optimized out in the
+            // prerelease first-person variant. The atlas uniforms plus the
+            // model matrix are the stable structural signature. A candidate is
+            // only promoted after a plausible live view-model matrix arrives.
+            const bool heldItemVisualByInterface =
+                hasUniform("uModelMatrix") && hasUniform("uAtlasSizeInv") &&
+                hasUniform("uAtlasIndex") &&
+                !hasUniform("uDistortionAmplitude") &&
+                !hasUniform("uDistortionFrequency") &&
+                !hasUniform("uDistortionTexture");
+            NoteHeldItemInterfaceCandidate(
+                program, heldItemVisualByInterface);
             NotePossibleFirstPersonProgram(program, labelStr);
             if (labelStr.find("Batcher2DProgram") != std::string::npos ||
-                labelStr.find("Batcher2D") != std::string::npos) {
+                labelStr.find("Batcher2D") != std::string::npos ||
+                batcherByInterface) {
                 std::lock_guard<std::mutex> lock(g_programsMutex);
                 RegisterProgramOnce(g_batcher2DPrograms, program, labelStr, "Batcher2D");
+                if (g_sharedData) {
+                    InterlockedOr(
+                        reinterpret_cast<volatile LONG*>(&g_sharedData->reservedHeader),
+                        static_cast<LONG>(hytalevr::kUiDiagBatcher2D));
+                }
             }
-            if (ContainsAny(labelStr, {"DeferredShadowProgram", "DeferredShadow", "ShadowProgram",
+            if (shadowByInterface ||
+                ContainsAny(labelStr, {"DeferredShadowProgram", "DeferredShadow", "ShadowProgram",
                                        "ShadowMap", "Shadow"})) {
                 std::lock_guard<std::mutex> lock(g_programsMutex);
                 RegisterProgramOnce(g_shadowPrograms, program, labelStr, "shadow");
+                if (g_sharedData) {
+                    InterlockedOr(
+                        reinterpret_cast<volatile LONG*>(&g_sharedData->reservedHeader),
+                        static_cast<LONG>(hytalevr::kUiDiagShadowProgram));
+                }
             }
-            if (ContainsAny(labelStr, {"SunOcclusionDownsampleProgram", "SunOcclusion",
+            if (sunOcclusionByInterface ||
+                ContainsAny(labelStr, {"SunOcclusionDownsampleProgram", "SunOcclusion",
                                        "ScreenSpaceOcclusion", "AmbientOcclusion"})) {
                 std::lock_guard<std::mutex> lock(g_programsMutex);
                 RegisterProgramOnce(g_sunOcclusionPrograms, program, labelStr, "sun occlusion");
+                if (g_sharedData) {
+                    InterlockedOr(
+                        reinterpret_cast<volatile LONG*>(&g_sharedData->reservedHeader),
+                        static_cast<LONG>(hytalevr::kUiDiagEffectProgram));
+                }
             }
-            if (ContainsAny(labelStr, {"SSAOProgram", "SSAOFs", "SSAO"})) {
-                const GLint reprojectionLocation =
-                    real_glGetUniformLocation(program, "uReprojectMatrix");
+            if (ssaoByInterface ||
+                ContainsAny(labelStr, {"SSAOProgram", "SSAOFs", "SSAO"})) {
                 std::lock_guard<std::mutex> lock(g_programsMutex);
                 RegisterProgramOnce(g_ssaoPrograms, program, labelStr, "SSAO");
                 if (reprojectionLocation >= 0) {
@@ -1513,8 +1678,14 @@ void RegisterProgramIfUI(GLuint program) {
                             {program, reprojectionLocation});
                     }
                 }
+                if (g_sharedData) {
+                    InterlockedOr(
+                        reinterpret_cast<volatile LONG*>(&g_sharedData->reservedHeader),
+                        static_cast<LONG>(hytalevr::kUiDiagEffectProgram));
+                }
             }
-            if (labelStr.find("CloudShadow") != std::string::npos ||
+            if (cloudShadowByInterface ||
+                labelStr.find("CloudShadow") != std::string::npos ||
                 labelStr.find("CloudOcclusion") != std::string::npos ||
                 labelStr.find("CloudsShadow") != std::string::npos ||
                 ((labelStr.find("Cloud") != std::string::npos ||
@@ -1523,15 +1694,32 @@ void RegisterProgramIfUI(GLuint program) {
                   labelStr.find("Occlusion") != std::string::npos))) {
                 std::lock_guard<std::mutex> lock(g_programsMutex);
                 RegisterProgramOnce(g_cloudShadowPrograms, program, labelStr, "cloud shadow");
+                if (g_sharedData) {
+                    InterlockedOr(
+                        reinterpret_cast<volatile LONG*>(&g_sharedData->reservedHeader),
+                        static_cast<LONG>(hytalevr::kUiDiagEffectProgram));
+                }
             }
-            if (labelStr.find("ParticleErosionProgram") != std::string::npos ||
+            if (particleByInterface ||
+                labelStr.find("ParticleErosionProgram") != std::string::npos ||
                 labelStr.find("ParticleProgram") != std::string::npos) {
                 std::lock_guard<std::mutex> lock(g_programsMutex);
                 RegisterProgramOnce(g_particlePrograms, program, labelStr, "particle");
+                if (g_sharedData) {
+                    InterlockedOr(
+                        reinterpret_cast<volatile LONG*>(&g_sharedData->reservedHeader),
+                        static_cast<LONG>(hytalevr::kUiDiagEffectProgram));
+                }
             }
-            if (labelStr.find("PostEffectProgram") != std::string::npos) {
+            if (postEffectByInterface ||
+                labelStr.find("PostEffectProgram") != std::string::npos) {
                 std::lock_guard<std::mutex> lock(g_programsMutex);
                 RegisterProgramOnce(g_postEffectPrograms, program, labelStr, "post effect");
+                if (g_sharedData) {
+                    InterlockedOr(
+                        reinterpret_cast<volatile LONG*>(&g_sharedData->reservedHeader),
+                        static_cast<LONG>(hytalevr::kUiDiagEffectProgram));
+                }
             }
             if (labelStr.find("MapChunkAlphaBlendedProgram") != std::string::npos) {
                 std::lock_guard<std::mutex> lock(g_programsMutex);
@@ -1556,7 +1744,8 @@ void RegisterProgramIfUI(GLuint program) {
                 std::lock_guard<std::mutex> lock(g_programsMutex);
                 RegisterProgramOnce(g_hizReprojectPrograms, program, labelStr, "HiZ reprojection");
             }
-            bool isUI = (labelStr.find("Batcher") != std::string::npos) || 
+            bool isUI = batcherByInterface ||
+                        (labelStr.find("Batcher") != std::string::npos) ||
                         (labelStr.find("Text") != std::string::npos) ||
                         (labelStr.find("UI") != std::string::npos);
                         
@@ -1578,7 +1767,6 @@ void RegisterProgramIfUI(GLuint program) {
                     LogMessage("HytaleUIScaleHook: Registered UI program! ID: " + std::to_string(program) + ", Label: " + labelStr + ", uMVPMatrix Location: " + std::to_string(loc));
                 }
             }
-        }
     }
 }
 
@@ -2289,8 +2477,18 @@ bool CurrentProgramNeedsVrSceneMatrices() {
 }
 
 void PatchVrSceneDataForCurrentProgram() {
+    UniformBufferBindingState sceneBinding{
+        g_sceneDataBuffer, g_sceneDataBufferOffset};
+    if (g_currentProgramFlags.sceneDataBinding >= 0 &&
+        static_cast<size_t>(g_currentProgramFlags.sceneDataBinding) <
+            g_uniformBufferBindings.size()) {
+        const UniformBufferBindingState detected =
+            g_uniformBufferBindings[static_cast<size_t>(
+                g_currentProgramFlags.sceneDataBinding)];
+        if (detected.buffer != 0) sceneBinding = detected;
+    }
     if (!CurrentProgramNeedsVrSceneMatrices() || !real_glBindBuffer ||
-        !real_glBufferSubData || !real_glGetIntegerv || g_sceneDataBuffer == 0 ||
+        !real_glBufferSubData || !real_glGetIntegerv || sceneBinding.buffer == 0 ||
         g_lastScenePatchProgramUseSerial == g_programUseSerial) {
         return;
     }
@@ -2317,19 +2515,25 @@ void PatchVrSceneDataForCurrentProgram() {
 
     GLint previousBuffer = 0;
     real_glGetIntegerv(GL_UNIFORM_BUFFER_BINDING_VALUE, &previousBuffer);
-    real_glBindBuffer(GL_UNIFORM_BUFFER_VALUE, g_sceneDataBuffer);
+    real_glBindBuffer(GL_UNIFORM_BUFFER_VALUE, sceneBinding.buffer);
     real_glBufferSubData(GL_UNIFORM_BUFFER_VALUE,
-                         g_sceneDataBufferOffset + 128,
+                         sceneBinding.offset + 128,
                          static_cast<GLsizeiptr>(sizeof(cameraBlock)), cameraBlock);
     real_glBindBuffer(GL_UNIFORM_BUFFER_VALUE, static_cast<GLuint>(previousBuffer));
     g_lastScenePatchProgramUseSerial = g_programUseSerial;
+    if (g_sharedData) {
+        InterlockedOr(
+            reinterpret_cast<volatile LONG*>(&g_sharedData->reservedHeader),
+            static_cast<LONG>(hytalevr::kUiDiagSceneDataPatched));
+    }
 
     static DWORD lastLogTick = 0;
     const DWORD now = GetTickCount();
     if (now - lastLogTick >= 1500) {
         LogMessage("HytaleUIScaleHook: synchronized VR SceneData matrices for effect program=" +
                    std::to_string(g_currentProgram) + " buffer=" +
-                   std::to_string(g_sceneDataBuffer));
+                   std::to_string(sceneBinding.buffer) + " binding=" +
+                   std::to_string(g_currentProgramFlags.sceneDataBinding));
         lastLogTick = now;
     }
 }
@@ -2760,9 +2964,14 @@ void WINAPI hook_glBindBuffer(GLenum target, GLuint buffer) {
 
 void WINAPI hook_glBindBufferRange(GLenum target, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size) {
     real_glBindBufferRange(target, index, buffer, offset, size);
-    if (target == GL_UNIFORM_BUFFER_VALUE && index == 0) {
-        g_sceneDataBuffer = buffer;
-        g_sceneDataBufferOffset = offset;
+    if (target == GL_UNIFORM_BUFFER_VALUE) {
+        if (index < g_uniformBufferBindings.size()) {
+            g_uniformBufferBindings[index] = {buffer, offset};
+        }
+        if (index == 0) {
+            g_sceneDataBuffer = buffer;
+            g_sceneDataBufferOffset = offset;
+        }
         g_lastScenePatchProgramUseSerial = 0;
     }
     RegisterBufferIfUI(target, buffer);
@@ -2770,9 +2979,14 @@ void WINAPI hook_glBindBufferRange(GLenum target, GLuint index, GLuint buffer, G
 
 void WINAPI hook_glBindBufferBase(GLenum target, GLuint index, GLuint buffer) {
     real_glBindBufferBase(target, index, buffer);
-    if (target == GL_UNIFORM_BUFFER_VALUE && index == 0) {
-        g_sceneDataBuffer = buffer;
-        g_sceneDataBufferOffset = 0;
+    if (target == GL_UNIFORM_BUFFER_VALUE) {
+        if (index < g_uniformBufferBindings.size()) {
+            g_uniformBufferBindings[index] = {buffer, 0};
+        }
+        if (index == 0) {
+            g_sceneDataBuffer = buffer;
+            g_sceneDataBufferOffset = 0;
+        }
         g_lastScenePatchProgramUseSerial = 0;
     }
     RegisterBufferIfUI(target, buffer);
@@ -3345,6 +3559,8 @@ void InitializeHooks() {
     real_glUniformMatrix4fv = (glUniformMatrix4fv_t)wglGetProcAddress("glUniformMatrix4fv");
     real_glProgramUniformMatrix4fv = (glProgramUniformMatrix4fv_t)wglGetProcAddress("glProgramUniformMatrix4fv");
     real_glGetUniformLocation = (glGetUniformLocation_t)wglGetProcAddress("glGetUniformLocation");
+    real_glGetUniformBlockIndex = (glGetUniformBlockIndex_t)wglGetProcAddress("glGetUniformBlockIndex");
+    real_glGetActiveUniformBlockiv = (glGetActiveUniformBlockiv_t)wglGetProcAddress("glGetActiveUniformBlockiv");
     real_glGetUniformiv = (glGetUniformiv_t)wglGetProcAddress("glGetUniformiv");
     real_glGetUniformfv = (glGetUniformfv_t)wglGetProcAddress("glGetUniformfv");
     real_glGetAttribLocation = (glGetAttribLocation_t)wglGetProcAddress("glGetAttribLocation");
@@ -3440,6 +3656,8 @@ void InitializeHooks() {
     LogMessage("HytaleUIScaleHook: Resolving glUniformMatrix4fv: " + std::string(real_glUniformMatrix4fv ? "SUCCESS" : "FAILED"));
     LogMessage("HytaleUIScaleHook: Resolving glProgramUniformMatrix4fv: " + std::string(real_glProgramUniformMatrix4fv ? "SUCCESS" : "FAILED"));
     LogMessage("HytaleUIScaleHook: Resolving glGetUniformLocation: " + std::string(real_glGetUniformLocation ? "SUCCESS" : "FAILED"));
+    LogMessage("HytaleUIScaleHook: Resolving glGetUniformBlockIndex: " + std::string(real_glGetUniformBlockIndex ? "SUCCESS" : "FAILED"));
+    LogMessage("HytaleUIScaleHook: Resolving glGetActiveUniformBlockiv: " + std::string(real_glGetActiveUniformBlockiv ? "SUCCESS" : "FAILED"));
     LogMessage("HytaleUIScaleHook: Resolving glGetUniformiv: " + std::string(real_glGetUniformiv ? "SUCCESS" : "FAILED"));
     LogMessage("HytaleUIScaleHook: Resolving glGetUniformfv: " + std::string(real_glGetUniformfv ? "SUCCESS" : "FAILED"));
     LogMessage("HytaleUIScaleHook: Resolving glGetAttribLocation: " + std::string(real_glGetAttribLocation ? "SUCCESS" : "FAILED"));

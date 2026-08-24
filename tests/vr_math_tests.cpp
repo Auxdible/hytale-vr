@@ -129,6 +129,19 @@ int main() {
         scaled_render_resolution(1920, 1080, 2.0f, 2048);
     success &= check(resolution_clamped.width == 2048 && resolution_clamped.height == 1152,
                      "VR resolution scaling must respect the OpenGL texture limit");
+    const float fitted_source =
+        fitted_source_scale(1280, 720, 2.0f, 1920, 1040);
+    const float remaining_scale =
+        remaining_output_scale(2.0f, fitted_source);
+    success &= check(
+        std::fabs(fitted_source - (1040.0f / 720.0f)) < 0.0001f &&
+            std::fabs(fitted_source * remaining_scale - 2.0f) < 0.0001f,
+        "supersampling must fit the source window and preserve the requested total scale");
+    success &= check(
+        std::fabs(fitted_source_scale(1280, 720, 1.5f, 2560, 1440) - 1.5f) <
+            0.0001f &&
+            std::fabs(remaining_output_scale(1.5f, 1.5f) - 1.0f) < 0.0001f,
+        "fully visible source supersampling must not add an output upscale");
 
     const std::array<unsigned char, 34> camera_hook_site{
         0x0F, 0x28, 0xB4, 0x24, 0x80, 0x03, 0x00, 0x00,
@@ -153,6 +166,13 @@ int main() {
     };
     success &= check(interaction_hook_site_valid(interaction_hook_site.data()),
                      "known interaction hook prologue was rejected");
+    const std::array<unsigned char, 15> prerelease_interaction_hook_site{
+        0x0F, 0x29, 0xBD, 0x30, 0xFE, 0xFF, 0xFF,
+        0x44, 0x0F, 0x29, 0x85, 0x20, 0xFE, 0xFF, 0xFF,
+    };
+    success &= check(
+        interaction_hook_site_valid(prerelease_interaction_hook_site.data()),
+        "August 2026 pre-release interaction hook prologue was rejected");
     auto invalid_interaction_hook_site = interaction_hook_site;
     invalid_interaction_hook_site[11] = 0x00;
     success &= check(!interaction_hook_site_valid(invalid_interaction_hook_site.data()),
@@ -422,6 +442,28 @@ int main() {
                              item_grip_offset, item_visual_scale,
                              tracked_item_model),
                      "the origin-centered Hytale hand draw must stay hidden");
+
+    float prerelease_item_model[16]{};
+    prerelease_item_model[0] = 0.015f;
+    prerelease_item_model[5] = 0.015f;
+    prerelease_item_model[10] = 0.015f;
+    prerelease_item_model[12] = 0.025f;
+    prerelease_item_model[13] = -0.030f;
+    prerelease_item_model[14] = -0.040f;
+    prerelease_item_model[15] = 1.0f;
+    success &= check(
+        held_item_model_matrix_has_anchor(prerelease_item_model),
+        "camera-relative prerelease item matrices must remain detectable");
+
+    float distant_world_model[16]{};
+    distant_world_model[0] = 1.0f;
+    distant_world_model[5] = 1.0f;
+    distant_world_model[10] = 1.0f;
+    distant_world_model[12] = 24.0f;
+    distant_world_model[15] = 1.0f;
+    success &= check(
+        !held_item_model_matrix_has_anchor(distant_world_model),
+        "world model matrices must not be promoted to held items");
 
     Matrix4 expected_scaled_translation = identity;
     expected_scaled_translation.value[12] = 0.50f;

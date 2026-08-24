@@ -102,6 +102,14 @@ std::array<unsigned char, 16> g_original{};
 constexpr size_t kCameraViewOffset = 0x2E0;
 constexpr size_t kCameraViewProjectionOffset = 0x320;
 constexpr size_t kCameraProjectionOffset = 0x4E0;
+struct CameraLayoutOffsets {
+    size_t view = kCameraViewOffset;
+    size_t view_projection = kCameraViewProjectionOffset;
+    size_t projection = kCameraProjectionOffset;
+};
+std::atomic<size_t> g_camera_view_offset{kCameraViewOffset};
+std::atomic<size_t> g_camera_view_projection_offset{kCameraViewProjectionOffset};
+std::atomic<size_t> g_camera_projection_offset{kCameraProjectionOffset};
 void* g_interaction_hook_memory = nullptr;
 unsigned char* g_interaction_hook_target = nullptr;
 std::array<unsigned char, 15> g_interaction_original{};
@@ -160,6 +168,7 @@ int g_supersample_base_width = 0;
 int g_supersample_base_height = 0;
 int g_supersample_target_width = 0;
 int g_supersample_target_height = 0;
+float g_source_supersampling_scale = 1.0f;
 bool g_source_supersampling_active = false;
 unsigned char* g_swap_target = nullptr;
 std::array<unsigned char, 14> g_swap_original{};
@@ -3666,30 +3675,77 @@ bool plausible_camera_projection(const Matrix4& projection) {
            std::fabs(projection.value[15]) <= 0.10f;
 }
 
-bool read_validated_camera_layout(unsigned char* camera,
-                                  Matrix4& view,
-                                  Matrix4& projection) {
+CameraLayoutOffsets active_camera_layout() {
+    return {
+        g_camera_view_offset.load(std::memory_order_relaxed),
+        g_camera_view_projection_offset.load(std::memory_order_relaxed),
+        g_camera_projection_offset.load(std::memory_order_relaxed),
+    };
+}
+
+void select_camera_layout(const CameraLayoutOffsets& layout) {
+    g_camera_view_offset.store(layout.view, std::memory_order_relaxed);
+    g_camera_view_projection_offset.store(
+        layout.view_projection, std::memory_order_relaxed);
+    g_camera_projection_offset.store(layout.projection, std::memory_order_relaxed);
+}
+
+bool try_camera_layout(unsigned char* camera,
+                       const CameraLayoutOffsets& layout,
+                       Matrix4& view,
+                       Matrix4& projection) {
     if (!camera ||
+        !writable_memory_range(camera + layout.view, sizeof(Matrix4)) ||
         !writable_memory_range(
-            camera + kCameraViewOffset, sizeof(Matrix4)) ||
-        !writable_memory_range(
-            camera + kCameraViewProjectionOffset, sizeof(Matrix4)) ||
-        !writable_memory_range(
-            camera + kCameraProjectionOffset, sizeof(Matrix4))) {
+            camera + layout.view_projection, sizeof(Matrix4)) ||
+        !writable_memory_range(camera + layout.projection, sizeof(Matrix4))) {
         return false;
     }
 
     Matrix4 view_projection{};
+    std::memcpy(&view, camera + layout.view, sizeof(view));
     std::memcpy(
-        &view, camera + kCameraViewOffset, sizeof(view));
-    std::memcpy(
-        &view_projection, camera + kCameraViewProjectionOffset,
+        &view_projection, camera + layout.view_projection,
         sizeof(view_projection));
-    std::memcpy(
-        &projection, camera + kCameraProjectionOffset, sizeof(projection));
+    std::memcpy(&projection, camera + layout.projection, sizeof(projection));
     return plausible_camera_view(view) &&
            plausible_camera_projection(projection) &&
            matrix_is_finite_and_bounded(view_projection);
+}
+
+bool read_validated_camera_layout(unsigned char* camera,
+                                  Matrix4& view,
+                                  Matrix4& projection) {
+    CameraLayoutOffsets layout = active_camera_layout();
+    if (try_camera_layout(camera, layout, view, projection)) return true;
+
+    constexpr CameraLayoutOffsets known_layouts[] = {
+        {0x2E0, 0x320, 0x4E0},
+        {0x2D8, 0x318, 0x4D8},
+    };
+    for (const CameraLayoutOffsets& candidate : known_layouts) {
+        if (candidate.view == layout.view &&
+            candidate.view_projection == layout.view_projection &&
+            candidate.projection == layout.projection) {
+            continue;
+        }
+        if (try_camera_layout(camera, candidate, view, projection)) {
+            select_camera_layout(candidate);
+            return true;
+        }
+    }
+
+    // Recent Hytale builds only shifted the complete camera matrix group.
+    // Discover small future shifts while preserving the established spacing.
+    for (size_t view_offset = 0x280; view_offset <= 0x320; view_offset += 4) {
+        const CameraLayoutOffsets candidate{
+            view_offset, view_offset + 0x40, view_offset + 0x200};
+        if (try_camera_layout(camera, candidate, view, projection)) {
+            select_camera_layout(candidate);
+            return true;
+        }
+    }
+    return false;
 }
 
 using HookSiteValidator = bool (*)(const unsigned char*);
@@ -4497,14 +4553,15 @@ bool apply_cached_engine_eye(int eye, const VrCameraControls& controls) {
         return false;
     }
 
+    const CameraLayoutOffsets layout = active_camera_layout();
     const Matrix4 view_projection = multiply(projection, view);
     std::memcpy(
-        camera + kCameraViewOffset, &view, sizeof(view));
+        camera + layout.view, &view, sizeof(view));
     std::memcpy(
-        camera + kCameraViewProjectionOffset, &view_projection,
+        camera + layout.view_projection, &view_projection,
         sizeof(view_projection));
     std::memcpy(
-        camera + kCameraProjectionOffset, &projection, sizeof(projection));
+        camera + layout.projection, &projection, sizeof(projection));
     publish_vr_scene_matrices(view, projection, view_projection);
     publish_ui_scale_for_eye(
         controls, eye == 0 ? vr::Eye_Left : vr::Eye_Right);
@@ -4736,24 +4793,25 @@ void apply_vr_camera(void* object) {
         ReleaseSRWLockExclusive(&g_camera_lock);
     }
     const Matrix4 view_projection = multiply(projection, eye_view_matrix);
+    const CameraLayoutOffsets layout = active_camera_layout();
     publish_vr_scene_matrices(eye_view_matrix, projection, view_projection);
-    // Keep the final VR transform in +0x320. When HMD culling is enabled,
-    // +0x2E0 follows headset yaw and pitch without roll so world
+    // Keep the final VR transform in the detected view-projection slot. When
+    // HMD culling is enabled, the view follows headset yaw and pitch without roll so world
     // loading/culling also works above and below the player.
     if (engine_native_stereo) {
         std::memcpy(
-            camera + kCameraViewOffset, &eye_view_matrix,
+            camera + layout.view, &eye_view_matrix,
             sizeof(eye_view_matrix));
         std::memcpy(
-            camera + kCameraProjectionOffset, &projection,
+            camera + layout.projection, &projection,
             sizeof(projection));
     } else if (controls.hmd_culling_view_enabled) {
         std::memcpy(
-            camera + kCameraViewOffset, &culling_view,
+            camera + layout.view, &culling_view,
             sizeof(culling_view));
     }
     std::memcpy(
-        camera + kCameraViewProjectionOffset, &view_projection,
+        camera + layout.view_projection, &view_projection,
         sizeof(view_projection));
     const float native_view_delta =
         g_last_diag_valid ? matrix_max_delta(g_last_diag_view, view) : 0.0f;
@@ -5512,6 +5570,86 @@ bool initialize_stereo() {
     return true;
 }
 
+struct ProcessWindowCandidate {
+    HWND window = nullptr;
+    long long client_area = 0;
+};
+
+BOOL CALLBACK find_process_window(HWND window, LPARAM parameter) {
+    DWORD process_id = 0;
+    GetWindowThreadProcessId(window, &process_id);
+    if (process_id != GetCurrentProcessId() || !IsWindowVisible(window)) return TRUE;
+
+    RECT client{};
+    if (!GetClientRect(window, &client)) return TRUE;
+    const long long width = client.right - client.left;
+    const long long height = client.bottom - client.top;
+    const long long area = width > 0 && height > 0 ? width * height : 0;
+    auto* candidate = reinterpret_cast<ProcessWindowCandidate*>(parameter);
+    if (candidate && area > candidate->client_area) {
+        candidate->window = window;
+        candidate->client_area = area;
+    }
+    return TRUE;
+}
+
+HWND hytale_render_window() {
+    ProcessWindowCandidate candidate{};
+    EnumWindows(find_process_window, reinterpret_cast<LPARAM>(&candidate));
+    return candidate.window;
+}
+
+bool visible_client_limit(HWND window, int& width, int& height) {
+    width = 0;
+    height = 0;
+    if (!window) return false;
+
+    RECT window_rect{};
+    RECT client_rect{};
+    MONITORINFO monitor_info{sizeof(monitor_info)};
+    const HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    if (!GetWindowRect(window, &window_rect) ||
+        !GetClientRect(window, &client_rect) ||
+        !monitor || !GetMonitorInfoW(monitor, &monitor_info)) {
+        return false;
+    }
+
+    const int non_client_width =
+        (window_rect.right - window_rect.left) -
+        (client_rect.right - client_rect.left);
+    const int non_client_height =
+        (window_rect.bottom - window_rect.top) -
+        (client_rect.bottom - client_rect.top);
+    width = (monitor_info.rcWork.right - monitor_info.rcWork.left) -
+            (std::max)(0, non_client_width);
+    height = (monitor_info.rcWork.bottom - monitor_info.rcWork.top) -
+             (std::max)(0, non_client_height);
+    return width > 0 && height > 0;
+}
+
+void keep_window_inside_work_area(HWND window) {
+    if (!window) return;
+    RECT rect{};
+    MONITORINFO monitor_info{sizeof(monitor_info)};
+    const HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    if (!GetWindowRect(window, &rect) || !monitor ||
+        !GetMonitorInfoW(monitor, &monitor_info)) {
+        return;
+    }
+    const LONG width = rect.right - rect.left;
+    const LONG height = rect.bottom - rect.top;
+    const LONG max_x = (std::max)(monitor_info.rcWork.left,
+                                  monitor_info.rcWork.right - width);
+    const LONG max_y = (std::max)(monitor_info.rcWork.top,
+                                  monitor_info.rcWork.bottom - height);
+    const LONG x = std::clamp<LONG>(rect.left, monitor_info.rcWork.left, max_x);
+    const LONG y = std::clamp<LONG>(rect.top, monitor_info.rcWork.top, max_y);
+    if (x != rect.left || y != rect.top) {
+        SetWindowPos(window, nullptr, x, y, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+}
+
 void restore_source_supersampling() {
     if (g_supersampled_window && g_sdl_set_window_size &&
         g_supersample_base_width > 0 && g_supersample_base_height > 0) {
@@ -5525,6 +5663,7 @@ void restore_source_supersampling() {
     g_supersample_base_height = 0;
     g_supersample_target_width = 0;
     g_supersample_target_height = 0;
+    g_source_supersampling_scale = 1.0f;
     g_source_supersampling_active = false;
 }
 
@@ -5571,27 +5710,41 @@ bool prepare_render_resolution(void* window, const VrCameraControls& controls) {
                 g_supersample_base_width = logical_width;
                 g_supersample_base_height = logical_height;
             }
+            HWND render_window = hytale_render_window();
+            int max_visible_width = g_supersample_base_width;
+            int max_visible_height = g_supersample_base_height;
+            visible_client_limit(render_window, max_visible_width,
+                                 max_visible_height);
+            const float source_scale = hytalevr::fitted_source_scale(
+                g_supersample_base_width, g_supersample_base_height,
+                requested_scale, max_visible_width, max_visible_height);
             const int target_width = (std::max)(
                 1, static_cast<int>(std::lround(g_supersample_base_width *
-                                                requested_scale)));
+                                                source_scale)));
             const int target_height = (std::max)(
                 1, static_cast<int>(std::lround(g_supersample_base_height *
-                                                requested_scale)));
-            if (!g_source_supersampling_active ||
-                target_width != g_supersample_target_width ||
+                                                source_scale)));
+            if (target_width != g_supersample_target_width ||
                 target_height != g_supersample_target_height) {
                 if (g_sdl_set_window_size(window, target_width, target_height)) {
                     if (g_sdl_sync_window) g_sdl_sync_window(window);
+                    keep_window_inside_work_area(render_window);
                     g_supersample_target_width = target_width;
                     g_supersample_target_height = target_height;
-                    g_source_supersampling_active = true;
+                    g_source_supersampling_scale = source_scale;
+                    g_source_supersampling_active = source_scale > 1.001f;
                     std::ostringstream out;
                     out << "source supersampling enabled logical="
                         << g_supersample_base_width << "x"
                         << g_supersample_base_height << " target="
-                        << target_width << "x" << target_height;
+                        << target_width << "x" << target_height
+                        << " sourceScale=" << source_scale
+                        << " remainingOutputScale="
+                        << hytalevr::remaining_output_scale(
+                               requested_scale, source_scale);
                     render_log(out.str());
                 } else {
+                    g_source_supersampling_scale = 1.0f;
                     g_source_supersampling_active = false;
                     render_log("source supersampling resize failed; using output scaling");
                 }
@@ -5599,9 +5752,11 @@ bool prepare_render_resolution(void* window, const VrCameraControls& controls) {
         } else {
             // Fullscreen and maximized windows cannot be resized reliably at
             // swap time. Keep the base size so windowed mode can resume it.
+            g_source_supersampling_scale = 1.0f;
             g_source_supersampling_active = false;
         }
     } else {
+        g_source_supersampling_scale = 1.0f;
         g_source_supersampling_active = false;
     }
 
@@ -5642,9 +5797,9 @@ float active_vr_output_scale(const VrCameraControls& controls) {
     if ((effective_render_options(controls) & kVrEffectSupersampling) == 0u) {
         return 1.0f;
     }
-    return g_source_supersampling_active
-        ? 1.0f
-        : std::clamp(controls.vr_resolution_scale, 1.0f, 2.0f);
+    return hytalevr::remaining_output_scale(
+        controls.vr_resolution_scale,
+        g_source_supersampling_active ? g_source_supersampling_scale : 1.0f);
 }
 
 bool initialize_gl_capture() {
@@ -7505,9 +7660,10 @@ void restore_neutral_camera(bool force_view = true) {
             camera, observed_view, observed_projection);
     if (camera_layout_valid && g_center_view_projection_valid &&
         now - g_last_primary_camera_tick < kBetweenFrameRestoreMaxAgeMs) {
+        const CameraLayoutOffsets layout = active_camera_layout();
         if (g_culling_view_valid) {
             std::memcpy(
-                camera + kCameraViewOffset, &g_culling_view,
+                camera + layout.view, &g_culling_view,
                 sizeof(g_culling_view));
             g_last_written_culling_view = g_culling_view;
             g_last_written_culling_object = g_primary_camera;
@@ -7515,18 +7671,18 @@ void restore_neutral_camera(bool force_view = true) {
             g_last_written_culling_view_valid = true;
         } else if (g_neutral_view_valid) {
             std::memcpy(
-                camera + kCameraViewOffset, &g_neutral_view,
+                camera + layout.view, &g_neutral_view,
                 sizeof(g_neutral_view));
         }
         const Matrix4& between_frame_view_projection =
             g_culling_view_projection_valid ? g_culling_view_projection : g_center_view_projection;
         if (g_culling_projection_valid) {
             std::memcpy(
-                camera + kCameraProjectionOffset, &g_culling_projection,
+                camera + layout.projection, &g_culling_projection,
                 sizeof(g_culling_projection));
         }
         std::memcpy(
-            camera + kCameraViewProjectionOffset,
+            camera + layout.view_projection,
             &between_frame_view_projection,
             sizeof(between_frame_view_projection));
     }
@@ -8348,6 +8504,12 @@ bool install_engine_render_hook() {
 
 bool install_interaction_hook() {
     constexpr const char* patterns[] = {
+        // Match the ray origin/direction stores and their first two consumers.
+        // The frame size changed in the August 2026 pre-release, while this
+        // instruction relationship stayed stable and remains unique.
+        "0F 29 BD ?? ?? ?? ?? 44 0F 29 85 ?? ?? ?? ?? "
+        "48 8D 95 ?? ?? ?? ?? 48 89 54 24 20 "
+        "48 8D 95 ?? ?? ?? ?? 4C 8D 85 ?? ?? ?? ??",
         "0F 29 BD 20 FE FF FF 44 0F 29 85 10 FE FF FF "
         "48 8D 95 00 FF FF FF 48 89 54 24 20 "
         "48 8D 95 20 FE FF FF 4C 8D 85 10 FE FF FF 4C 8B CF",

@@ -11,7 +11,12 @@ namespace hytalevr {
 
 constexpr int kHeldItemLeft = 0;
 constexpr int kHeldItemRight = 1;
-constexpr float kHeldItemMinAnchorDistance = 0.20f;
+// Recent prerelease builds moved first-person models into a camera-relative
+// space where their model-matrix translation can be only a few centimetres.
+// Keep a tiny non-zero guard to reject identity/world setup uploads without
+// excluding those valid view-model matrices.
+constexpr float kHeldItemMinAnchorDistance = 0.005f;
+constexpr float kHeldItemMaxAnchorDistance = 4.0f;
 
 inline bool held_item_was_present_before_attack(uint32_t stable_presence_mask,
                                                 int side) {
@@ -97,7 +102,9 @@ inline bool held_item_model_matrix_has_anchor(const float model[16]) {
                                    model[13] * model[13] +
                                    model[14] * model[14];
     return distance_squared >=
-           kHeldItemMinAnchorDistance * kHeldItemMinAnchorDistance;
+               kHeldItemMinAnchorDistance * kHeldItemMinAnchorDistance &&
+           distance_squared <=
+               kHeldItemMaxAnchorDistance * kHeldItemMaxAnchorDistance;
 }
 
 // Hytale uploads uModelMatrix as an OpenGL column-major matrix. Preserve the

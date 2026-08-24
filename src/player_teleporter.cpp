@@ -334,6 +334,8 @@ std::vector<HWND> g_advanced_controls;
 
 vr::IVRSystem* g_vr_system = nullptr;
 bool g_vr_tracking = false;
+uintptr_t g_active_player_base = 0;
+bool g_player_position_available = false;
 HANDLE g_vr_camera_mapping = nullptr;
 VrCameraShared* g_vr_camera_shared = nullptr;
 DWORD g_vr_camera_mapping_error = ERROR_SUCCESS;
@@ -357,6 +359,7 @@ bool g_prev_left_trigger = false;
 float g_turn_mouse_remainder = 0.0f;
 ULONGLONG g_last_turn_tick = 0;
 bool g_menu_mouse_active = false;
+bool g_menu_mouse_virtual_input = false;
 POINT g_menu_mouse_client{};
 float g_menu_mouse_filtered_x = 0.0f;
 float g_menu_mouse_filtered_y = 0.0f;
@@ -1330,6 +1333,8 @@ void keep_latest_candidate(std::vector<Candidate>& candidates) {
 }
 
 void populate_candidate_list() {
+    const int previous_selection = static_cast<int>(
+        SendMessageW(control(IDC_CANDIDATES), LB_GETCURSEL, 0, 0));
     SendMessageW(control(IDC_CANDIDATES), LB_RESETCONTENT, 0, 0);
     for (const Candidate& candidate : g_candidates) {
         const Vec3& value = candidate.original[2];
@@ -1346,6 +1351,12 @@ void populate_candidate_list() {
                    static_cast<unsigned long long>(candidate.base), value.x, value.y, value.z);
 #endif
         SendMessageW(control(IDC_CANDIDATES), LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
+    }
+    if (!g_candidates.empty()) {
+        const int selection = previous_selection >= 0
+            ? std::min<int>(previous_selection, static_cast<int>(g_candidates.size()) - 1)
+            : 0;
+        SendMessageW(control(IDC_CANDIDATES), LB_SETCURSEL, selection, 0);
     }
 }
 
@@ -1588,7 +1599,12 @@ void start_f7_scan() {
 #endif
 
 int selected_candidate() {
-    return static_cast<int>(SendMessageW(control(IDC_CANDIDATES), LB_GETCURSEL, 0, 0));
+    const int selected = static_cast<int>(
+        SendMessageW(control(IDC_CANDIDATES), LB_GETCURSEL, 0, 0));
+    if (selected >= 0 && static_cast<size_t>(selected) < g_candidates.size()) {
+        return selected;
+    }
+    return g_candidates.size() == 1 ? 0 : -1;
 }
 
 bool write_target() {
@@ -1671,10 +1687,14 @@ bool compensate_head_based_locomotion_axes(float& x, float& y) {
 }
 
 bool read_player_position(Vec3& position) {
-    const int selected = selected_candidate();
-    if (!g_process || selected < 0 ||
-        static_cast<size_t>(selected) >= g_candidates.size()) return false;
-    return read_exact(g_candidates[selected].base + 0x288, &position, sizeof(position));
+    if (!g_process) return false;
+    uintptr_t base = g_active_player_base;
+    if (base == 0) {
+        const int selected = selected_candidate();
+        if (selected < 0 || static_cast<size_t>(selected) >= g_candidates.size()) return false;
+        base = g_candidates[selected].base;
+    }
+    return read_exact(base + kCoordinateOffsets[2], &position, sizeof(position));
 }
 
 bool hytale_has_input_focus() {
@@ -1872,6 +1892,22 @@ void send_injected_mouse_click(bool& state, DWORD down_flag, DWORD up_flag) {
     SendInput(static_cast<UINT>(std::size(inputs)), inputs, sizeof(INPUT));
 }
 
+bool send_virtual_menu_click(UINT down_message, UINT up_message,
+                             WPARAM down_state) {
+    HWND game_window = hytale_window();
+    if (!game_window) return false;
+
+    // lParam stores signed 16-bit client coordinates. Supersampling stays well
+    // below this range, but clamp defensively before packing the message.
+    const LONG x = std::clamp<LONG>(g_menu_mouse_client.x, 0, 32767);
+    const LONG y = std::clamp<LONG>(g_menu_mouse_client.y, 0, 32767);
+    const LPARAM position = MAKELPARAM(static_cast<WORD>(x),
+                                      static_cast<WORD>(y));
+    return PostMessageW(game_window, WM_MOUSEMOVE, 0, position) != FALSE &&
+           PostMessageW(game_window, down_message, down_state, position) != FALSE &&
+           PostMessageW(game_window, up_message, 0, position) != FALSE;
+}
+
 void send_key_tap(WORD virtual_key) {
     const WORD scan_code = scan_code_for_virtual_key(virtual_key);
     if (scan_code == 0) return;
@@ -1969,12 +2005,20 @@ void update_right_hand_attack() {
         set_injected_left_mouse(false);
         set_injected_right_mouse(false);
         if (right_trigger && !g_prev_right_trigger) {
-            send_injected_mouse_click(g_left_mouse_down, MOUSEEVENTF_LEFTDOWN,
-                                      MOUSEEVENTF_LEFTUP);
+            if (!g_menu_mouse_virtual_input ||
+                !send_virtual_menu_click(
+                    WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON)) {
+                send_injected_mouse_click(g_left_mouse_down, MOUSEEVENTF_LEFTDOWN,
+                                          MOUSEEVENTF_LEFTUP);
+            }
         }
         if (left_trigger && !g_prev_left_trigger) {
-            send_injected_mouse_click(g_right_mouse_down, MOUSEEVENTF_RIGHTDOWN,
-                                      MOUSEEVENTF_RIGHTUP);
+            if (!g_menu_mouse_virtual_input ||
+                !send_virtual_menu_click(
+                    WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON)) {
+                send_injected_mouse_click(g_right_mouse_down, MOUSEEVENTF_RIGHTDOWN,
+                                          MOUSEEVENTF_RIGHTUP);
+            }
         }
     } else {
         set_injected_left_mouse(trigger_can_click && right_trigger);
@@ -2044,6 +2088,7 @@ void update_quest_button_actions() {
 
 void update_vr_menu_mouse() {
     g_menu_mouse_active = false;
+    g_menu_mouse_virtual_input = false;
     if (!g_vr_camera_shared ||
         IsDlgButtonChecked(g_window, IDC_VR_MENU_MOUSE) != BST_CHECKED ||
         IsDlgButtonChecked(g_window, IDC_VR_HAND_POINTER) != BST_CHECKED ||
@@ -2114,7 +2159,26 @@ void update_vr_menu_mouse() {
     point.y = static_cast<LONG>(std::lround(g_menu_mouse_filtered_y));
     g_menu_mouse_client = point;
     ClientToScreen(game_window, &point);
-    SetCursorPos(point.x, point.y);
+    const int desktop_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    const int desktop_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    const int desktop_width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    const int desktop_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    const bool physical_cursor_can_reach =
+        desktop_width > 0 && desktop_height > 0 &&
+        point.x >= desktop_x && point.x < desktop_x + desktop_width &&
+        point.y >= desktop_y && point.y < desktop_y + desktop_height;
+    if (physical_cursor_can_reach) {
+        SetCursorPos(point.x, point.y);
+    } else {
+        // A supersampled source window can extend beyond every monitor. Windows
+        // clamps SetCursorPos to the virtual desktop, so deliver the client
+        // coordinate directly to Hytale for those otherwise unreachable areas.
+        const LONG x = std::clamp<LONG>(g_menu_mouse_client.x, 0, 32767);
+        const LONG y = std::clamp<LONG>(g_menu_mouse_client.y, 0, 32767);
+        PostMessageW(game_window, WM_MOUSEMOVE, 0,
+                     MAKELPARAM(static_cast<WORD>(x), static_cast<WORD>(y)));
+        g_menu_mouse_virtual_input = true;
+    }
     g_menu_mouse_active = true;
 }
 
@@ -2359,6 +2423,32 @@ bool is_module_loaded(DWORD pid, const wchar_t* module_name) {
     return found;
 }
 
+void set_vr_hook_failure_status(uint32_t error) {
+    switch (error) {
+    case 1:
+        set_status(L"Camera auto-scan failed. This Hytale version needs a new hook pattern.");
+        break;
+    case 2:
+        set_status(L"SDL_GL_SwapWindow is incompatible. The camera hook was removed cleanly.");
+        break;
+    case 4:
+        set_status(L"Interaction-ray auto-scan failed. This Hytale version needs a new hook pattern.");
+        break;
+    case 5:
+        set_status(L"2D UI hook unavailable on this version. Camera, stereo and interaction remain active.");
+        break;
+    case 6:
+        set_status(L"VR hook worker could not read shared memory. Restart Hytale and the dashboard.");
+        break;
+    case 0:
+        set_status(L"VR hook worker did not report back. Check %TEMP%\\HytaleVR\\hytale_vr_render_debug.log.");
+        break;
+    default:
+        set_status(L"Hook restoration failed. Close the dashboard and restart Hytale.");
+        break;
+    }
+}
+
 bool inject_vr_camera_hook() {
     if (!initialize_vr_camera_mapping()) {
         if (g_vr_camera_mapping_existed) {
@@ -2396,7 +2486,11 @@ bool inject_vr_camera_hook() {
             Sleep(5);
         }
         const bool active = g_vr_camera_shared->hook_active != 0;
-        if (active) focus_hytale_window_and_tap_f7();
+        if (active) {
+            focus_hytale_window_and_tap_f7();
+        } else {
+            set_vr_hook_failure_status(g_vr_camera_shared->hook_error);
+        }
         return active;
     }
 
@@ -2459,30 +2553,8 @@ bool inject_vr_camera_hook() {
          g_vr_camera_shared->hook_error == 0; ++i) {
         Sleep(5);
     }
-    if (g_vr_camera_shared->hook_error != 0) {
-        switch (g_vr_camera_shared->hook_error) {
-        case 1:
-            set_status(L"Camera auto-scan failed. This Hytale version needs a new hook pattern.");
-            break;
-        case 2:
-            set_status(L"SDL_GL_SwapWindow is incompatible. The camera hook was removed cleanly.");
-            break;
-        case 4:
-            set_status(L"Interaction-ray auto-scan failed. Camera hook was removed cleanly.");
-            break;
-        case 5:
-            set_status(L"2D UI hook unavailable on this version. Camera, stereo and interaction remain active.");
-            break;
-        case 6:
-            set_status(L"VR hook worker could not read shared memory. Restart Hytale and the dashboard.");
-            break;
-        default:
-            set_status(L"Hook restoration failed. Close the dashboard and restart Hytale.");
-            break;
-        }
-    }
     if (!g_vr_camera_shared->hook_active) {
-        set_status(L"VR hook worker did not report back. Check %TEMP%\\HytaleVR\\hytale_vr_render_debug.log.");
+        set_vr_hook_failure_status(g_vr_camera_shared->hook_error);
     }
     const bool active = g_vr_camera_shared->hook_active != 0;
     if (active) focus_hytale_window_and_tap_f7();
@@ -2622,11 +2694,14 @@ void recenter_vr_tracking() {
 void shutdown_vr() {
     KillTimer(g_window, kVrTimer);
     g_vr_tracking = false;
+    g_active_player_base = 0;
+    g_player_position_available = false;
     release_quest_keys();
     set_injected_left_mouse(false);
     set_injected_right_mouse(false);
     g_menu_mouse_filter_valid = false;
     g_menu_mouse_active = false;
+    g_menu_mouse_virtual_input = false;
     g_prev_right_trigger = false;
     g_prev_left_trigger = false;
     g_prev_button_x = false;
@@ -2706,12 +2781,15 @@ void start_vr_tracking() {
     if (!inject_vr_camera_hook()) {
         return;
     }
-    if (!read_exact(g_candidates[selected].base + 0x288, &player, sizeof(player))) {
+    const uintptr_t player_base = g_candidates[selected].base;
+    if (!read_exact(player_base + kCoordinateOffsets[2], &player, sizeof(player))) {
         set_status(L"The player block is no longer valid. Scan again.");
         return;
     }
 
     g_target = player;
+    g_active_player_base = player_base;
+    g_player_position_available = true;
     g_vr_tracking = true;
     ++g_vr_recenter_sequence;
     SetTimer(g_window, kVrTimer, 8, nullptr);
@@ -2735,11 +2813,17 @@ void update_vr_tracking() {
 
     Vec3 player{};
     if (!read_player_position(player)) {
-        shutdown_vr();
-        set_status(L"Lost player-block reading. Scan again before recentering VR.");
+        if (g_player_position_available) {
+            g_player_position_available = false;
+            set_status(L"VR remains active, but player coordinates are temporarily unavailable. Scan again to refresh them.");
+        }
         return;
     }
 
+    if (!g_player_position_available) {
+        g_player_position_available = true;
+        set_status(L"VR active. Player-coordinate reading recovered.");
+    }
     g_target = player;
 
     set_float(IDC_TARGET_X, g_target.x);

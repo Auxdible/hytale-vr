@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.0.2] - 2026-08-24
+
+### Hytale prerelease compatibility
+
+- Updated camera, UI/effect, and held-item detection for the latest Hytale prerelease without relying on the previous fixed shader labels and layouts.
+- Added bounded fallback scans for compatible camera and scene data layouts so small client updates are less likely to disable VR startup.
+- Restored item placement at the tracked hand after the prerelease renderer changes.
+
+### Supersampling and menu input
+
+- Reworked source supersampling so the Hytale window stays inside the monitor work area instead of being cropped below the desktop.
+- Applies any remaining requested supersampling in the VR output texture, preserving the selected total render scale without making parts of menus unreachable.
+- Added virtual menu mouse delivery for supersampled coordinates outside the physical Windows desktop.
+- Updated the compiled dashboard version to 1.0.2 so automatic update checks correctly recognize this release after installation.
+
 ## [1.0.1] - 2026-08-01
 
 ### Menu input
