@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.3] - 2026-08-24
+
+### Render performance and frame stability
+
+- Synchronized camera, controller, depth, UI, and held-item data into one immutable snapshot per rendered frame so both eyes consume the same state and resource generation.
+- Preallocated and transactionally replaced the source, eye, depth, and framebuffer resources instead of rebuilding them in the hot render path.
+- Removed shader-registry and item-catalog locks from normal rendering by publishing immutable snapshots after updates.
+- Reused the same tracked-pose snapshot across both eyes and overlays to avoid redundant SteamVR pose reads.
+- Added an opt-in per-stage GPU pipeline profiler through `HYTALE_VR_PROFILE=1`, reporting frame, capture, warp, overlay, submit, and pose-wait timing without adding default logging overhead.
+
 ## [1.0.2] - 2026-08-24
 
 ### Hytale prerelease compatibility

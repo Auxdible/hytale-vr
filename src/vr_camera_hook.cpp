@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "vr_camera_shared.h"
+#include "vr_frame_profiler.h"
 #include "vr_hand_depth.h"
 #include "vr_held_item.h"
 #include "vr_hook_validation.h"
@@ -45,6 +46,7 @@ using hytalevr::multiply;
 HMODULE g_module = nullptr;
 HANDLE g_mapping = nullptr;
 VrCameraShared* g_shared = nullptr;
+hytalevr::VrFrameProfiler g_frame_profiler;
 volatile LONG g_hook_callbacks_in_flight = 0;
 SRWLOCK g_hook_lifecycle_lock = SRWLOCK_INIT;
 std::mutex g_render_log_mutex;
@@ -89,6 +91,9 @@ UiScaleShared* g_ui_scale_shared = nullptr;
 bool menu_visible_recently();
 bool ensure_ui_scale_mapping();
 bool initialize_gl_capture();
+bool ensure_render_target_storage(int source_width, int source_height,
+                                  int output_width, int output_height);
+float active_vr_output_scale(const VrCameraControls& controls);
 bool controller_hand_ndc_for_eye(vr::EVREye eye, float& ndc_x, float& ndc_y, float& depth);
 bool project_tracking_point_to_eye_ndc(int eye, const float hmd[12],
                                        const float absolute[3],
@@ -201,9 +206,15 @@ float g_ui_overlay_anchor_distance = 0.0f;
 GLuint g_eye_textures[2]{};
 GLuint g_afw_source_texture = 0;
 GLuint g_eye_depth_textures[2]{};
+GLuint g_eye_color_fbos[2]{};
+GLuint g_eye_depth_fbos[2]{};
 bool g_eye_valid[2]{};
 bool g_eye_depth_valid[2]{};
 bool g_pre_ui_captured[2]{};
+uint64_t g_render_resource_generation = 0;
+uint64_t g_source_frame_serial = 0;
+uint64_t g_eye_frame_serial[2]{};
+uint64_t g_eye_depth_frame_serial[2]{};
 int g_texture_width = 0;
 int g_texture_height = 0;
 int g_source_texture_width = 0;
@@ -566,8 +577,7 @@ struct PendingHeldItemDetection {
     LONG last_frame = -1;
 };
 
-std::mutex g_item_catalog_mutex;
-std::shared_ptr<hytalevr::VrItemAssetCatalog> g_item_catalog;
+std::atomic<std::shared_ptr<hytalevr::VrItemAssetCatalog>> g_item_catalog;
 std::atomic<int> g_item_catalog_state{0};
 std::thread g_item_catalog_thread;
 LoadedVrItemState g_loaded_items[2];
@@ -686,10 +696,7 @@ void ensure_item_catalog_loading() {
             }
             const size_t definitions = catalog->definitions.size();
             const size_t candidates = catalog->texture_candidates.size();
-            {
-                std::lock_guard<std::mutex> lock(g_item_catalog_mutex);
-                g_item_catalog = std::move(catalog);
-            }
+            g_item_catalog.store(std::move(catalog), std::memory_order_release);
             g_item_catalog_state.store(2);
             std::ostringstream out;
             out << "item assets: catalog ready definitions=" << definitions
@@ -2075,6 +2082,34 @@ struct HeldItemAtlasSnapshot {
     bool valid = false;
 };
 
+struct RenderFrameSnapshot {
+    uint64_t serial = 0;
+    uint64_t resource_generation = 0;
+    VrCameraControls controls{};
+    float hmd_pose[12]{};
+    float controller_pose[2][12]{};
+    bool hmd_valid = false;
+    bool controller_valid[2]{};
+    Matrix4 source_projection = identity_matrix();
+    Matrix4 eye_projection[2]{identity_matrix(), identity_matrix()};
+    Matrix4 source_to_eye_view[2]{identity_matrix(), identity_matrix()};
+    bool camera_valid = false;
+    SceneDepthTextureSnapshot scene_depth{};
+    DistortionTextureSnapshot distortion{};
+    HeldItemDepthTextureSnapshot held_item{};
+    HeldItemAtlasSnapshot item_atlas{};
+    LONG ui_frame = -1;
+    GLuint menu_texture = 0;
+    int menu_width = 0;
+    int menu_height = 0;
+    LONG menu_texture_frame = -1;
+    LONG menu_capture_error = 0;
+    bool active = false;
+};
+
+RenderFrameSnapshot g_render_frame{};
+uint64_t g_next_render_frame_serial = 0;
+
 SceneDepthTextureSnapshot scene_depth_texture_snapshot() {
     SceneDepthTextureSnapshot snapshot{};
     if (!ensure_ui_scale_mapping() || !g_ui_scale_shared) return snapshot;
@@ -2957,11 +2992,8 @@ bool ensure_torch_flame_texture() {
         return false;
     }
 
-    std::shared_ptr<hytalevr::VrItemAssetCatalog> catalog;
-    {
-        std::lock_guard<std::mutex> lock(g_item_catalog_mutex);
-        catalog = g_item_catalog;
-    }
+    const std::shared_ptr<hytalevr::VrItemAssetCatalog> catalog =
+        g_item_catalog.load(std::memory_order_acquire);
     if (!catalog) return false;
 
     g_torch_flame_texture_attempted = true;
@@ -3017,11 +3049,8 @@ void update_held_item_assets(const HeldItemAtlasSnapshot& snapshot) {
     }
     g_last_item_detection_frame = snapshot.frame;
     const ULONGLONG now = GetTickCount64();
-    std::shared_ptr<hytalevr::VrItemAssetCatalog> catalog;
-    {
-        std::lock_guard<std::mutex> lock(g_item_catalog_mutex);
-        catalog = g_item_catalog;
-    }
+    const std::shared_ptr<hytalevr::VrItemAssetCatalog> catalog =
+        g_item_catalog.load(std::memory_order_acquire);
     if (!catalog) return;
 
     for (int side = 0; side < 2; ++side) {
@@ -3356,7 +3385,9 @@ void draw_vr_item_models(int eye, int width, int height,
                          const float controller_poses[2][12],
                          const bool controller_valid[2],
                          const VrCameraControls& controls) {
-    const HeldItemAtlasSnapshot snapshot = held_item_atlas_snapshot();
+    const HeldItemAtlasSnapshot snapshot = g_render_frame.active
+        ? g_render_frame.item_atlas
+        : held_item_atlas_snapshot();
     if (snapshot.valid) update_held_item_assets(snapshot);
     const LONG presence_mask = held_item_presence_mask();
     const ULONGLONG now = GetTickCount64();
@@ -3593,6 +3624,128 @@ DistortionTextureSnapshot distortion_texture_snapshot() {
     snapshot.valid = true;
     return snapshot;
 }
+
+void begin_render_frame_snapshot(const VrCameraControls& controls) {
+    RenderFrameSnapshot next{};
+    next.serial = ++g_next_render_frame_serial;
+    next.resource_generation = g_render_resource_generation;
+    next.controls = controls;
+
+    AcquireSRWLockShared(&g_pose_lock);
+    next.hmd_valid = g_hmd_current_valid;
+    next.controller_valid[0] = g_left_controller_valid;
+    next.controller_valid[1] = g_right_controller_valid;
+    if (next.hmd_valid) {
+        std::copy(std::begin(g_hmd_current_pose), std::end(g_hmd_current_pose),
+                  std::begin(next.hmd_pose));
+    }
+    if (next.controller_valid[0]) {
+        std::copy(std::begin(g_left_controller_pose), std::end(g_left_controller_pose),
+                  std::begin(next.controller_pose[0]));
+    }
+    if (next.controller_valid[1]) {
+        std::copy(std::begin(g_right_controller_pose), std::end(g_right_controller_pose),
+                  std::begin(next.controller_pose[1]));
+    }
+    ReleaseSRWLockShared(&g_pose_lock);
+
+    AcquireSRWLockShared(&g_camera_lock);
+    next.camera_valid = g_afw_camera_valid;
+    next.source_projection = g_afw_source_projection;
+    next.eye_projection[0] = g_afw_eye_projection[0];
+    next.eye_projection[1] = g_afw_eye_projection[1];
+    next.source_to_eye_view[0] = g_afw_source_to_eye_view[0];
+    next.source_to_eye_view[1] = g_afw_source_to_eye_view[1];
+    ReleaseSRWLockShared(&g_camera_lock);
+
+    next.scene_depth = scene_depth_texture_snapshot();
+    next.distortion = distortion_texture_snapshot();
+    next.held_item = held_item_depth_texture_snapshot();
+    next.item_atlas = held_item_atlas_snapshot();
+    if (g_ui_scale_shared) {
+        next.ui_frame = InterlockedCompareExchange(
+            &g_ui_scale_shared->renderFrameSequence, 0, 0);
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            const LONG frame_before = InterlockedCompareExchange(
+                &g_ui_scale_shared->menuTextureFrame, 0, 0);
+            const LONG texture = InterlockedCompareExchange(
+                &g_ui_scale_shared->menuTextureId, 0, 0);
+            const LONG width = InterlockedCompareExchange(
+                &g_ui_scale_shared->menuTextureWidth, 0, 0);
+            const LONG height = InterlockedCompareExchange(
+                &g_ui_scale_shared->menuTextureHeight, 0, 0);
+            const LONG capture_error = InterlockedCompareExchange(
+                &g_ui_scale_shared->menuCaptureError, 0, 0);
+            MemoryBarrier();
+            const LONG frame_after = InterlockedCompareExchange(
+                &g_ui_scale_shared->menuTextureFrame, 0, 0);
+            if (frame_before == frame_after) {
+                next.menu_texture = texture > 0 ? static_cast<GLuint>(texture) : 0;
+                next.menu_width = static_cast<int>((std::max)(0L, width));
+                next.menu_height = static_cast<int>((std::max)(0L, height));
+                next.menu_texture_frame = frame_after;
+                next.menu_capture_error = capture_error;
+                break;
+            }
+        }
+    }
+    next.active = true;
+    g_render_frame = next;
+}
+
+void end_render_frame_snapshot() {
+    g_render_frame.active = false;
+}
+
+void copy_render_pose_snapshot(float hmd[12], bool& hmd_valid,
+                               float controllers[2][12],
+                               bool controller_valid[2]) {
+    if (g_render_frame.active) {
+        hmd_valid = g_render_frame.hmd_valid;
+        controller_valid[0] = g_render_frame.controller_valid[0];
+        controller_valid[1] = g_render_frame.controller_valid[1];
+        if (hmd_valid) {
+            std::copy(std::begin(g_render_frame.hmd_pose),
+                      std::end(g_render_frame.hmd_pose), hmd);
+        }
+        for (int side = 0; side < 2; ++side) {
+            if (controller_valid[side]) {
+                std::copy(std::begin(g_render_frame.controller_pose[side]),
+                          std::end(g_render_frame.controller_pose[side]),
+                          controllers[side]);
+            }
+        }
+        return;
+    }
+
+    AcquireSRWLockShared(&g_pose_lock);
+    hmd_valid = g_hmd_current_valid;
+    controller_valid[0] = g_left_controller_valid;
+    controller_valid[1] = g_right_controller_valid;
+    if (hmd_valid) {
+        std::copy(std::begin(g_hmd_current_pose), std::end(g_hmd_current_pose), hmd);
+    }
+    if (controller_valid[0]) {
+        std::copy(std::begin(g_left_controller_pose),
+                  std::end(g_left_controller_pose), controllers[0]);
+    }
+    if (controller_valid[1]) {
+        std::copy(std::begin(g_right_controller_pose),
+                  std::end(g_right_controller_pose), controllers[1]);
+    }
+    ReleaseSRWLockShared(&g_pose_lock);
+}
+
+class RenderFrameScope {
+public:
+    explicit RenderFrameScope(const VrCameraControls& controls) {
+        begin_render_frame_snapshot(controls);
+    }
+    ~RenderFrameScope() { end_render_frame_snapshot(); }
+
+    RenderFrameScope(const RenderFrameScope&) = delete;
+    RenderFrameScope& operator=(const RenderFrameScope&) = delete;
+};
 
 bool is_writable_page(DWORD protect) {
     if (protect & (PAGE_GUARD | PAGE_NOACCESS)) return false;
@@ -3838,6 +3991,20 @@ void reset_eye_capture_resources(const char* reason) {
         glDeleteTextures(2, g_eye_depth_textures);
         g_eye_depth_textures[0] = g_eye_depth_textures[1] = 0;
     }
+    if (g_capture_fbo && g_gl_delete_framebuffers) {
+        g_gl_delete_framebuffers(1, &g_capture_fbo);
+        g_capture_fbo = 0;
+    }
+    if ((g_eye_color_fbos[0] || g_eye_color_fbos[1]) &&
+        g_gl_delete_framebuffers) {
+        g_gl_delete_framebuffers(2, g_eye_color_fbos);
+        g_eye_color_fbos[0] = g_eye_color_fbos[1] = 0;
+    }
+    if ((g_eye_depth_fbos[0] || g_eye_depth_fbos[1]) &&
+        g_gl_delete_framebuffers) {
+        g_gl_delete_framebuffers(2, g_eye_depth_fbos);
+        g_eye_depth_fbos[0] = g_eye_depth_fbos[1] = 0;
+    }
     g_eye_valid[0] = false;
     g_eye_valid[1] = false;
     g_eye_depth_valid[0] = g_eye_depth_valid[1] = false;
@@ -3847,6 +4014,10 @@ void reset_eye_capture_resources(const char* reason) {
     g_texture_height = 0;
     g_source_texture_width = 0;
     g_source_texture_height = 0;
+    g_source_frame_serial = 0;
+    g_eye_frame_serial[0] = g_eye_frame_serial[1] = 0;
+    g_eye_depth_frame_serial[0] = g_eye_depth_frame_serial[1] = 0;
+    ++g_render_resource_generation;
     InterlockedExchange(&g_engine_render_pass, 0);
     InterlockedExchange(&g_engine_stereo_pair_ready, 0);
     InterlockedExchange(&g_render_eye, 0);
@@ -5498,6 +5669,8 @@ void update_vr_actions() {
 }
 
 bool synchronize_openvr(const VrCameraControls& controls) {
+    hytalevr::VrProfileScope profile_scope(
+        g_frame_profiler, hytalevr::VrProfileStage::WaitPoses);
     auto* compositor = vr::VRCompositor();
     if (!compositor) return false;
 
@@ -5777,6 +5950,27 @@ bool prepare_render_resolution(void* window, const VrCameraControls& controls) {
     g_shared->recommended_height = recommended_height;
     g_shared->backbuffer_width = pixel_width;
     g_shared->backbuffer_height = pixel_height;
+    GLint render_viewport[4]{};
+    glGetIntegerv(GL_VIEWPORT, render_viewport);
+    const int source_width = render_viewport[2] > 0
+        ? render_viewport[2]
+        : pixel_width;
+    const int source_height = render_viewport[3] > 0
+        ? render_viewport[3]
+        : pixel_height;
+    GLint max_texture_size = 4096;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture_size);
+    const hytalevr::RenderResolution output_resolution =
+        hytalevr::scaled_render_resolution(
+            source_width, source_height, active_vr_output_scale(controls),
+            max_texture_size);
+    if (output_resolution.width <= 0 || output_resolution.height <= 0 ||
+        !ensure_render_target_storage(source_width, source_height,
+                                      output_resolution.width,
+                                      output_resolution.height)) {
+        g_shared->resolution_error = 3;
+        return false;
+    }
     g_shared->resolution_error = 0;
     static int last_logged_width = 0;
     static int last_logged_height = 0;
@@ -5814,14 +6008,155 @@ bool initialize_gl_capture() {
         g_gl_check_framebuffer_status = reinterpret_cast<GlCheckFramebufferStatusFn>(
             wglGetProcAddress("glCheckFramebufferStatus"));
     }
-    if (!g_gl_gen_framebuffers || !g_gl_bind_framebuffer ||
+    if (!g_gl_gen_framebuffers || !g_gl_delete_framebuffers ||
+        !g_gl_bind_framebuffer ||
         !g_gl_framebuffer_texture_2d || !g_gl_blit_framebuffer ||
         !g_gl_check_framebuffer_status) {
         return false;
     }
-    if (g_capture_fbo) return true;
-    g_gl_gen_framebuffers(1, &g_capture_fbo);
-    return g_capture_fbo != 0;
+    return true;
+}
+
+bool ensure_render_target_storage(int source_width, int source_height,
+                                  int output_width, int output_height) {
+    if (source_width <= 0 || source_height <= 0 ||
+        output_width <= 0 || output_height <= 0 ||
+        !initialize_gl_capture()) {
+        return false;
+    }
+    if (g_capture_fbo && g_eye_color_fbos[0] && g_eye_color_fbos[1] &&
+        g_eye_depth_fbos[0] && g_eye_depth_fbos[1] &&
+        g_afw_source_texture && g_eye_textures[0] && g_eye_textures[1] &&
+        g_eye_depth_textures[0] && g_eye_depth_textures[1] &&
+        source_width == g_source_texture_width &&
+        source_height == g_source_texture_height &&
+        output_width == g_texture_width && output_height == g_texture_height) {
+        return true;
+    }
+
+    GLint previous_texture = 0;
+    GLint previous_read_fbo = 0;
+    GLint previous_draw_fbo = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture);
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING_VALUE, &previous_read_fbo);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_VALUE, &previous_draw_fbo);
+
+    GLuint source_texture = 0;
+    GLuint eye_textures[2]{};
+    GLuint depth_textures[2]{};
+    GLuint capture_fbo = 0;
+    GLuint eye_color_fbos[2]{};
+    GLuint eye_depth_fbos[2]{};
+    glGenTextures(1, &source_texture);
+    glGenTextures(2, eye_textures);
+    glGenTextures(2, depth_textures);
+    g_gl_gen_framebuffers(1, &capture_fbo);
+    g_gl_gen_framebuffers(2, eye_color_fbos);
+    g_gl_gen_framebuffers(2, eye_depth_fbos);
+
+    auto configure_color = [](GLuint texture, int width, int height) {
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_VALUE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE_VALUE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    };
+    auto configure_depth = [](GLuint texture, int width, int height) {
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_VALUE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE_VALUE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F_VALUE, width, height, 0,
+                     GL_RED_VALUE, GL_FLOAT, nullptr);
+    };
+
+    bool complete = source_texture && eye_textures[0] && eye_textures[1] &&
+        depth_textures[0] && depth_textures[1] && capture_fbo &&
+        eye_color_fbos[0] && eye_color_fbos[1] &&
+        eye_depth_fbos[0] && eye_depth_fbos[1];
+    if (complete) {
+        configure_color(source_texture, source_width, source_height);
+        configure_color(eye_textures[0], output_width, output_height);
+        configure_color(eye_textures[1], output_width, output_height);
+        configure_depth(depth_textures[0], output_width, output_height);
+        configure_depth(depth_textures[1], output_width, output_height);
+
+        g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE, capture_fbo);
+        g_gl_framebuffer_texture_2d(GL_DRAW_FRAMEBUFFER_VALUE,
+                                    GL_COLOR_ATTACHMENT0_VALUE,
+                                    GL_TEXTURE_2D, source_texture, 0);
+        complete = g_gl_check_framebuffer_status(GL_DRAW_FRAMEBUFFER_VALUE) ==
+            GL_FRAMEBUFFER_COMPLETE_VALUE;
+        for (int eye = 0; eye < 2 && complete; ++eye) {
+            g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE, eye_color_fbos[eye]);
+            g_gl_framebuffer_texture_2d(GL_DRAW_FRAMEBUFFER_VALUE,
+                                        GL_COLOR_ATTACHMENT0_VALUE,
+                                        GL_TEXTURE_2D, eye_textures[eye], 0);
+            complete = g_gl_check_framebuffer_status(GL_DRAW_FRAMEBUFFER_VALUE) ==
+                GL_FRAMEBUFFER_COMPLETE_VALUE;
+            g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE, eye_depth_fbos[eye]);
+            g_gl_framebuffer_texture_2d(GL_DRAW_FRAMEBUFFER_VALUE,
+                                        GL_COLOR_ATTACHMENT0_VALUE,
+                                        GL_TEXTURE_2D, depth_textures[eye], 0);
+            complete = complete &&
+                g_gl_check_framebuffer_status(GL_DRAW_FRAMEBUFFER_VALUE) ==
+                    GL_FRAMEBUFFER_COMPLETE_VALUE;
+        }
+    }
+
+    g_gl_bind_framebuffer(GL_READ_FRAMEBUFFER_VALUE,
+                          static_cast<GLuint>(previous_read_fbo));
+    g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE,
+                          static_cast<GLuint>(previous_draw_fbo));
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture));
+
+    if (!complete) {
+        if (source_texture) glDeleteTextures(1, &source_texture);
+        glDeleteTextures(2, eye_textures);
+        glDeleteTextures(2, depth_textures);
+        if (capture_fbo) g_gl_delete_framebuffers(1, &capture_fbo);
+        g_gl_delete_framebuffers(2, eye_color_fbos);
+        g_gl_delete_framebuffers(2, eye_depth_fbos);
+        return false;
+    }
+
+    if (g_afw_source_texture) glDeleteTextures(1, &g_afw_source_texture);
+    if (g_eye_textures[0] || g_eye_textures[1]) glDeleteTextures(2, g_eye_textures);
+    if (g_eye_depth_textures[0] || g_eye_depth_textures[1]) {
+        glDeleteTextures(2, g_eye_depth_textures);
+    }
+    if (g_capture_fbo) g_gl_delete_framebuffers(1, &g_capture_fbo);
+    if (g_eye_color_fbos[0] || g_eye_color_fbos[1]) {
+        g_gl_delete_framebuffers(2, g_eye_color_fbos);
+    }
+    if (g_eye_depth_fbos[0] || g_eye_depth_fbos[1]) {
+        g_gl_delete_framebuffers(2, g_eye_depth_fbos);
+    }
+
+    g_afw_source_texture = source_texture;
+    std::copy(std::begin(eye_textures), std::end(eye_textures),
+              std::begin(g_eye_textures));
+    std::copy(std::begin(depth_textures), std::end(depth_textures),
+              std::begin(g_eye_depth_textures));
+    g_capture_fbo = capture_fbo;
+    std::copy(std::begin(eye_color_fbos), std::end(eye_color_fbos),
+              std::begin(g_eye_color_fbos));
+    std::copy(std::begin(eye_depth_fbos), std::end(eye_depth_fbos),
+              std::begin(g_eye_depth_fbos));
+    g_source_texture_width = source_width;
+    g_source_texture_height = source_height;
+    g_texture_width = output_width;
+    g_texture_height = output_height;
+    g_eye_valid[0] = g_eye_valid[1] = false;
+    g_eye_depth_valid[0] = g_eye_depth_valid[1] = false;
+    g_source_frame_serial = 0;
+    g_eye_frame_serial[0] = g_eye_frame_serial[1] = 0;
+    g_eye_depth_frame_serial[0] = g_eye_depth_frame_serial[1] = 0;
+    ++g_render_resource_generation;
+    return true;
 }
 
 bool ensure_ui_overlay(float width_meters, float distance_meters,
@@ -5857,13 +6192,10 @@ bool ensure_ui_overlay(float width_meters, float distance_meters,
 
     float hmd[12]{};
     bool hmd_valid = false;
-    AcquireSRWLockShared(&g_pose_lock);
-    hmd_valid = g_hmd_current_valid;
-    if (hmd_valid) {
-        std::copy(std::begin(g_hmd_current_pose), std::end(g_hmd_current_pose),
-                  std::begin(hmd));
-    }
-    ReleaseSRWLockShared(&g_pose_lock);
+    float unused_controllers[2][12]{};
+    bool unused_controller_valid[2]{};
+    copy_render_pose_snapshot(hmd, hmd_valid, unused_controllers,
+                              unused_controller_valid);
     float absolute_pose[12]{};
     if (!hmd_valid ||
         !hytalevr::make_world_locked_ui_pose(hmd, distance, absolute_pose)) {
@@ -5937,21 +6269,32 @@ bool menu_texture_fresh(LONG menu_frame, ULONGLONG now) {
 
 void publish_menu_overlay_texture(GLuint texture_id, const VrCameraControls& controls) {
     (void)texture_id;
-    const GLuint menu_texture = g_ui_scale_shared
-        ? static_cast<GLuint>(InterlockedCompareExchange(&g_ui_scale_shared->menuTextureId, 0, 0))
-        : 0;
-    const LONG menu_width = g_ui_scale_shared
-        ? InterlockedCompareExchange(&g_ui_scale_shared->menuTextureWidth, 0, 0)
-        : 0;
-    const LONG menu_height = g_ui_scale_shared
-        ? InterlockedCompareExchange(&g_ui_scale_shared->menuTextureHeight, 0, 0)
-        : 0;
-    const LONG capture_error = g_ui_scale_shared
-        ? InterlockedCompareExchange(&g_ui_scale_shared->menuCaptureError, 0, 0)
-        : 0;
-    const LONG menu_frame = g_ui_scale_shared
-        ? InterlockedCompareExchange(&g_ui_scale_shared->menuTextureFrame, 0, 0)
-        : 0;
+    const GLuint menu_texture = g_render_frame.active
+        ? g_render_frame.menu_texture
+        : (g_ui_scale_shared
+            ? static_cast<GLuint>(InterlockedCompareExchange(
+                  &g_ui_scale_shared->menuTextureId, 0, 0))
+            : 0);
+    const LONG menu_width = g_render_frame.active
+        ? static_cast<LONG>(g_render_frame.menu_width)
+        : (g_ui_scale_shared
+            ? InterlockedCompareExchange(&g_ui_scale_shared->menuTextureWidth, 0, 0)
+            : 0);
+    const LONG menu_height = g_render_frame.active
+        ? static_cast<LONG>(g_render_frame.menu_height)
+        : (g_ui_scale_shared
+            ? InterlockedCompareExchange(&g_ui_scale_shared->menuTextureHeight, 0, 0)
+            : 0);
+    const LONG capture_error = g_render_frame.active
+        ? g_render_frame.menu_capture_error
+        : (g_ui_scale_shared
+            ? InterlockedCompareExchange(&g_ui_scale_shared->menuCaptureError, 0, 0)
+            : 0);
+    const LONG menu_frame = g_render_frame.active
+        ? g_render_frame.menu_texture_frame
+        : (g_ui_scale_shared
+            ? InterlockedCompareExchange(&g_ui_scale_shared->menuTextureFrame, 0, 0)
+            : 0);
     const ULONGLONG now = GetTickCount64();
     const bool menu_texture_is_recent = menu_texture_fresh(menu_frame, now);
     const bool menu_ui_mode =
@@ -6187,13 +6530,17 @@ bool controller_pointer_pixel(int eye, int width, int height, float distance,
             return false;
         }
         float controller_pose[12]{};
-        AcquireSRWLockShared(&g_pose_lock);
-        const bool overlay_pose_valid = g_right_controller_valid;
+        float hmd_pose[12]{};
+        float controller_poses[2][12]{};
+        bool hmd_pose_valid = false;
+        bool controller_valid[2]{};
+        copy_render_pose_snapshot(hmd_pose, hmd_pose_valid, controller_poses,
+                                  controller_valid);
+        const bool overlay_pose_valid = controller_valid[1];
         if (overlay_pose_valid) {
-            std::copy(std::begin(g_right_controller_pose), std::end(g_right_controller_pose),
-                      std::begin(controller_pose));
+            std::copy(std::begin(controller_poses[1]),
+                      std::end(controller_poses[1]), controller_pose);
         }
-        ReleaseSRWLockShared(&g_pose_lock);
         auto* overlay = vr::VROverlay();
         if (overlay_pose_valid && overlay) {
             vr::VROverlayIntersectionParams_t params{};
@@ -6223,14 +6570,16 @@ bool controller_pointer_pixel(int eye, int width, int height, float distance,
     }
     float hmd[12]{};
     float controller[12]{};
-    AcquireSRWLockShared(&g_pose_lock);
-    const bool valid = g_hmd_current_valid && g_right_controller_valid;
+    float controller_poses[2][12]{};
+    bool hmd_valid = false;
+    bool controller_valid[2]{};
+    copy_render_pose_snapshot(hmd, hmd_valid, controller_poses,
+                              controller_valid);
+    const bool valid = hmd_valid && controller_valid[1];
     if (valid) {
-        std::copy(std::begin(g_hmd_current_pose), std::end(g_hmd_current_pose), std::begin(hmd));
-        std::copy(std::begin(g_right_controller_pose), std::end(g_right_controller_pose),
-                  std::begin(controller));
+        std::copy(std::begin(controller_poses[1]),
+                  std::end(controller_poses[1]), controller);
     }
-    ReleaseSRWLockShared(&g_pose_lock);
     if (!valid) return false;
 
     const float pointer_distance = std::clamp(distance, 0.5f, 10.0f);
@@ -6321,15 +6670,16 @@ bool controller_hand_ndc_for_eye(vr::EVREye eye, float& ndc_x,
                                  float& ndc_y, float& depth) {
     float hmd[12]{};
     float controller[12]{};
-    AcquireSRWLockShared(&g_pose_lock);
-    const bool valid = g_hmd_current_valid && g_right_controller_valid;
+    float controller_poses[2][12]{};
+    bool hmd_valid = false;
+    bool controller_valid[2]{};
+    copy_render_pose_snapshot(hmd, hmd_valid, controller_poses,
+                              controller_valid);
+    const bool valid = hmd_valid && controller_valid[1];
     if (valid) {
-        std::copy(std::begin(g_hmd_current_pose), std::end(g_hmd_current_pose),
-                  std::begin(hmd));
-        std::copy(std::begin(g_right_controller_pose), std::end(g_right_controller_pose),
-                  std::begin(controller));
+        std::copy(std::begin(controller_poses[1]),
+                  std::end(controller_poses[1]), controller);
     }
-    ReleaseSRWLockShared(&g_pose_lock);
     if (!valid) return false;
 
     float absolute[3]{};
@@ -6405,15 +6755,16 @@ void draw_controller_hand_proxy(int eye, int width, int height,
 
     float hmd[12]{};
     float controller[12]{};
-    AcquireSRWLockShared(&g_pose_lock);
-    const bool valid = g_hmd_current_valid && g_right_controller_valid;
+    float controller_poses[2][12]{};
+    bool hmd_valid = false;
+    bool controller_valid[2]{};
+    copy_render_pose_snapshot(hmd, hmd_valid, controller_poses,
+                              controller_valid);
+    const bool valid = hmd_valid && controller_valid[1];
     if (valid) {
-        std::copy(std::begin(g_hmd_current_pose), std::end(g_hmd_current_pose),
-                  std::begin(hmd));
-        std::copy(std::begin(g_right_controller_pose), std::end(g_right_controller_pose),
-                  std::begin(controller));
+        std::copy(std::begin(controller_poses[1]),
+                  std::end(controller_poses[1]), controller);
     }
-    ReleaseSRWLockShared(&g_pose_lock);
     if (!valid) return;
 
     float origin[3]{};
@@ -6523,23 +6874,9 @@ void draw_vr_hand_model(int eye, int width, int height,
     float hmd[12]{};
     float controller_poses[2][12]{};
     bool controller_valid[2]{};
-    AcquireSRWLockShared(&g_pose_lock);
-    const bool hmd_valid = g_hmd_current_valid;
-    if (hmd_valid) {
-        std::copy(std::begin(g_hmd_current_pose), std::end(g_hmd_current_pose),
-                  std::begin(hmd));
-        controller_valid[0] = g_left_controller_valid;
-        controller_valid[1] = g_right_controller_valid;
-        if (controller_valid[0]) {
-            std::copy(std::begin(g_left_controller_pose), std::end(g_left_controller_pose),
-                      std::begin(controller_poses[0]));
-        }
-        if (controller_valid[1]) {
-            std::copy(std::begin(g_right_controller_pose), std::end(g_right_controller_pose),
-                      std::begin(controller_poses[1]));
-        }
-    }
-    ReleaseSRWLockShared(&g_pose_lock);
+    bool hmd_valid = false;
+    copy_render_pose_snapshot(hmd, hmd_valid, controller_poses,
+                              controller_valid);
     if (!hmd_valid || (!controller_valid[0] && !controller_valid[1])) return;
     const float world_scale = validated_world_scale(controls);
     for (int hand = 0; hand < 2; ++hand) {
@@ -6785,41 +7122,14 @@ bool capture_eye(int eye, const VrCameraControls& controls, bool include_vr_over
                                            output_scale, max_texture_size);
     if (output_resolution.width <= 0 || output_resolution.height <= 0) return false;
 
-    if (source_width != g_source_texture_width ||
-        source_height != g_source_texture_height ||
-        output_resolution.width != g_texture_width ||
-        output_resolution.height != g_texture_height) {
-        if (g_eye_textures[0] || g_eye_textures[1]) {
-            glDeleteTextures(2, g_eye_textures);
-            g_eye_textures[0] = g_eye_textures[1] = 0;
-        }
-        if (g_afw_source_texture) glDeleteTextures(1, &g_afw_source_texture);
-        g_afw_source_texture = 0;
-        if (g_eye_depth_textures[0] || g_eye_depth_textures[1]) {
-            glDeleteTextures(2, g_eye_depth_textures);
-            g_eye_depth_textures[0] = g_eye_depth_textures[1] = 0;
-        }
-        g_eye_valid[0] = g_eye_valid[1] = false;
-        g_eye_depth_valid[0] = g_eye_depth_valid[1] = false;
-        g_pre_ui_captured[0] = g_pre_ui_captured[1] = false;
-        g_source_texture_width = source_width;
-        g_source_texture_height = source_height;
-        g_texture_width = output_resolution.width;
-        g_texture_height = output_resolution.height;
+    if (!ensure_render_target_storage(source_width, source_height,
+                                      output_resolution.width,
+                                      output_resolution.height)) {
+        return false;
     }
 
     GLint previous_texture = 0;
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture);
-    if (!g_afw_source_texture) {
-        glGenTextures(1, &g_afw_source_texture);
-        glBindTexture(GL_TEXTURE_2D, g_afw_source_texture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_VALUE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE_VALUE);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, source_width, source_height, 0,
-                     GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    }
     const ULONGLONG capture_log_now = GetTickCount64();
     if (render_logging_enabled() && capture_log_now - g_last_capture_diag_tick >= 1500) {
         GLint read_fbo_for_log = 0;
@@ -6851,8 +7161,6 @@ bool capture_eye(int eye, const VrCameraControls& controls, bool include_vr_over
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING_VALUE, &previous_read_fbo);
         glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_VALUE, &previous_draw_fbo);
         g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE, g_capture_fbo);
-        g_gl_framebuffer_texture_2d(GL_DRAW_FRAMEBUFFER_VALUE, GL_COLOR_ATTACHMENT0_VALUE,
-                                    GL_TEXTURE_2D, g_afw_source_texture, 0);
         if (g_gl_check_framebuffer_status(GL_DRAW_FRAMEBUFFER_VALUE) !=
             GL_FRAMEBUFFER_COMPLETE_VALUE) {
             g_gl_bind_framebuffer(GL_READ_FRAMEBUFFER_VALUE, static_cast<GLuint>(previous_read_fbo));
@@ -6925,19 +7233,10 @@ bool capture_native_eye(int eye, const VrCameraControls& controls) {
                                            output_scale, max_texture_size);
     if (output_resolution.width <= 0 || output_resolution.height <= 0) return false;
 
-    if (source_width != g_source_texture_width ||
-        source_height != g_source_texture_height ||
-        output_resolution.width != g_texture_width ||
-        output_resolution.height != g_texture_height) {
-        if (g_eye_textures[0] || g_eye_textures[1]) {
-            glDeleteTextures(2, g_eye_textures);
-            g_eye_textures[0] = g_eye_textures[1] = 0;
-        }
-        g_eye_valid[0] = g_eye_valid[1] = false;
-        g_source_texture_width = source_width;
-        g_source_texture_height = source_height;
-        g_texture_width = output_resolution.width;
-        g_texture_height = output_resolution.height;
+    if (!ensure_render_target_storage(source_width, source_height,
+                                      output_resolution.width,
+                                      output_resolution.height)) {
+        return false;
     }
 
     GLint previous_texture = 0;
@@ -6949,20 +7248,7 @@ bool capture_native_eye(int eye, const VrCameraControls& controls) {
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_VALUE, &previous_draw_fbo);
     glGetIntegerv(GL_VIEWPORT, previous_viewport);
 
-    if (!g_eye_textures[eye]) {
-        glGenTextures(1, &g_eye_textures[eye]);
-        glBindTexture(GL_TEXTURE_2D, g_eye_textures[eye]);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_VALUE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE_VALUE);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, g_texture_width, g_texture_height,
-                     0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    }
-
-    g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE, g_capture_fbo);
-    g_gl_framebuffer_texture_2d(GL_DRAW_FRAMEBUFFER_VALUE, GL_COLOR_ATTACHMENT0_VALUE,
-                                GL_TEXTURE_2D, g_eye_textures[eye], 0);
+    g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE, g_eye_color_fbos[eye]);
     bool success = g_gl_check_framebuffer_status(GL_DRAW_FRAMEBUFFER_VALUE) ==
         GL_FRAMEBUFFER_COMPLETE_VALUE;
     if (success) {
@@ -6988,6 +7274,9 @@ bool capture_native_eye(int eye, const VrCameraControls& controls) {
                previous_viewport[2], previous_viewport[3]);
     glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture));
     g_eye_valid[eye] = success;
+    g_eye_frame_serial[eye] = success && g_render_frame.active
+        ? g_render_frame.serial
+        : 0;
     if (g_shared) {
         g_shared->capture_width = source_width;
         g_shared->capture_height = source_height;
@@ -7058,19 +7347,29 @@ int engine_render_pass_complete(void*, int render_world) {
 }
 
 bool preserve_afw_source_texture(int captured_eye) {
-    return captured_eye >= 0 && captured_eye <= 1 && g_eye_valid[captured_eye] &&
-           g_afw_source_texture != 0 && g_source_texture_width > 0 &&
-           g_source_texture_height > 0;
+    const bool valid = captured_eye >= 0 && captured_eye <= 1 &&
+        g_eye_valid[captured_eye] && g_afw_source_texture != 0 &&
+        g_source_texture_width > 0 && g_source_texture_height > 0;
+    if (valid) {
+        g_source_frame_serial = g_render_frame.active ? g_render_frame.serial : 0;
+    }
+    return valid;
 }
 
 bool warp_source_to_eye(GLuint source_texture, int target_eye,
                         const VrCameraControls& controls) {
     if (!source_texture || target_eye < 0 || target_eye > 1 ||
-        g_texture_width <= 0 || g_texture_height <= 0) {
+        g_texture_width <= 0 || g_texture_height <= 0 ||
+        !g_eye_textures[target_eye] || !g_eye_depth_textures[target_eye] ||
+        !g_eye_color_fbos[target_eye] || !g_eye_depth_fbos[target_eye]) {
         return false;
     }
-    const SceneDepthTextureSnapshot depth = scene_depth_texture_snapshot();
-    const DistortionTextureSnapshot distortion = distortion_texture_snapshot();
+    const SceneDepthTextureSnapshot depth = g_render_frame.active
+        ? g_render_frame.scene_depth
+        : scene_depth_texture_snapshot();
+    const DistortionTextureSnapshot distortion = g_render_frame.active
+        ? g_render_frame.distortion
+        : distortion_texture_snapshot();
     if (!depth.valid || !depth.texture || !initialize_gl_capture() ||
         !ensure_afw_gl_renderer()) {
         return false;
@@ -7089,12 +7388,20 @@ bool warp_source_to_eye(GLuint source_texture, int target_eye,
     Matrix4 source_projection{};
     Matrix4 target_projection{};
     Matrix4 source_to_target_view{};
-    AcquireSRWLockShared(&g_camera_lock);
-    const bool camera_valid = g_afw_camera_valid;
-    source_projection = g_afw_source_projection;
-    target_projection = g_afw_eye_projection[target_eye];
-    source_to_target_view = g_afw_source_to_eye_view[target_eye];
-    ReleaseSRWLockShared(&g_camera_lock);
+    bool camera_valid = false;
+    if (g_render_frame.active) {
+        camera_valid = g_render_frame.camera_valid;
+        source_projection = g_render_frame.source_projection;
+        target_projection = g_render_frame.eye_projection[target_eye];
+        source_to_target_view = g_render_frame.source_to_eye_view[target_eye];
+    } else {
+        AcquireSRWLockShared(&g_camera_lock);
+        camera_valid = g_afw_camera_valid;
+        source_projection = g_afw_source_projection;
+        target_projection = g_afw_eye_projection[target_eye];
+        source_to_target_view = g_afw_source_to_eye_view[target_eye];
+        ReleaseSRWLockShared(&g_camera_lock);
+    }
     if (!camera_valid) return false;
     const uint32_t render_options = effective_render_options(controls);
 
@@ -7139,33 +7446,11 @@ bool warp_source_to_eye(GLuint source_texture, int target_eye,
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture_3);
 
     g_gl_active_texture(GL_TEXTURE0_VALUE);
-    if (!g_eye_textures[target_eye]) {
-        glGenTextures(1, &g_eye_textures[target_eye]);
-        glBindTexture(GL_TEXTURE_2D, g_eye_textures[target_eye]);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_VALUE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE_VALUE);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, g_texture_width, g_texture_height, 0,
-                     GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    }
-    if (!g_eye_depth_textures[target_eye]) {
-        glGenTextures(1, &g_eye_depth_textures[target_eye]);
-        glBindTexture(GL_TEXTURE_2D, g_eye_depth_textures[target_eye]);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_VALUE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE_VALUE);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F_VALUE,
-                     g_texture_width, g_texture_height, 0,
-                     GL_RED_VALUE, GL_FLOAT, nullptr);
-    }
     g_eye_valid[target_eye] = false;
     g_eye_depth_valid[target_eye] = false;
 
-    g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE, g_capture_fbo);
-    g_gl_framebuffer_texture_2d(GL_DRAW_FRAMEBUFFER_VALUE, GL_COLOR_ATTACHMENT0_VALUE,
-                                GL_TEXTURE_2D, g_eye_textures[target_eye], 0);
+    g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE,
+                          g_eye_color_fbos[target_eye]);
     bool success = g_gl_check_framebuffer_status(GL_DRAW_FRAMEBUFFER_VALUE) ==
         GL_FRAMEBUFFER_COMPLETE_VALUE;
     if (success) {
@@ -7225,10 +7510,8 @@ bool warp_source_to_eye(GLuint source_texture, int target_eye,
         glDrawArrays(GL_TRIANGLES, 0, 3);
         success = glGetError() == GL_NO_ERROR;
         if (success) {
-            g_gl_framebuffer_texture_2d(GL_DRAW_FRAMEBUFFER_VALUE,
-                                        GL_COLOR_ATTACHMENT0_VALUE,
-                                        GL_TEXTURE_2D,
-                                        g_eye_depth_textures[target_eye], 0);
+            g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE,
+                                  g_eye_depth_fbos[target_eye]);
             const bool depth_complete =
                 g_gl_check_framebuffer_status(GL_DRAW_FRAMEBUFFER_VALUE) ==
                 GL_FRAMEBUFFER_COMPLETE_VALUE;
@@ -7266,6 +7549,12 @@ bool warp_source_to_eye(GLuint source_texture, int target_eye,
 
     if (success) {
         g_eye_valid[target_eye] = true;
+        g_eye_frame_serial[target_eye] = g_render_frame.active
+            ? g_render_frame.serial
+            : 0;
+        g_eye_depth_frame_serial[target_eye] = g_eye_depth_valid[target_eye]
+            ? g_eye_frame_serial[target_eye]
+            : 0;
         ++g_afw_warped_frames;
         if (render_logging_enabled() && (g_afw_warped_frames % 90u) == 1u) {
             std::ostringstream out;
@@ -7308,7 +7597,9 @@ bool composite_held_item_to_eye(int eye,
         !ensure_afw_gl_renderer()) {
         return false;
     }
-    const HeldItemDepthTextureSnapshot layer = held_item_depth_texture_snapshot();
+    const HeldItemDepthTextureSnapshot layer = g_render_frame.active
+        ? g_render_frame.held_item
+        : held_item_depth_texture_snapshot();
     if (!layer.valid ||
         std::abs(layer.width - g_source_texture_width) > 8 ||
         std::abs(layer.height - g_source_texture_height) > 8) {
@@ -7318,18 +7609,30 @@ bool composite_held_item_to_eye(int eye,
     Matrix4 source_projection{};
     Matrix4 source_to_target_view{};
     Matrix4 target_projection{};
-    AcquireSRWLockShared(&g_camera_lock);
-    const bool camera_valid = g_afw_camera_valid;
-    source_projection = g_afw_source_projection;
-    source_to_target_view = g_afw_source_to_eye_view[eye];
-    target_projection = g_afw_eye_projection[eye];
-    ReleaseSRWLockShared(&g_camera_lock);
+    bool camera_valid = false;
+    if (g_render_frame.active) {
+        camera_valid = g_render_frame.camera_valid;
+        source_projection = g_render_frame.source_projection;
+        source_to_target_view = g_render_frame.source_to_eye_view[eye];
+        target_projection = g_render_frame.eye_projection[eye];
+    } else {
+        AcquireSRWLockShared(&g_camera_lock);
+        camera_valid = g_afw_camera_valid;
+        source_projection = g_afw_source_projection;
+        source_to_target_view = g_afw_source_to_eye_view[eye];
+        target_projection = g_afw_eye_projection[eye];
+        ReleaseSRWLockShared(&g_camera_lock);
+    }
     if (!camera_valid) return false;
 
     Matrix4 inverse_source_projection{};
     if (!hytalevr::inverse(source_projection, inverse_source_projection)) return false;
-    const SceneDepthTextureSnapshot scene_depth = scene_depth_texture_snapshot();
-    const DistortionTextureSnapshot distortion = distortion_texture_snapshot();
+    const SceneDepthTextureSnapshot scene_depth = g_render_frame.active
+        ? g_render_frame.scene_depth
+        : scene_depth_texture_snapshot();
+    const DistortionTextureSnapshot distortion = g_render_frame.active
+        ? g_render_frame.distortion
+        : distortion_texture_snapshot();
     const float far_clip = scene_depth.valid ? scene_depth.far_clip : 1024.0f;
 
     GLint previous_program = 0;
@@ -7372,10 +7675,7 @@ bool composite_held_item_to_eye(int eye,
     g_gl_active_texture(GL_TEXTURE5_VALUE);
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture_5);
 
-    g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE, g_capture_fbo);
-    g_gl_framebuffer_texture_2d(GL_DRAW_FRAMEBUFFER_VALUE,
-                                GL_COLOR_ATTACHMENT0_VALUE,
-                                GL_TEXTURE_2D, g_eye_textures[eye], 0);
+    g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE, g_eye_color_fbos[eye]);
     bool success = g_gl_check_framebuffer_status(GL_DRAW_FRAMEBUFFER_VALUE) ==
         GL_FRAMEBUFFER_COMPLETE_VALUE;
     bool drew_item = false;
@@ -7509,10 +7809,8 @@ bool draw_overlays_to_eye_texture(int eye, const VrCameraControls& controls) {
     glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING_VALUE, &previous_read_fbo);
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_VALUE, &previous_draw_fbo);
     glGetIntegerv(GL_VIEWPORT, previous_viewport);
-    g_gl_bind_framebuffer(GL_READ_FRAMEBUFFER_VALUE, g_capture_fbo);
-    g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE, g_capture_fbo);
-    g_gl_framebuffer_texture_2d(GL_DRAW_FRAMEBUFFER_VALUE, GL_COLOR_ATTACHMENT0_VALUE,
-                                GL_TEXTURE_2D, g_eye_textures[eye], 0);
+    g_gl_bind_framebuffer(GL_READ_FRAMEBUFFER_VALUE, g_eye_color_fbos[eye]);
+    g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE, g_eye_color_fbos[eye]);
     const bool complete = g_gl_check_framebuffer_status(GL_DRAW_FRAMEBUFFER_VALUE) ==
         GL_FRAMEBUFFER_COMPLETE_VALUE;
     if (complete) {
@@ -7579,6 +7877,15 @@ bool menu_visible_recently() {
 
 bool submit_eye_pair() {
     if (!g_eye_valid[0] || !g_eye_valid[1]) return false;
+    if (g_render_frame.active &&
+        (g_eye_frame_serial[0] != g_render_frame.serial ||
+         g_eye_frame_serial[1] != g_render_frame.serial ||
+         g_render_frame.resource_generation != g_render_resource_generation)) {
+        if (g_shared) g_shared->stereo_error = 3001;
+        render_log("submit pair rejected: mixed frame or resource generation");
+        g_eye_valid[0] = g_eye_valid[1] = false;
+        return false;
+    }
     auto* compositor = vr::VRCompositor();
     if (!compositor) {
         ++g_consecutive_submit_failures;
@@ -7724,11 +8031,25 @@ void shutdown_stereo() {
         g_gl_delete_framebuffers(1, &g_capture_fbo);
         g_capture_fbo = 0;
     }
+    if ((g_eye_color_fbos[0] || g_eye_color_fbos[1]) &&
+        g_gl_delete_framebuffers) {
+        g_gl_delete_framebuffers(2, g_eye_color_fbos);
+        g_eye_color_fbos[0] = g_eye_color_fbos[1] = 0;
+    }
+    if ((g_eye_depth_fbos[0] || g_eye_depth_fbos[1]) &&
+        g_gl_delete_framebuffers) {
+        g_gl_delete_framebuffers(2, g_eye_depth_fbos);
+        g_eye_depth_fbos[0] = g_eye_depth_fbos[1] = 0;
+    }
     g_eye_valid[0] = g_eye_valid[1] = false;
     g_eye_depth_valid[0] = g_eye_depth_valid[1] = false;
     g_pre_ui_captured[0] = g_pre_ui_captured[1] = false;
     g_texture_width = g_texture_height = 0;
     g_source_texture_width = g_source_texture_height = 0;
+    g_source_frame_serial = 0;
+    g_eye_frame_serial[0] = g_eye_frame_serial[1] = 0;
+    g_eye_depth_frame_serial[0] = g_eye_depth_frame_serial[1] = 0;
+    ++g_render_resource_generation;
     g_consecutive_submit_failures = 0;
     g_last_successful_submit_tick = 0;
     g_last_swap_recenter_sequence = 0;
@@ -7860,6 +8181,8 @@ void shutdown_stereo() {
 
 void __cdecl hook_sdl_gl_swap_window(void* window) {
     HookCallbackScope callback_scope;
+    hytalevr::VrProfileScope frame_profile(
+        g_frame_profiler, hytalevr::VrProfileStage::Frame);
     if (g_shared) InterlockedIncrement(reinterpret_cast<volatile LONG*>(&g_shared->swap_calls));
     if (ensure_ui_scale_mapping() && g_ui_scale_shared) {
         InterlockedIncrement(&g_ui_scale_shared->renderFrameSequence);
@@ -7930,7 +8253,11 @@ void __cdecl hook_sdl_gl_swap_window(void* window) {
         return;
     } else if (have_controls && controls.enabled && initialize_stereo()) {
         g_runtime_active.store(true, std::memory_order_release);
-        update_vr_actions();
+        {
+            hytalevr::VrProfileScope profile(
+                g_frame_profiler, hytalevr::VrProfileStage::Actions);
+            update_vr_actions();
+        }
         if (!controls.stereo_enabled) {
             synchronize_openvr(controls);
             g_shared->stereo_active = 0;
@@ -7946,11 +8273,18 @@ void __cdecl hook_sdl_gl_swap_window(void* window) {
             g_consecutive_submit_failures = 0;
             g_last_successful_submit_tick = now;
         }
-        if (!prepare_render_resolution(window, controls)) {
+        bool resolution_ready = false;
+        {
+            hytalevr::VrProfileScope profile(
+                g_frame_profiler, hytalevr::VrProfileStage::Resolution);
+            resolution_ready = prepare_render_resolution(window, controls);
+        }
+        if (!resolution_ready) {
             restore_neutral_camera();
             if (g_swap_trampoline) g_swap_trampoline(window);
             return;
         }
+        RenderFrameScope render_frame_scope(controls);
         const bool engine_pair_ready =
             g_engine_render_hook_active &&
             InterlockedExchange(&g_engine_stereo_pair_ready, 0) != 0 &&
@@ -7959,8 +8293,16 @@ void __cdecl hook_sdl_gl_swap_window(void* window) {
         g_shared->current_eye = 0;
         restore_neutral_camera();
         if (engine_pair_ready) {
+            g_eye_frame_serial[0] = g_render_frame.serial;
+            g_eye_frame_serial[1] = g_render_frame.serial;
             submit_menu_overlay_texture(g_eye_textures[0], controls);
-            if (submit_eye_pair()) {
+            bool submitted = false;
+            {
+                hytalevr::VrProfileScope profile(
+                    g_frame_profiler, hytalevr::VrProfileStage::Submit);
+                submitted = submit_eye_pair();
+            }
+            if (submitted) {
                 synchronize_openvr(controls);
                 InterlockedIncrement(
                     reinterpret_cast<volatile LONG*>(&g_shared->completed_pairs));
@@ -7969,20 +8311,48 @@ void __cdecl hook_sdl_gl_swap_window(void* window) {
             }
         } else {
             constexpr int source_eye = 0;
-            const bool captured = g_pre_ui_captured[source_eye] ||
-                                  capture_eye(source_eye, controls, false);
+            bool captured = g_pre_ui_captured[source_eye];
+            if (!captured) {
+                hytalevr::VrProfileScope profile(
+                    g_frame_profiler, hytalevr::VrProfileStage::Capture);
+                captured = capture_eye(source_eye, controls, false);
+            }
             g_pre_ui_captured[source_eye] = false;
             if (captured && preserve_afw_source_texture(source_eye)) {
-                const bool left_warped =
-                    warp_source_to_eye(g_afw_source_texture, 0, controls);
-                const bool right_warped =
-                    warp_source_to_eye(g_afw_source_texture, 1, controls);
+                bool left_warped = false;
+                bool right_warped = false;
+                {
+                    hytalevr::VrProfileScope profile(
+                        g_frame_profiler, hytalevr::VrProfileStage::WarpLeft);
+                    left_warped = warp_source_to_eye(
+                        g_afw_source_texture, 0, controls);
+                }
+                {
+                    hytalevr::VrProfileScope profile(
+                        g_frame_profiler, hytalevr::VrProfileStage::WarpRight);
+                    right_warped = warp_source_to_eye(
+                        g_afw_source_texture, 1, controls);
+                }
                 if (left_warped && right_warped) {
-                    draw_overlays_to_eye_texture(0, controls);
-                    draw_overlays_to_eye_texture(1, controls);
+                    {
+                        hytalevr::VrProfileScope profile(
+                            g_frame_profiler, hytalevr::VrProfileStage::OverlayLeft);
+                        draw_overlays_to_eye_texture(0, controls);
+                    }
+                    {
+                        hytalevr::VrProfileScope profile(
+                            g_frame_profiler, hytalevr::VrProfileStage::OverlayRight);
+                        draw_overlays_to_eye_texture(1, controls);
+                    }
                     submit_menu_overlay_texture(g_eye_textures[0], controls);
                 }
-                if (left_warped && right_warped && submit_eye_pair()) {
+                bool submitted = false;
+                if (left_warped && right_warped) {
+                    hytalevr::VrProfileScope profile(
+                        g_frame_profiler, hytalevr::VrProfileStage::Submit);
+                    submitted = submit_eye_pair();
+                }
+                if (submitted) {
                     synchronize_openvr(controls);
                     InterlockedIncrement(
                         reinterpret_cast<volatile LONG*>(&g_shared->completed_pairs));
@@ -8002,6 +8372,9 @@ void __cdecl hook_sdl_gl_swap_window(void* window) {
     } else if (g_shared) {
         g_shared->stereo_active = 0;
     }
+    const std::string profile_report =
+        g_frame_profiler.report_if_due(g_next_render_frame_serial);
+    if (!profile_report.empty()) render_log(profile_report);
     if (g_swap_trampoline) g_swap_trampoline(window);
 }
 

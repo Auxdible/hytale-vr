@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(hytale_camera_tool VERSION 1.0.2 LANGUAGES CXX)
+project(hytale_camera_tool VERSION 1.0.3 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -32,6 +32,7 @@ endif()
 
 add_library(hytale_vr_camera_hook SHARED
     src/vr_camera_hook.cpp
+    src/vr_frame_profiler.cpp
     src/vr_item_assets.cpp
 )
 

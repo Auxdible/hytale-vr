@@ -12,6 +12,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <limits>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <MinHook.h>
@@ -425,6 +426,7 @@ struct CurrentProgramFlags {
     bool shadow = false;
     bool sunOcclusion = false;
     bool ssao = false;
+    GLint ssaoReprojectionLocation = -1;
     bool cloudShadow = false;
     bool particle = false;
     bool postEffect = false;
@@ -436,9 +438,17 @@ struct CurrentProgramFlags {
     bool possibleFirstPerson = false;
     bool heldItem = false;
     GLint heldItemModelLocation = -1;
+    GLint heldItemCandidateLocation = -1;
     GLint sceneDataBinding = -1;
 };
 CurrentProgramFlags g_currentProgramFlags;
+struct ProgramReadSnapshot {
+    std::unordered_map<GLuint, CurrentProgramFlags> flags;
+    std::unordered_set<GLuint> scannedPrograms;
+    std::unordered_set<GLuint> uiBufferIDs;
+};
+std::shared_ptr<const ProgramReadSnapshot> g_programReadSnapshot =
+    std::make_shared<const ProgramReadSnapshot>();
 GLuint g_neutralDistortionTexture = 0;
 GLuint g_blackTexture = 0;
 GLuint g_flatNormalTexture = 0;
@@ -523,10 +533,12 @@ bool ProgramListContains(const std::vector<GLuint>& programs, GLuint program) {
     return std::find(programs.begin(), programs.end(), program) != programs.end();
 }
 
-void RefreshCurrentProgramFlags(GLuint program) {
-    CurrentProgramFlags flags{};
-    if (program != 0) {
-        std::lock_guard<std::mutex> lock(g_programsMutex);
+void PublishProgramReadSnapshotLocked() {
+    auto snapshot = std::make_shared<ProgramReadSnapshot>();
+    snapshot->scannedPrograms = g_scannedPrograms;
+    snapshot->uiBufferIDs.insert(g_uiBufferIDs.begin(), g_uiBufferIDs.end());
+    for (GLuint program : g_scannedPrograms) {
+        CurrentProgramFlags flags{};
         for (const auto& candidate : g_uiPrograms) {
             if (candidate.id == program) {
                 flags.ui = true;
@@ -542,11 +554,19 @@ void RefreshCurrentProgramFlags(GLuint program) {
         flags.particle = ProgramListContains(g_particlePrograms, program);
         flags.postEffect = ProgramListContains(g_postEffectPrograms, program);
         flags.mapChunkAlpha = ProgramListContains(g_mapChunkAlphaPrograms, program);
-        flags.celestialBillboard = ProgramListContains(g_celestialBillboardPrograms, program);
+        flags.celestialBillboard =
+            ProgramListContains(g_celestialBillboardPrograms, program);
         flags.basic = ProgramListContains(g_basicPrograms, program);
         flags.sky = ProgramListContains(g_skyPrograms, program);
         flags.hizReproject = ProgramListContains(g_hizReprojectPrograms, program);
-        flags.possibleFirstPerson = ProgramListContains(g_possibleFirstPersonPrograms, program);
+        flags.possibleFirstPerson =
+            ProgramListContains(g_possibleFirstPersonPrograms, program);
+        for (const ProgramMatrixUniform& uniform : g_ssaoReprojectionUniforms) {
+            if (uniform.program == program) {
+                flags.ssaoReprojectionLocation = uniform.location;
+                break;
+            }
+        }
         for (const ProgramMatrixUniform& uniform : g_heldItemModelUniforms) {
             if (uniform.program == program) {
                 flags.heldItem = true;
@@ -554,12 +574,39 @@ void RefreshCurrentProgramFlags(GLuint program) {
                 break;
             }
         }
-        const auto sceneBinding = g_sceneDataBindings.find(program);
-        if (sceneBinding != g_sceneDataBindings.end()) {
-            flags.sceneDataBinding = sceneBinding->second;
+        for (const ProgramMatrixUniform& uniform : g_heldItemInterfaceCandidates) {
+            if (uniform.program == program) {
+                flags.heldItemCandidateLocation = uniform.location;
+                break;
+            }
         }
+        const auto binding = g_sceneDataBindings.find(program);
+        if (binding != g_sceneDataBindings.end()) {
+            flags.sceneDataBinding = binding->second;
+        }
+        snapshot->flags.emplace(program, flags);
     }
-    g_currentProgramFlags = flags;
+    std::atomic_store_explicit(
+        &g_programReadSnapshot,
+        std::shared_ptr<const ProgramReadSnapshot>(std::move(snapshot)),
+        std::memory_order_release);
+}
+
+std::shared_ptr<const ProgramReadSnapshot> ProgramSnapshot() {
+    return std::atomic_load_explicit(&g_programReadSnapshot,
+                                     std::memory_order_acquire);
+}
+
+CurrentProgramFlags ProgramFlags(GLuint program) {
+    const auto snapshot = ProgramSnapshot();
+    const auto found = snapshot->flags.find(program);
+    return found == snapshot->flags.end() ? CurrentProgramFlags{} : found->second;
+}
+
+void RefreshCurrentProgramFlags(GLuint program) {
+    g_currentProgramFlags = program == 0
+        ? CurrentProgramFlags{}
+        : ProgramFlags(program);
 }
 
 bool IsUIProgram(GLuint program, GLint location, GLint& outLoc) {
@@ -568,23 +615,14 @@ bool IsUIProgram(GLuint program, GLint location, GLint& outLoc) {
         return g_currentProgramFlags.ui &&
                (location == -1 || location == g_currentProgramFlags.uiMvpLocation);
     }
-    std::lock_guard<std::mutex> lock(g_programsMutex);
-    for (const auto& p : g_uiPrograms) {
-        if (p.id == program) {
-            if (location == -1 || location == p.uMVPMatrixLocation) {
-                outLoc = p.uMVPMatrixLocation;
-                return true;
-            }
-        }
-    }
-    return false;
+    const CurrentProgramFlags flags = ProgramFlags(program);
+    outLoc = flags.uiMvpLocation;
+    return flags.ui && (location == -1 || location == flags.uiMvpLocation);
 }
 
 bool IsBatcher2DProgram(GLuint program) {
     if (program == g_currentProgram) return g_currentProgramFlags.batcher2D;
-    std::lock_guard<std::mutex> lock(g_programsMutex);
-    return std::find(g_batcher2DPrograms.begin(), g_batcher2DPrograms.end(), program) !=
-           g_batcher2DPrograms.end();
+    return ProgramFlags(program).batcher2D;
 }
 
 bool Batcher2DMenuCaptureActive() {
@@ -789,57 +827,42 @@ bool CaptureOrSuppressBatcher2DMenuDraw(GLenum mode, GLsizei count, GLenum type,
 
 bool IsShadowProgram(GLuint program) {
     if (program == g_currentProgram) return g_currentProgramFlags.shadow;
-    std::lock_guard<std::mutex> lock(g_programsMutex);
-    return std::find(g_shadowPrograms.begin(), g_shadowPrograms.end(), program) != g_shadowPrograms.end();
+    return ProgramFlags(program).shadow;
 }
 
 bool IsSunOcclusionProgram(GLuint program) {
     if (program == g_currentProgram) return g_currentProgramFlags.sunOcclusion;
-    std::lock_guard<std::mutex> lock(g_programsMutex);
-    return std::find(g_sunOcclusionPrograms.begin(), g_sunOcclusionPrograms.end(), program) !=
-           g_sunOcclusionPrograms.end();
+    return ProgramFlags(program).sunOcclusion;
 }
 
 bool IsSsaoProgram(GLuint program) {
     if (program == g_currentProgram) return g_currentProgramFlags.ssao;
-    std::lock_guard<std::mutex> lock(g_programsMutex);
-    return std::find(g_ssaoPrograms.begin(), g_ssaoPrograms.end(), program) !=
-           g_ssaoPrograms.end();
+    return ProgramFlags(program).ssao;
 }
 
 bool IsSsaoReprojectionUniform(GLuint program, GLint location) {
     if (program == 0 || location < 0) return false;
-    std::lock_guard<std::mutex> lock(g_programsMutex);
-    for (const auto& uniform : g_ssaoReprojectionUniforms) {
-        if (uniform.program == program && uniform.location == location) return true;
-    }
-    return false;
+    return ProgramFlags(program).ssaoReprojectionLocation == location;
 }
 
 bool IsCloudShadowProgram(GLuint program) {
     if (program == g_currentProgram) return g_currentProgramFlags.cloudShadow;
-    std::lock_guard<std::mutex> lock(g_programsMutex);
-    return std::find(g_cloudShadowPrograms.begin(), g_cloudShadowPrograms.end(), program) !=
-           g_cloudShadowPrograms.end();
+    return ProgramFlags(program).cloudShadow;
 }
 
 bool IsParticleProgram(GLuint program) {
     if (program == g_currentProgram) return g_currentProgramFlags.particle;
-    std::lock_guard<std::mutex> lock(g_programsMutex);
-    return std::find(g_particlePrograms.begin(), g_particlePrograms.end(), program) != g_particlePrograms.end();
+    return ProgramFlags(program).particle;
 }
 
 bool IsPostEffectProgram(GLuint program) {
     if (program == g_currentProgram) return g_currentProgramFlags.postEffect;
-    std::lock_guard<std::mutex> lock(g_programsMutex);
-    return std::find(g_postEffectPrograms.begin(), g_postEffectPrograms.end(), program) != g_postEffectPrograms.end();
+    return ProgramFlags(program).postEffect;
 }
 
 bool IsMapChunkAlphaProgram(GLuint program) {
     if (program == g_currentProgram) return g_currentProgramFlags.mapChunkAlpha;
-    std::lock_guard<std::mutex> lock(g_programsMutex);
-    return std::find(g_mapChunkAlphaPrograms.begin(), g_mapChunkAlphaPrograms.end(), program) !=
-           g_mapChunkAlphaPrograms.end();
+    return ProgramFlags(program).mapChunkAlpha;
 }
 
 GLint HeldItemModelMatrixLocation(GLuint program) {
@@ -848,40 +871,28 @@ GLint HeldItemModelMatrixLocation(GLuint program) {
             ? g_currentProgramFlags.heldItemModelLocation
             : -1;
     }
-    std::lock_guard<std::mutex> lock(g_programsMutex);
-    for (const ProgramMatrixUniform& uniform : g_heldItemModelUniforms) {
-        if (uniform.program == program) return uniform.location;
-    }
-    return -1;
+    const CurrentProgramFlags flags = ProgramFlags(program);
+    return flags.heldItem ? flags.heldItemModelLocation : -1;
 }
 
 bool IsCelestialBillboardProgram(GLuint program) {
     if (program == g_currentProgram) return g_currentProgramFlags.celestialBillboard;
-    std::lock_guard<std::mutex> lock(g_programsMutex);
-    return std::find(g_celestialBillboardPrograms.begin(),
-                     g_celestialBillboardPrograms.end(), program) !=
-           g_celestialBillboardPrograms.end();
+    return ProgramFlags(program).celestialBillboard;
 }
 
 bool IsBasicProgram(GLuint program) {
     if (program == g_currentProgram) return g_currentProgramFlags.basic;
-    std::lock_guard<std::mutex> lock(g_programsMutex);
-    return std::find(g_basicPrograms.begin(), g_basicPrograms.end(), program) !=
-           g_basicPrograms.end();
+    return ProgramFlags(program).basic;
 }
 
 bool IsSkyProgram(GLuint program) {
     if (program == g_currentProgram) return g_currentProgramFlags.sky;
-    std::lock_guard<std::mutex> lock(g_programsMutex);
-    return std::find(g_skyPrograms.begin(), g_skyPrograms.end(), program) !=
-           g_skyPrograms.end();
+    return ProgramFlags(program).sky;
 }
 
 bool IsHiZReprojectProgram(GLuint program) {
     if (program == g_currentProgram) return g_currentProgramFlags.hizReproject;
-    std::lock_guard<std::mutex> lock(g_programsMutex);
-    return std::find(g_hizReprojectPrograms.begin(), g_hizReprojectPrograms.end(), program) !=
-           g_hizReprojectPrograms.end();
+    return ProgramFlags(program).hizReproject;
 }
 
 bool ContainsAny(const std::string& text, std::initializer_list<const char*> needles) {
@@ -1079,6 +1090,12 @@ bool PromoteHeldItemInterfaceCandidate(GLuint program,
         return false;
     }
 
+    const CurrentProgramFlags read_flags = ProgramFlags(program);
+    if (read_flags.heldItem ||
+        read_flags.heldItemCandidateLocation != location) {
+        return read_flags.heldItem;
+    }
+
     {
         std::lock_guard<std::mutex> lock(g_programsMutex);
         const bool candidateFound = std::any_of(
@@ -1103,6 +1120,7 @@ bool PromoteHeldItemInterfaceCandidate(GLuint program,
             g_possibleFirstPersonPrograms.end()) {
             g_possibleFirstPersonPrograms.push_back(program);
         }
+        PublishProgramReadSnapshotLocked();
     }
 
     if (program == g_currentProgram) {
@@ -1556,6 +1574,12 @@ void PublishHeldItemAtlasState(const HeldItemDrawDescriptor& draw) {
 void RegisterProgramIfUI(GLuint program) {
     if (program == 0) return;
 
+    const auto current_snapshot = ProgramSnapshot();
+    if (current_snapshot->scannedPrograms.find(program) !=
+        current_snapshot->scannedPrograms.end()) {
+        return;
+    }
+
     {
         std::lock_guard<std::mutex> lock(g_programsMutex);
         if (!g_scannedPrograms.insert(program).second) return;
@@ -1768,6 +1792,10 @@ void RegisterProgramIfUI(GLuint program) {
                 }
             }
     }
+    {
+        std::lock_guard<std::mutex> lock(g_programsMutex);
+        PublishProgramReadSnapshotLocked();
+    }
 }
 
 void RegisterBufferIfUI(GLenum target, GLuint buffer) {
@@ -1779,6 +1807,7 @@ void RegisterBufferIfUI(GLenum target, GLuint buffer) {
         if (std::find(g_uiBufferIDs.begin(), g_uiBufferIDs.end(), buffer) == g_uiBufferIDs.end()) {
             g_uiBufferIDs.push_back(buffer);
             LogMessage("HytaleUIScaleHook: Registered UI buffer ID: " + std::to_string(buffer) + " for target: " + std::to_string(target));
+            PublishProgramReadSnapshotLocked();
         }
     }
 }
@@ -1793,8 +1822,9 @@ bool IsUIBufferBound(GLenum target, GLuint& outBufferID) {
         GLint bound = 0;
         real_glGetIntegerv(query, &bound);
         if (bound > 0) {
-            std::lock_guard<std::mutex> lock(g_programsMutex);
-            if (std::find(g_uiBufferIDs.begin(), g_uiBufferIDs.end(), (GLuint)bound) != g_uiBufferIDs.end()) {
+            const auto snapshot = ProgramSnapshot();
+            if (snapshot->uiBufferIDs.find(static_cast<GLuint>(bound)) !=
+                snapshot->uiBufferIDs.end()) {
                 outBufferID = (GLuint)bound;
                 return true;
             }
@@ -2026,6 +2056,7 @@ void WINAPI hook_glObjectLabel(GLenum identifier, GLuint name, GLsizei length, c
         {
             std::lock_guard<std::mutex> lock(g_programsMutex);
             g_scannedPrograms.erase(name);
+            PublishProgramReadSnapshotLocked();
         }
         RegisterProgramIfUI(name);
         if (name == g_currentProgram) RefreshCurrentProgramFlags(name);
@@ -2039,6 +2070,7 @@ void WINAPI hook_glLinkProgram(GLuint program) {
     {
         std::lock_guard<std::mutex> lock(g_programsMutex);
         g_scannedPrograms.erase(program);
+        PublishProgramReadSnapshotLocked();
     }
     RegisterProgramIfUI(program);
     if (program == g_currentProgram) RefreshCurrentProgramFlags(program);
