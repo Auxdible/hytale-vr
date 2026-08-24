@@ -35,6 +35,7 @@
 #include "vr_math.h"
 #include "vr_physical_interactions.h"
 #include "vr_render_resolution.h"
+#include "ui_scene_depth_policy.h"
 #include "ui_scale_shared.h"
 
 namespace {
@@ -93,6 +94,8 @@ bool ensure_ui_scale_mapping();
 bool initialize_gl_capture();
 bool ensure_render_target_storage(int source_width, int source_height,
                                   int output_width, int output_height);
+bool ensure_compositor_depth_storage(int width, int height);
+bool ensure_compositor_depth_renderer();
 float active_vr_output_scale(const VrCameraControls& controls);
 bool controller_hand_ndc_for_eye(vr::EVREye eye, float& ndc_x, float& ndc_y, float& depth);
 bool project_tracking_point_to_eye_ndc(int eye, const float hmd[12],
@@ -206,15 +209,21 @@ float g_ui_overlay_anchor_distance = 0.0f;
 GLuint g_eye_textures[2]{};
 GLuint g_afw_source_texture = 0;
 GLuint g_eye_depth_textures[2]{};
+GLuint g_compositor_depth_textures[2]{};
 GLuint g_eye_color_fbos[2]{};
 GLuint g_eye_depth_fbos[2]{};
+GLuint g_compositor_depth_fbos[2]{};
 bool g_eye_valid[2]{};
 bool g_eye_depth_valid[2]{};
+bool g_compositor_depth_valid[2]{};
 bool g_pre_ui_captured[2]{};
 uint64_t g_render_resource_generation = 0;
 uint64_t g_source_frame_serial = 0;
 uint64_t g_eye_frame_serial[2]{};
 uint64_t g_eye_depth_frame_serial[2]{};
+uint64_t g_compositor_depth_frame_serial[2]{};
+bool g_compositor_depth_runtime_disabled = false;
+bool g_compositor_depth_option_was_enabled = false;
 int g_texture_width = 0;
 int g_texture_height = 0;
 int g_source_texture_width = 0;
@@ -382,6 +391,7 @@ constexpr GLenum GL_UNPACK_ALIGNMENT_VALUE = 0x0CF5;
 constexpr GLenum GL_DEPTH_ATTACHMENT_VALUE = 0x8D00;
 constexpr GLenum GL_DEPTH_COMPONENT_VALUE = 0x1902;
 constexpr GLint GL_DEPTH_COMPONENT24_VALUE = 0x81A6;
+constexpr GLenum GL_NONE_VALUE = 0;
 constexpr GLenum GL_DEPTH_FUNC_VALUE = 0x0B74;
 constexpr GLenum GL_DEPTH_WRITEMASK_VALUE = 0x0B72;
 
@@ -593,6 +603,10 @@ LONG g_last_item_detection_frame = -1;
 GLuint g_afw_program = 0;
 GLuint g_afw_vao = 0;
 GLuint g_afw_vbo = 0;
+GLuint g_compositor_depth_program = 0;
+GLint g_compositor_depth_source_uniform = -1;
+GLint g_compositor_depth_projection_uniform = -1;
+GLint g_compositor_depth_far_clip_uniform = -1;
 GLint g_afw_source_color_uniform = -1;
 GLint g_afw_source_depth_uniform = -1;
 GLint g_afw_held_item_color_uniform = -1;
@@ -627,6 +641,8 @@ Matrix4 g_afw_source_to_eye_view[2]{identity_matrix(), identity_matrix()};
 bool g_afw_camera_valid = false;
 bool g_afw_gl_attempted = false;
 bool g_afw_gl_ready = false;
+bool g_compositor_depth_gl_attempted = false;
+bool g_compositor_depth_gl_ready = false;
 uint32_t g_afw_warped_frames = 0;
 
 std::wstring module_directory() {
@@ -1723,6 +1739,86 @@ void main() {
     g_afw_gl_ready = g_afw_program != 0 && g_afw_vao != 0 && g_afw_vbo != 0;
     if (g_afw_gl_ready) render_log("AFW: OpenGL depth reprojection ready");
     return g_afw_gl_ready;
+}
+
+bool ensure_compositor_depth_renderer() {
+    if (g_compositor_depth_gl_attempted) return g_compositor_depth_gl_ready;
+    g_compositor_depth_gl_attempted = true;
+    if (!ensure_afw_gl_renderer()) return false;
+
+    constexpr const char* kVertexSource = R"GLSL(
+#version 130
+in vec2 aPos;
+in vec2 aUv;
+out vec2 vUv;
+void main() {
+    vUv = aUv;
+    gl_Position = vec4(aPos, 0.0, 1.0);
+}
+)GLSL";
+    constexpr const char* kFragmentSource = R"GLSL(
+#version 130
+uniform sampler2D uLinearDepth;
+uniform mat4 uProjection;
+uniform float uFarClip;
+in vec2 vUv;
+out vec4 fragColor;
+void main() {
+    float linearDepth = texture(uLinearDepth, vUv).r * uFarClip;
+    vec4 clip = uProjection *
+        vec4(0.0, 0.0, -max(linearDepth, 0.0001), 1.0);
+    gl_FragDepth = abs(clip.w) > 0.00001
+        ? clamp((clip.z / clip.w) * 0.5 + 0.5, 0.0, 1.0)
+        : 1.0;
+    fragColor = vec4(0.0);
+}
+)GLSL";
+
+    const GLuint vertex = compile_gl_shader(
+        GL_VERTEX_SHADER_VALUE, kVertexSource, "SteamVR depth vertex");
+    const GLuint fragment = compile_gl_shader(
+        GL_FRAGMENT_SHADER_VALUE, kFragmentSource, "SteamVR depth fragment");
+    if (!vertex || !fragment) return false;
+
+    g_compositor_depth_program = g_gl_create_program();
+    g_gl_attach_shader(g_compositor_depth_program, vertex);
+    g_gl_attach_shader(g_compositor_depth_program, fragment);
+    g_gl_bind_attrib_location(g_compositor_depth_program, 0, "aPos");
+    g_gl_bind_attrib_location(g_compositor_depth_program, 1, "aUv");
+    g_gl_link_program(g_compositor_depth_program);
+    g_gl_delete_shader(vertex);
+    g_gl_delete_shader(fragment);
+    GLint linked = 0;
+    g_gl_get_program_iv(g_compositor_depth_program, GL_LINK_STATUS_VALUE, &linked);
+    if (!linked) {
+        GLint length = 0;
+        g_gl_get_program_iv(g_compositor_depth_program,
+                            GL_INFO_LOG_LENGTH_VALUE, &length);
+        std::string log(static_cast<size_t>(std::max(1, length)), '\0');
+        if (g_gl_get_program_info_log && length > 1) {
+            g_gl_get_program_info_log(g_compositor_depth_program, length,
+                                      nullptr, log.data());
+        }
+        render_log(std::string("SteamVR depth: program link failed ") +
+                   log.c_str());
+        g_compositor_depth_program = 0;
+        return false;
+    }
+
+    g_compositor_depth_source_uniform = g_gl_get_uniform_location(
+        g_compositor_depth_program, "uLinearDepth");
+    g_compositor_depth_projection_uniform = g_gl_get_uniform_location(
+        g_compositor_depth_program, "uProjection");
+    g_compositor_depth_far_clip_uniform = g_gl_get_uniform_location(
+        g_compositor_depth_program, "uFarClip");
+    g_compositor_depth_gl_ready = g_compositor_depth_program != 0 &&
+        g_compositor_depth_source_uniform >= 0 &&
+        g_compositor_depth_projection_uniform >= 0 &&
+        g_compositor_depth_far_clip_uniform >= 0;
+    if (g_compositor_depth_gl_ready) {
+        render_log("SteamVR depth: isolated conversion shader ready");
+    }
+    return g_compositor_depth_gl_ready;
 }
 
 bool ensure_hand_gl_renderer() {
@@ -3991,6 +4087,10 @@ void reset_eye_capture_resources(const char* reason) {
         glDeleteTextures(2, g_eye_depth_textures);
         g_eye_depth_textures[0] = g_eye_depth_textures[1] = 0;
     }
+    if (g_compositor_depth_textures[0] || g_compositor_depth_textures[1]) {
+        glDeleteTextures(2, g_compositor_depth_textures);
+        g_compositor_depth_textures[0] = g_compositor_depth_textures[1] = 0;
+    }
     if (g_capture_fbo && g_gl_delete_framebuffers) {
         g_gl_delete_framebuffers(1, &g_capture_fbo);
         g_capture_fbo = 0;
@@ -4005,9 +4105,15 @@ void reset_eye_capture_resources(const char* reason) {
         g_gl_delete_framebuffers(2, g_eye_depth_fbos);
         g_eye_depth_fbos[0] = g_eye_depth_fbos[1] = 0;
     }
+    if ((g_compositor_depth_fbos[0] || g_compositor_depth_fbos[1]) &&
+        g_gl_delete_framebuffers) {
+        g_gl_delete_framebuffers(2, g_compositor_depth_fbos);
+        g_compositor_depth_fbos[0] = g_compositor_depth_fbos[1] = 0;
+    }
     g_eye_valid[0] = false;
     g_eye_valid[1] = false;
     g_eye_depth_valid[0] = g_eye_depth_valid[1] = false;
+    g_compositor_depth_valid[0] = g_compositor_depth_valid[1] = false;
     g_pre_ui_captured[0] = false;
     g_pre_ui_captured[1] = false;
     g_texture_width = 0;
@@ -4017,6 +4123,10 @@ void reset_eye_capture_resources(const char* reason) {
     g_source_frame_serial = 0;
     g_eye_frame_serial[0] = g_eye_frame_serial[1] = 0;
     g_eye_depth_frame_serial[0] = g_eye_depth_frame_serial[1] = 0;
+    g_compositor_depth_frame_serial[0] =
+        g_compositor_depth_frame_serial[1] = 0;
+    g_compositor_depth_runtime_disabled = false;
+    g_compositor_depth_option_was_enabled = false;
     ++g_render_resource_generation;
     InterlockedExchange(&g_engine_render_pass, 0);
     InterlockedExchange(&g_engine_stereo_pair_ready, 0);
@@ -4360,6 +4470,16 @@ Matrix4 from_openvr(const vr::HmdMatrix44_t& source) {
     for (int row = 0; row < 4; ++row) {
         for (int column = 0; column < 4; ++column) {
             result.value[column * 4 + row] = source.m[row][column];
+        }
+    }
+    return result;
+}
+
+vr::HmdMatrix44_t to_openvr_projection(const Matrix4& source) {
+    vr::HmdMatrix44_t result{};
+    for (int row = 0; row < 4; ++row) {
+        for (int column = 0; column < 4; ++column) {
+            result.m[row][column] = source.value[column * 4 + row];
         }
     }
     return result;
@@ -5857,8 +5977,17 @@ bool prepare_render_resolution(void* window, const VrCameraControls& controls) {
 
     constexpr uint64_t kSdlWindowFullscreen = 0x0000000000000001ull;
     constexpr uint64_t kSdlWindowMaximized = 0x0000000000000080ull;
+    const uint32_t render_options = effective_render_options(controls);
     const bool supersampling_enabled =
-        (effective_render_options(controls) & kVrEffectSupersampling) != 0u;
+        (render_options & kVrEffectSupersampling) != 0u;
+    const bool compositor_depth_requested =
+        (render_options & kVrEffectCompositorDepth) != 0u;
+    if (compositor_depth_requested && !g_compositor_depth_option_was_enabled) {
+        g_compositor_depth_runtime_disabled = false;
+    } else if (!compositor_depth_requested) {
+        g_compositor_depth_runtime_disabled = false;
+    }
+    g_compositor_depth_option_was_enabled = compositor_depth_requested;
     const float requested_scale =
         std::clamp(controls.vr_resolution_scale, 1.0f, 2.0f);
 
@@ -5971,6 +6100,11 @@ bool prepare_render_resolution(void* window, const VrCameraControls& controls) {
         g_shared->resolution_error = 3;
         return false;
     }
+    if (compositor_depth_requested && !g_compositor_depth_runtime_disabled &&
+        !ensure_compositor_depth_storage(output_resolution.width,
+                                         output_resolution.height)) {
+        g_compositor_depth_runtime_disabled = true;
+    }
     g_shared->resolution_error = 0;
     static int last_logged_width = 0;
     static int last_logged_height = 0;
@@ -6014,6 +6148,65 @@ bool initialize_gl_capture() {
         !g_gl_check_framebuffer_status) {
         return false;
     }
+    return true;
+}
+
+bool ensure_compositor_depth_storage(int width, int height) {
+    if (width <= 0 || height <= 0 || !initialize_gl_capture()) return false;
+    if (g_compositor_depth_textures[0] && g_compositor_depth_textures[1] &&
+        g_compositor_depth_fbos[0] && g_compositor_depth_fbos[1]) {
+        return true;
+    }
+
+    GLint previous_texture = 0;
+    GLint previous_draw_fbo = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_VALUE, &previous_draw_fbo);
+
+    GLuint textures[2]{};
+    GLuint framebuffers[2]{};
+    glGenTextures(2, textures);
+    g_gl_gen_framebuffers(2, framebuffers);
+    bool complete = textures[0] && textures[1] &&
+        framebuffers[0] && framebuffers[1];
+    for (int eye = 0; eye < 2 && complete; ++eye) {
+        glBindTexture(GL_TEXTURE_2D, textures[eye]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_VALUE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE_VALUE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24_VALUE,
+                     width, height, 0, GL_DEPTH_COMPONENT_VALUE,
+                     GL_FLOAT, nullptr);
+
+        g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE, framebuffers[eye]);
+        g_gl_framebuffer_texture_2d(
+            GL_DRAW_FRAMEBUFFER_VALUE, GL_DEPTH_ATTACHMENT_VALUE,
+            GL_TEXTURE_2D, textures[eye], 0);
+        glDrawBuffer(GL_NONE_VALUE);
+        complete = glGetError() == GL_NO_ERROR &&
+            g_gl_check_framebuffer_status(GL_DRAW_FRAMEBUFFER_VALUE) ==
+                GL_FRAMEBUFFER_COMPLETE_VALUE;
+    }
+
+    g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE,
+                          static_cast<GLuint>(previous_draw_fbo));
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture));
+    if (!complete) {
+        glDeleteTextures(2, textures);
+        g_gl_delete_framebuffers(2, framebuffers);
+        render_log("SteamVR depth: hardware depth allocation failed");
+        return false;
+    }
+
+    std::copy(std::begin(textures), std::end(textures),
+              std::begin(g_compositor_depth_textures));
+    std::copy(std::begin(framebuffers), std::end(framebuffers),
+              std::begin(g_compositor_depth_fbos));
+    g_compositor_depth_valid[0] = g_compositor_depth_valid[1] = false;
+    g_compositor_depth_frame_serial[0] =
+        g_compositor_depth_frame_serial[1] = 0;
+    render_log("SteamVR depth: hardware depth targets ready");
     return true;
 }
 
@@ -6128,12 +6321,20 @@ bool ensure_render_target_storage(int source_width, int source_height,
     if (g_eye_depth_textures[0] || g_eye_depth_textures[1]) {
         glDeleteTextures(2, g_eye_depth_textures);
     }
+    if (g_compositor_depth_textures[0] || g_compositor_depth_textures[1]) {
+        glDeleteTextures(2, g_compositor_depth_textures);
+        g_compositor_depth_textures[0] = g_compositor_depth_textures[1] = 0;
+    }
     if (g_capture_fbo) g_gl_delete_framebuffers(1, &g_capture_fbo);
     if (g_eye_color_fbos[0] || g_eye_color_fbos[1]) {
         g_gl_delete_framebuffers(2, g_eye_color_fbos);
     }
     if (g_eye_depth_fbos[0] || g_eye_depth_fbos[1]) {
         g_gl_delete_framebuffers(2, g_eye_depth_fbos);
+    }
+    if (g_compositor_depth_fbos[0] || g_compositor_depth_fbos[1]) {
+        g_gl_delete_framebuffers(2, g_compositor_depth_fbos);
+        g_compositor_depth_fbos[0] = g_compositor_depth_fbos[1] = 0;
     }
 
     g_afw_source_texture = source_texture;
@@ -6152,9 +6353,12 @@ bool ensure_render_target_storage(int source_width, int source_height,
     g_texture_height = output_height;
     g_eye_valid[0] = g_eye_valid[1] = false;
     g_eye_depth_valid[0] = g_eye_depth_valid[1] = false;
+    g_compositor_depth_valid[0] = g_compositor_depth_valid[1] = false;
     g_source_frame_serial = 0;
     g_eye_frame_serial[0] = g_eye_frame_serial[1] = 0;
     g_eye_depth_frame_serial[0] = g_eye_depth_frame_serial[1] = 0;
+    g_compositor_depth_frame_serial[0] =
+        g_compositor_depth_frame_serial[1] = 0;
     ++g_render_resource_generation;
     return true;
 }
@@ -7370,20 +7574,16 @@ bool warp_source_to_eye(GLuint source_texture, int target_eye,
     const DistortionTextureSnapshot distortion = g_render_frame.active
         ? g_render_frame.distortion
         : distortion_texture_snapshot();
-    if (!depth.valid || !depth.texture || !initialize_gl_capture() ||
-        !ensure_afw_gl_renderer()) {
+    if (!initialize_gl_capture() || !ensure_afw_gl_renderer()) {
         return false;
     }
     const int source_width = g_source_texture_width;
     const int source_height = g_source_texture_height;
     constexpr bool use_held_item_depth = false;
     constexpr bool remove_held_item_background = false;
-    const int depthToleranceX = (std::max)(8, source_width / 32);
-    const int depthToleranceY = (std::max)(8, source_height / 32);
-    if (std::abs(depth.width * 2 - source_width) > depthToleranceX ||
-        std::abs(depth.height * 2 - source_height) > depthToleranceY) {
-        return false;
-    }
+    const bool depth_usable = depth.valid && depth.texture != 0 &&
+        hytalevr::scene_depth_matches_source(
+            depth.width, depth.height, source_width, source_height);
 
     Matrix4 source_projection{};
     Matrix4 target_projection{};
@@ -7422,16 +7622,20 @@ bool warp_source_to_eye(GLuint source_texture, int target_eye,
     GLint previous_texture_3 = 0;
     GLint previous_read_fbo = 0;
     GLint previous_draw_fbo = 0;
+    GLint previous_depth_func = GL_LESS;
     GLint previous_viewport[4]{};
     GLboolean previous_color_mask[4]{};
+    GLboolean previous_depth_mask = GL_TRUE;
     glGetIntegerv(GL_CURRENT_PROGRAM_VALUE, &previous_program);
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING_VALUE, &previous_vao);
     glGetIntegerv(GL_ARRAY_BUFFER_BINDING_VALUE, &previous_array_buffer);
     glGetIntegerv(GL_ACTIVE_TEXTURE_VALUE, &previous_active_texture);
     glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING_VALUE, &previous_read_fbo);
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_VALUE, &previous_draw_fbo);
+    glGetIntegerv(GL_DEPTH_FUNC_VALUE, &previous_depth_func);
     glGetIntegerv(GL_VIEWPORT, previous_viewport);
     glGetBooleanv(GL_COLOR_WRITEMASK, previous_color_mask);
+    glGetBooleanv(GL_DEPTH_WRITEMASK_VALUE, &previous_depth_mask);
     const GLboolean blend_enabled = glIsEnabled(GL_BLEND);
     const GLboolean depth_enabled = glIsEnabled(GL_DEPTH_TEST);
     const GLboolean scissor_enabled = glIsEnabled(GL_SCISSOR_TEST);
@@ -7448,6 +7652,7 @@ bool warp_source_to_eye(GLuint source_texture, int target_eye,
     g_gl_active_texture(GL_TEXTURE0_VALUE);
     g_eye_valid[target_eye] = false;
     g_eye_depth_valid[target_eye] = false;
+    g_compositor_depth_valid[target_eye] = false;
 
     g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE,
                           g_eye_color_fbos[target_eye]);
@@ -7494,22 +7699,26 @@ bool warp_source_to_eye(GLuint source_texture, int target_eye,
                                 source_to_target_view.value);
         g_gl_uniform_matrix_4fv(g_afw_target_projection_uniform, 1, GL_FALSE,
                                 target_projection.value);
-        g_gl_uniform_1f(g_afw_depth_far_clip_uniform, depth.far_clip);
+        g_gl_uniform_1f(g_afw_depth_far_clip_uniform,
+                        depth_usable ? depth.far_clip : 1024.0f);
+        const int warp_mode =
+            (render_options & kVrEffectProjectionCorrection) == 0u
+                ? 0
+                : (depth_usable ? 2 : 1);
         g_gl_uniform_1i(
-            g_afw_enable_warp_uniform,
-            (render_options & kVrEffectProjectionCorrection) != 0u ? 2 : 0);
+            g_afw_enable_warp_uniform, warp_mode);
         g_gl_uniform_1i(g_afw_output_depth_uniform, 0);
         g_gl_active_texture(GL_TEXTURE0_VALUE);
         glBindTexture(GL_TEXTURE_2D, source_texture);
         g_gl_active_texture(GL_TEXTURE1_VALUE);
-        glBindTexture(GL_TEXTURE_2D, depth.texture);
+        glBindTexture(GL_TEXTURE_2D, depth_usable ? depth.texture : 0);
         g_gl_active_texture(GL_TEXTURE2_VALUE);
         glBindTexture(GL_TEXTURE_2D, distortion.valid ? distortion.texture : 0);
         g_gl_active_texture(GL_TEXTURE3_VALUE);
         glBindTexture(GL_TEXTURE_2D, 0);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         success = glGetError() == GL_NO_ERROR;
-        if (success) {
+        if (success && depth_usable) {
             g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE,
                                   g_eye_depth_fbos[target_eye]);
             const bool depth_complete =
@@ -7520,6 +7729,46 @@ bool warp_source_to_eye(GLuint source_texture, int target_eye,
                 glDrawArrays(GL_TRIANGLES, 0, 3);
                 g_eye_depth_valid[target_eye] = glGetError() == GL_NO_ERROR;
                 g_gl_uniform_1i(g_afw_output_depth_uniform, 0);
+            }
+        }
+        const bool submit_depth_requested =
+            (render_options & kVrEffectCompositorDepth) != 0u &&
+            !g_compositor_depth_runtime_disabled;
+        if (success && g_eye_depth_valid[target_eye] &&
+            submit_depth_requested &&
+            g_compositor_depth_textures[target_eye] &&
+            g_compositor_depth_fbos[target_eye] &&
+            ensure_compositor_depth_renderer()) {
+            g_gl_bind_framebuffer(GL_DRAW_FRAMEBUFFER_VALUE,
+                                  g_compositor_depth_fbos[target_eye]);
+            const bool submit_depth_complete =
+                g_gl_check_framebuffer_status(GL_DRAW_FRAMEBUFFER_VALUE) ==
+                    GL_FRAMEBUFFER_COMPLETE_VALUE;
+            if (submit_depth_complete) {
+                glViewport(0, 0, g_texture_width, g_texture_height);
+                glDisable(GL_BLEND);
+                glDisable(GL_SCISSOR_TEST);
+                glDisable(GL_CULL_FACE);
+                glEnable(GL_DEPTH_TEST);
+                glDepthFunc(GL_ALWAYS);
+                glDepthMask(GL_TRUE);
+                glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+                glClearDepth(1.0);
+                glClear(GL_DEPTH_BUFFER_BIT);
+                g_gl_use_program(g_compositor_depth_program);
+                g_gl_bind_vertex_array(g_afw_vao);
+                g_gl_uniform_1i(g_compositor_depth_source_uniform, 1);
+                g_gl_uniform_matrix_4fv(
+                    g_compositor_depth_projection_uniform, 1, GL_FALSE,
+                    target_projection.value);
+                g_gl_uniform_1f(g_compositor_depth_far_clip_uniform,
+                                depth.far_clip);
+                g_gl_active_texture(GL_TEXTURE1_VALUE);
+                glBindTexture(GL_TEXTURE_2D, g_eye_depth_textures[target_eye]);
+                while (glGetError() != GL_NO_ERROR) {}
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+                g_compositor_depth_valid[target_eye] =
+                    glGetError() == GL_NO_ERROR;
             }
         }
     }
@@ -7542,6 +7791,8 @@ bool warp_source_to_eye(GLuint source_texture, int target_eye,
                previous_viewport[2], previous_viewport[3]);
     glColorMask(previous_color_mask[0], previous_color_mask[1],
                 previous_color_mask[2], previous_color_mask[3]);
+    glDepthFunc(static_cast<GLenum>(previous_depth_func));
+    glDepthMask(previous_depth_mask);
     if (blend_enabled) glEnable(GL_BLEND); else glDisable(GL_BLEND);
     if (depth_enabled) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
     if (scissor_enabled) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
@@ -7555,6 +7806,10 @@ bool warp_source_to_eye(GLuint source_texture, int target_eye,
         g_eye_depth_frame_serial[target_eye] = g_eye_depth_valid[target_eye]
             ? g_eye_frame_serial[target_eye]
             : 0;
+        g_compositor_depth_frame_serial[target_eye] =
+            g_compositor_depth_valid[target_eye]
+                ? g_eye_frame_serial[target_eye]
+                : 0;
         ++g_afw_warped_frames;
         if (render_logging_enabled() && (g_afw_warped_frames % 90u) == 1u) {
             std::ostringstream out;
@@ -7828,13 +8083,61 @@ bool draw_overlays_to_eye_texture(int eye, const VrCameraControls& controls) {
 vr::EVRCompositorError submit_eye_texture_to_eye(int target_eye_index, int texture_eye_index) {
     if (!g_eye_valid[texture_eye_index]) return vr::VRCompositorError_RequestFailed;
     vr::VRTextureBounds_t bounds{0.0f, 0.0f, 1.0f, 1.0f};
-    vr::Texture_t texture{
-        reinterpret_cast<void*>(static_cast<uintptr_t>(g_eye_textures[texture_eye_index])),
-        vr::TextureType_OpenGL, vr::ColorSpace_Gamma};
     auto* compositor = vr::VRCompositor();
     if (!compositor) return vr::VRCompositorError_RequestFailed;
     const vr::EVREye eye = target_eye_index == 0 ? vr::Eye_Left : vr::Eye_Right;
-    const auto error = compositor->Submit(eye, &texture, &bounds);
+    const VrCameraControls& controls = g_render_frame.active
+        ? g_render_frame.controls
+        : g_last_valid_controls;
+    const bool depth_requested =
+        (effective_render_options(controls) & kVrEffectCompositorDepth) != 0u;
+    const bool depth_coherent = depth_requested &&
+        !g_compositor_depth_runtime_disabled &&
+        g_compositor_depth_valid[texture_eye_index] &&
+        g_compositor_depth_textures[texture_eye_index] != 0 &&
+        g_compositor_depth_frame_serial[texture_eye_index] != 0 &&
+        g_compositor_depth_frame_serial[texture_eye_index] ==
+            g_eye_frame_serial[texture_eye_index];
+
+    vr::EVRCompositorError error = vr::VRCompositorError_None;
+    if (depth_coherent) {
+        Matrix4 projection{};
+        if (g_render_frame.active) {
+            projection = g_render_frame.eye_projection[texture_eye_index];
+        } else {
+            AcquireSRWLockShared(&g_camera_lock);
+            projection = g_afw_eye_projection[texture_eye_index];
+            ReleaseSRWLockShared(&g_camera_lock);
+        }
+        vr::VRTextureWithDepth_t texture{};
+        texture.handle = reinterpret_cast<void*>(
+            static_cast<uintptr_t>(g_eye_textures[texture_eye_index]));
+        texture.eType = vr::TextureType_OpenGL;
+        texture.eColorSpace = vr::ColorSpace_Gamma;
+        texture.depth.handle = reinterpret_cast<void*>(
+            static_cast<uintptr_t>(
+                g_compositor_depth_textures[texture_eye_index]));
+        texture.depth.mProjection = to_openvr_projection(projection);
+        texture.depth.vRange.v[0] = 0.0f;
+        texture.depth.vRange.v[1] = 1.0f;
+        error = compositor->Submit(
+            eye, &texture, &bounds, vr::Submit_TextureWithDepth);
+        if (error != vr::VRCompositorError_None) {
+            g_compositor_depth_runtime_disabled = true;
+            std::ostringstream out;
+            out << "SteamVR depth submit rejected eye=" << target_eye_index
+                << " error=" << static_cast<int32_t>(error)
+                << "; falling back to color-only submission";
+            render_log(out.str());
+        }
+    }
+    if (!depth_coherent || error != vr::VRCompositorError_None) {
+        vr::Texture_t texture{
+            reinterpret_cast<void*>(
+                static_cast<uintptr_t>(g_eye_textures[texture_eye_index])),
+            vr::TextureType_OpenGL, vr::ColorSpace_Gamma};
+        error = compositor->Submit(eye, &texture, &bounds);
+    }
     if (error != vr::VRCompositorError_None) {
         std::ostringstream out;
         out << "submit eye=" << target_eye_index
@@ -8027,6 +8330,10 @@ void shutdown_stereo() {
         glDeleteTextures(2, g_eye_depth_textures);
         g_eye_depth_textures[0] = g_eye_depth_textures[1] = 0;
     }
+    if (g_compositor_depth_textures[0] || g_compositor_depth_textures[1]) {
+        glDeleteTextures(2, g_compositor_depth_textures);
+        g_compositor_depth_textures[0] = g_compositor_depth_textures[1] = 0;
+    }
     if (g_capture_fbo && g_gl_delete_framebuffers) {
         g_gl_delete_framebuffers(1, &g_capture_fbo);
         g_capture_fbo = 0;
@@ -8041,14 +8348,24 @@ void shutdown_stereo() {
         g_gl_delete_framebuffers(2, g_eye_depth_fbos);
         g_eye_depth_fbos[0] = g_eye_depth_fbos[1] = 0;
     }
+    if ((g_compositor_depth_fbos[0] || g_compositor_depth_fbos[1]) &&
+        g_gl_delete_framebuffers) {
+        g_gl_delete_framebuffers(2, g_compositor_depth_fbos);
+        g_compositor_depth_fbos[0] = g_compositor_depth_fbos[1] = 0;
+    }
     g_eye_valid[0] = g_eye_valid[1] = false;
     g_eye_depth_valid[0] = g_eye_depth_valid[1] = false;
+    g_compositor_depth_valid[0] = g_compositor_depth_valid[1] = false;
     g_pre_ui_captured[0] = g_pre_ui_captured[1] = false;
     g_texture_width = g_texture_height = 0;
     g_source_texture_width = g_source_texture_height = 0;
     g_source_frame_serial = 0;
     g_eye_frame_serial[0] = g_eye_frame_serial[1] = 0;
     g_eye_depth_frame_serial[0] = g_eye_depth_frame_serial[1] = 0;
+    g_compositor_depth_frame_serial[0] =
+        g_compositor_depth_frame_serial[1] = 0;
+    g_compositor_depth_runtime_disabled = false;
+    g_compositor_depth_option_was_enabled = false;
     ++g_render_resource_generation;
     g_consecutive_submit_failures = 0;
     g_last_successful_submit_tick = 0;

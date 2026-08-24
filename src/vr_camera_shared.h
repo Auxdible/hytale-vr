@@ -13,10 +13,12 @@ constexpr uint32_t kVrEffectSupersampling = 1u << 3;
 constexpr uint32_t kVrEffectSharpening = 1u << 4;
 constexpr uint32_t kVrEffectEdgeAa = 1u << 5;
 constexpr uint32_t kVrEffectProjectionCorrection = 1u << 6;
+constexpr uint32_t kVrEffectCompositorDepth = 1u << 7;
 constexpr uint32_t kVrEffectQualityControlsPresent = 1u << 31;
 constexpr uint32_t kVrEffectDefaults =
     kVrEffectShadows | kVrEffectParticles | kVrEffectDistortion |
     kVrEffectEdgeAa | kVrEffectProjectionCorrection |
+    kVrEffectCompositorDepth |
     kVrEffectQualityControlsPresent;
 
 struct VrCameraControls {

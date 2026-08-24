@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.4] - 2026-08-24
+
+### SteamVR depth and render reliability
+
+- Added optional OpenVR depth submission so SteamVR can use the scene depth alongside each eye texture.
+- Enabled SteamVR depth by default after successful headset testing, while retaining automatic color-only fallback if a runtime rejects depth submission.
+- Fixed VR output remaining on the SteamVR waiting screen when supersampling was disabled.
+- Accepted full-, half-, and quarter-resolution Hytale depth buffers instead of requiring an exact half-resolution match.
+- Added a color reprojection fallback so a transient missing or incompatible depth buffer cannot stop eye submission.
+- Isolated depth conversion from the normal AFW shader path to keep color-only rendering unchanged when depth submission is disabled.
+- Updated the compiled dashboard version to 1.0.4 for automatic update detection.
+
 ## [1.0.3] - 2026-08-24
 
 ### Render performance and frame stability

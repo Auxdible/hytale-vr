@@ -104,6 +104,7 @@ enum ControlId {
     IDC_VR_SHARPEN_STRENGTH,
     IDC_VR_EDGE_AA,
     IDC_VR_PROJECTION_CORRECTION,
+    IDC_VR_COMPOSITOR_DEPTH,
     IDC_VR_ADVANCED_OPTIONS,
     IDC_VR_KEY_FORWARD,
     IDC_VR_KEY_BACKWARD,
@@ -882,6 +883,7 @@ void update_tab_visibility() {
         IDC_VR_HAND_MODEL_YAW, IDC_VR_HAND_MODEL_ROLL, IDC_VR_RESOLUTION_SCALE,
         IDC_VR_SUPERSAMPLING, IDC_VR_SHARPENING, IDC_VR_SHARPEN_STRENGTH,
         IDC_VR_EDGE_AA, IDC_VR_PROJECTION_CORRECTION,
+        IDC_VR_COMPOSITOR_DEPTH,
         IDC_VR_HELD_ITEM_X, IDC_VR_HELD_ITEM_Y, IDC_VR_HELD_ITEM_Z,
         IDC_VR_HELD_ITEM_SCALE
     };
@@ -971,7 +973,8 @@ void layout_controls_for_current_tab() {
             setPos(IDC_VR_SHARPEN_STRENGTH, 600, 285, 65, 24);
         }
         setPos(IDC_VR_EDGE_AA, 405, 538, 180, 24);
-        setPos(IDC_VR_PROJECTION_CORRECTION, 405, 564, 180, 24);
+        setPos(IDC_VR_PROJECTION_CORRECTION, 405, 564, 100, 24);
+        setPos(IDC_VR_COMPOSITOR_DEPTH, 505, 564, 115, 24);
         setPos(IDC_VR_IPD, 515, 592, 70, 24);
         setPos(IDC_VR_SEPARATION, 515, 618, 70, 24);
         setPos(IDC_VR_WORLD_SCALE, 515, 644, 70, 24);
@@ -1030,6 +1033,7 @@ void layout_controls_for_current_tab() {
         setPos(IDC_VR_SHARPEN_STRENGTH, 480, 418, 80, 24);
         setPos(IDC_VR_EDGE_AA, 250, 450, 220, 20);
         setPos(IDC_VR_PROJECTION_CORRECTION, 250, 480, 260, 20);
+        setPos(IDC_VR_COMPOSITOR_DEPTH, 250, 510, 260, 20);
         setPos(IDC_VR_IPD, 760, 180, 150, 24);
         setPos(IDC_VR_SEPARATION, 760, 210, 150, 24);
         setPos(IDC_VR_WORLD_SCALE, 760, 240, 150, 24);
@@ -2618,6 +2622,9 @@ void publish_vr_controls(bool enabled, bool shutdown_requested, bool unload_requ
     if (IsDlgButtonChecked(g_window, IDC_VR_PROJECTION_CORRECTION) == BST_CHECKED) {
         vr_effects |= kVrEffectProjectionCorrection;
     }
+    if (IsDlgButtonChecked(g_window, IDC_VR_COMPOSITOR_DEPTH) == BST_CHECKED) {
+        vr_effects |= kVrEffectCompositorDepth;
+    }
     g_vr_camera_shared->shadows_disabled =
         (vr_effects & kVrEffectShadows) != 0u ? 0u : 1u;
     g_vr_camera_shared->particles_disabled =
@@ -2984,8 +2991,10 @@ void create_ui(HWND window) {
         IDC_VR_SHARPEN_STRENGTH);
     add(L"BUTTON", L"VR FXAA", BS_AUTOCHECKBOX, 405, 538, 175, 20,
         IDC_VR_EDGE_AA);
-    add(L"BUTTON", L"Stereo projection", BS_AUTOCHECKBOX, 405, 564, 175, 20,
+    add(L"BUTTON", L"Projection", BS_AUTOCHECKBOX, 405, 564, 100, 20,
         IDC_VR_PROJECTION_CORRECTION);
+    add(L"BUTTON", L"SteamVR depth", BS_AUTOCHECKBOX, 505, 564, 115, 20,
+        IDC_VR_COMPOSITOR_DEPTH);
     add(L"EDIT", L"64.0", WS_BORDER | ES_AUTOHSCROLL, 515, 592, 65, 24, IDC_VR_IPD);
     add(L"EDIT", L"100", WS_BORDER | ES_AUTOHSCROLL, 515, 618, 65, 24, IDC_VR_SEPARATION);
     add(L"EDIT", L"130", WS_BORDER | ES_AUTOHSCROLL, 515, 644, 65, 24, IDC_VR_WORLD_SCALE);
@@ -3088,6 +3097,7 @@ void create_ui(HWND window) {
     CheckDlgButton(g_window, IDC_VR_DISABLE_DISTORTION, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_EDGE_AA, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_PROJECTION_CORRECTION, BST_CHECKED);
+    CheckDlgButton(g_window, IDC_VR_COMPOSITOR_DEPTH, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_MENU_MOUSE, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_NO_UBO_UI, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_HIDE_FIRST_PERSON_HAND, BST_CHECKED);
@@ -3422,6 +3432,23 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                 if (choice != IDOK) {
                     CheckDlgButton(g_window, IDC_VR_SUPERSAMPLING, BST_UNCHECKED);
                     set_status(L"Supersampling was not enabled.");
+                }
+            }
+            if (g_vr_tracking) publish_vr_controls(true, false);
+            return 0;
+        case IDC_VR_COMPOSITOR_DEPTH:
+            if (HIWORD(wparam) == BN_CLICKED &&
+                IsDlgButtonChecked(g_window, IDC_VR_COMPOSITOR_DEPTH) == BST_CHECKED) {
+                const int choice = MessageBoxW(
+                    g_window,
+                    L"SteamVR depth submission is experimental. It can improve positional reprojection, "
+                    L"but support varies between SteamVR drivers.\n\n"
+                    L"If the headset image becomes unstable, disable this option.",
+                    L"Experimental SteamVR depth",
+                    MB_ICONWARNING | MB_OKCANCEL | MB_DEFBUTTON2);
+                if (choice != IDOK) {
+                    CheckDlgButton(g_window, IDC_VR_COMPOSITOR_DEPTH, BST_UNCHECKED);
+                    set_status(L"SteamVR depth submission was not enabled.");
                 }
             }
             if (g_vr_tracking) publish_vr_controls(true, false);

@@ -56,4 +56,28 @@ inline int scene_depth_candidate_score(int width,
     return width >= 1024 ? 25 : 10;
 }
 
+inline bool scene_depth_matches_source(int depth_width,
+                                       int depth_height,
+                                       int source_width,
+                                       int source_height) {
+    if (depth_width <= 0 || depth_height <= 0 ||
+        source_width <= 0 || source_height <= 0) {
+        return false;
+    }
+
+    const float depth_aspect = static_cast<float>(depth_width) /
+        static_cast<float>(depth_height);
+    const float source_aspect = static_cast<float>(source_width) /
+        static_cast<float>(source_height);
+    if (std::abs(depth_aspect - source_aspect) > 0.08f) return false;
+
+    const float scale_x = static_cast<float>(source_width) /
+        static_cast<float>(depth_width);
+    const float scale_y = static_cast<float>(source_height) /
+        static_cast<float>(depth_height);
+    const float scale_tolerance = (std::max)(
+        0.08f, (std::max)(scale_x, scale_y) * 0.05f);
+    return std::abs(scale_x - scale_y) <= scale_tolerance;
+}
+
 } // namespace hytalevr

@@ -502,8 +502,14 @@ int main() {
                      "hand occlusion must use only the explicit additive tolerance");
 
     success &= check(scene_depth_candidate_score(1280, 684, 2560, 1369) == 100 &&
-                         scene_depth_candidate_score(256, 128, 2560, 1369) == 0,
+                          scene_depth_candidate_score(256, 128, 2560, 1369) == 0,
                      "scene depth selection must prefer the half-resolution game buffer");
+    success &= check(
+        scene_depth_matches_source(2560, 1369, 2560, 1369) &&
+            scene_depth_matches_source(1280, 684, 2560, 1369) &&
+            scene_depth_matches_source(640, 342, 2560, 1369) &&
+            !scene_depth_matches_source(1024, 1024, 2560, 1369),
+        "scene depth compatibility must accept full, half and quarter resolution buffers");
 
     const HKL keyboard_layout = GetKeyboardLayout(0);
     const MovementKeys movement_keys = movement_keys_for_layout(keyboard_layout);
