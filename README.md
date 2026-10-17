@@ -1,5 +1,94 @@
-# hytale-vr
+# Hytale VR
 
-Being rebuilt from scratch as v2: VR that loads inside Hytale with an in-game VR menu, real stereo rendered from Hytale's own renderer, and a small install package.
+Play Hytale in a SteamVR headset. Hytale VR loads inside Hytale itself, the way
+shader mods do, and adds an in-game VR menu.
 
-The previous version (the injected render hook and its dashboard) is in this repository's git history.
+## What works now
+
+- **In-game VR menu.** Press `F6` (or `Y` on the left controller) to open it.
+  Start and stop VR, place the screen, and change controls without leaving the game.
+- **Hytale on a big screen in VR**, main menu included, in a dark room with a floor.
+- **Laser pointer.** Point at the screen and pull the trigger to click.
+- **Controller play.** Move, look, jump, sprint, crouch, attack, use, inventory and hotbar.
+- **Renderer log.** One button writes how Hytale draws a frame (render targets,
+  shaders, uniform buffers, draw calls) to `HytaleVR\logs`.
+
+## What's next
+
+Real 3D, rendered by Hytale's own renderer for each eye. Hytale's engine can't
+draw a frame twice, so Hytale VR will repeat each of its draw calls on the GPU
+with a second eye's camera, the way 3D Vision and VorpX's geometry 3D work.
+That needs the exact layout of Hytale's renderer, which is what the renderer log
+captures.
+
+## Install
+
+1. Download `HytaleVR-windows-x64` from the latest build and extract it.
+2. Run `Install.bat`. It finds Hytale (or asks for `HytaleClient.exe`) and copies
+   `opengl32.dll` and a `HytaleVR` folder next to `HytaleClient.exe`.
+3. Start Hytale, press `F6`, and choose **Enter VR**.
+
+`Uninstall.bat` removes it. A Hytale update can remove the files; run
+`Install.bat` again if VR stops showing up.
+
+Aurora Shaders uses the same `opengl32.dll` file name, so the two can't run
+together yet. The installer asks before setting Aurora aside and the uninstaller
+puts it back.
+
+## Controls
+
+| Control | Action |
+| --- | --- |
+| Laser + right trigger | Click what you point at |
+| Right trigger | Attack / break (left click) |
+| Left trigger | Use / place (right click) |
+| Left stick | Move, click to sprint |
+| Right stick | Look, or scroll in menus |
+| A | Jump |
+| B | Back (Esc) |
+| X | Inventory |
+| Y | VR menu |
+| Left grip | Crouch |
+| Right grip | Next hotbar slot |
+| Right stick click | Recenter screen |
+
+Bindings can be changed in SteamVR's controller settings.
+
+## How it works
+
+Windows loads `opengl32.dll` from the game's folder before System32, so Hytale
+loads Hytale VR's `opengl32.dll`. It forwards every OpenGL call to the real
+driver and watches a few: the end of each frame (`wglSwapBuffers`), shader and
+program creation, framebuffer binds and draw calls. At the end of each frame it
+draws the VR menu with Dear ImGui, copies the finished frame to a texture, and
+draws the VR view for SteamVR. Controller input reaches Hytale as ordinary
+keyboard and mouse input. Hooks on Hytale's SDL3 let the menu take the mouse and
+keyboard while it's open.
+
+Files at runtime, next to `HytaleClient.exe`:
+
+- `opengl32.dll`, Hytale VR itself
+- `HytaleVR\settings.ini`, written by the menu
+- `HytaleVR\logs\hytalevr.log`, the session log
+- `HytaleVR\logs\renderer_*.txt` and `HytaleVR\logs\shaders\`, from the renderer log
+
+## Building
+
+Windows, Visual Studio 2022 and CMake 3.24 or newer:
+
+```
+cmake --preset vs2022-x64
+cmake --build --preset release
+ctest --preset release
+cmake --install build --config Release --prefix dist/HytaleVR
+```
+
+`tools/gen_proxy.py` regenerates the export forwarding files in
+`src/proxy/generated` from `tools/opengl32_exports.txt`.
+
+The previous version (an injected hook with a separate dashboard) is in this
+repository's git history.
+
+## License
+
+Apache 2.0. See `LICENSE` and `NOTICE`.

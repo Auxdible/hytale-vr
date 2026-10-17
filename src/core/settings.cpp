@@ -1,0 +1,118 @@
+#include "settings.h"
+
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <sstream>
+
+namespace hvr {
+namespace {
+
+template <typename Visit>
+void visit_fields(Settings& s, Visit&& visit) {
+    visit("vr_enabled", s.vr_enabled);
+    visit("vsync_off_in_vr", s.vsync_off_in_vr);
+    visit("screen_distance", s.screen_distance);
+    visit("screen_width", s.screen_width);
+    visit("screen_height", s.screen_height);
+    visit("show_floor", s.show_floor);
+    visit("controller_input", s.controller_input);
+    visit("left_handed", s.left_handed);
+    visit("look_speed", s.look_speed);
+    visit("deadzone", s.deadzone);
+    visit("key_jump", s.key_jump);
+    visit("key_sprint", s.key_sprint);
+    visit("key_crouch", s.key_crouch);
+    visit("key_inventory", s.key_inventory);
+    visit("key_forward", s.key_forward);
+    visit("key_back", s.key_back);
+    visit("key_left", s.key_left);
+    visit("key_right", s.key_right);
+    visit("menu_key", s.menu_key);
+    visit("menu_scale", s.menu_scale);
+}
+
+std::string trim(const std::string& text) {
+    const auto begin = text.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) return {};
+    const auto end = text.find_last_not_of(" \t\r\n");
+    return text.substr(begin, end - begin + 1);
+}
+
+void assign(bool& field, const std::string& value) {
+    field = value == "1" || value == "true" || value == "yes" || value == "on";
+}
+void assign(int& field, const std::string& value) {
+    char* end = nullptr;
+    const long parsed = std::strtol(value.c_str(), &end, 10);
+    if (end != value.c_str()) field = static_cast<int>(parsed);
+}
+void assign(float& field, const std::string& value) {
+    char* end = nullptr;
+    const float parsed = std::strtof(value.c_str(), &end);
+    if (end != value.c_str()) field = parsed;
+}
+
+std::string text_of(bool value) { return value ? "true" : "false"; }
+std::string text_of(int value) { return std::to_string(value); }
+std::string text_of(float value) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%.3g", value);
+    return buffer;
+}
+
+int clamp_key(int key, int fallback) { return key > 0 && key < 512 ? key : fallback; }
+
+}  // namespace
+
+void clamp(Settings& s) {
+    const Settings defaults;
+    s.screen_distance = std::clamp(s.screen_distance, 0.8f, 8.0f);
+    s.screen_width = std::clamp(s.screen_width, 0.8f, 12.0f);
+    s.screen_height = std::clamp(s.screen_height, -1.5f, 2.0f);
+    s.look_speed = std::clamp(s.look_speed, 100.0f, 4000.0f);
+    s.deadzone = std::clamp(s.deadzone, 0.0f, 0.6f);
+    s.menu_scale = std::clamp(s.menu_scale, 0.6f, 2.0f);
+    s.key_jump = clamp_key(s.key_jump, defaults.key_jump);
+    s.key_sprint = clamp_key(s.key_sprint, defaults.key_sprint);
+    s.key_crouch = clamp_key(s.key_crouch, defaults.key_crouch);
+    s.key_inventory = clamp_key(s.key_inventory, defaults.key_inventory);
+    s.key_forward = clamp_key(s.key_forward, defaults.key_forward);
+    s.key_back = clamp_key(s.key_back, defaults.key_back);
+    s.key_left = clamp_key(s.key_left, defaults.key_left);
+    s.key_right = clamp_key(s.key_right, defaults.key_right);
+    s.menu_key = clamp_key(s.menu_key, defaults.menu_key);
+}
+
+Settings parse_settings(const std::string& text) {
+    Settings s;
+    std::istringstream lines(text);
+    std::string line;
+    while (std::getline(lines, line)) {
+        line = trim(line);
+        if (line.empty() || line[0] == '#' || line[0] == ';') continue;
+        const auto equals = line.find('=');
+        if (equals == std::string::npos) continue;
+        const std::string key = trim(line.substr(0, equals));
+        const std::string value = trim(line.substr(equals + 1));
+        visit_fields(s, [&](const char* name, auto& field) {
+            if (key == name) assign(field, value);
+        });
+    }
+    clamp(s);
+    return s;
+}
+
+std::string format_settings(const Settings& settings) {
+    Settings s = settings;
+    std::string out = "# Hytale VR settings. Change these in game from the VR menu.\n";
+    visit_fields(s, [&](const char* name, auto& field) {
+        out += name;
+        out += " = ";
+        out += text_of(field);
+        out += "\n";
+    });
+    return out;
+}
+
+}  // namespace hvr

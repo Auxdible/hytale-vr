@@ -1,0 +1,338 @@
+#include "vr_scene.h"
+
+#include <cmath>
+#include <vector>
+
+#include "log.h"
+
+namespace hvr {
+namespace {
+
+const char* kVertex = R"(#version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec2 aUv;
+uniform mat4 uMvp;
+uniform mat4 uModel;
+out vec2 vUv;
+out vec3 vWorld;
+void main() {
+    vUv = aUv;
+    vWorld = (uModel * vec4(aPos, 1.0)).xyz;
+    gl_Position = uMvp * vec4(aPos, 1.0);
+}
+)";
+
+// Modes: 0 screen, 1 solid, 2 floor, 3 sky, 4 screen glow, 5 pointer dot.
+const char* kFragment = R"(#version 330 core
+in vec2 vUv;
+in vec3 vWorld;
+uniform int uMode;
+uniform vec4 uColor;
+uniform vec3 uEye;
+uniform vec2 uSize;
+uniform sampler2D uTex;
+out vec4 oColor;
+
+float roundedBox(vec2 p, vec2 half, float r) {
+    vec2 q = abs(p) - half + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+
+void main() {
+    if (uMode == 0) {
+        vec2 p = (vUv - 0.5) * uSize;
+        float d = roundedBox(p, uSize * 0.5, 0.03);
+        float edge = 1.0 - smoothstep(-0.004, 0.0, d);
+        oColor = vec4(texture(uTex, vUv).rgb, edge);
+    } else if (uMode == 1) {
+        oColor = uColor;
+    } else if (uMode == 2) {
+        vec2 cell = vWorld.xz;
+        vec2 grid = abs(fract(cell - 0.5) - 0.5) / fwidth(cell);
+        float line = 1.0 - min(min(grid.x, grid.y), 1.0);
+        float fade = exp(-0.09 * length(vWorld.xz - uEye.xz));
+        vec3 base = vec3(0.035, 0.04, 0.05);
+        vec3 color = mix(base, vec3(0.20, 0.24, 0.30), line * 0.6);
+        oColor = vec4(color, fade * 0.95);
+    } else if (uMode == 3) {
+        vec3 dir = normalize(vWorld - uEye);
+        float up = smoothstep(-0.25, 0.8, dir.y);
+        vec3 horizon = vec3(0.045, 0.05, 0.065);
+        vec3 zenith = vec3(0.008, 0.010, 0.016);
+        oColor = vec4(mix(horizon, zenith, up), 1.0);
+    } else if (uMode == 4) {
+        vec2 p = (vUv - 0.5) * uSize;
+        float d = roundedBox(p, uSize * 0.5 / 1.25, 0.05);
+        float glow = exp(-max(d, 0.0) * 5.0) * 0.22;
+        oColor = vec4(uColor.rgb, glow);
+    } else {
+        float r = length(vUv - 0.5) * 2.0;
+        float ring = smoothstep(1.0, 0.8, r);
+        oColor = vec4(uColor.rgb, uColor.a * ring);
+    }
+}
+)";
+
+struct Vertex {
+    float x, y, z, u, v;
+};
+
+// Offsets into the vertex buffer.
+constexpr int kQuadFirst = 0, kQuadCount = 6;
+constexpr int kFloorFirst = 6, kFloorCount = 6;
+constexpr int kCubeFirst = 12, kCubeCount = 36;
+
+std::vector<Vertex> build_geometry() {
+    std::vector<Vertex> v;
+    // Unit quad in XY, facing +Z, uv origin bottom left.
+    const Vertex quad[6] = {{-0.5f, -0.5f, 0, 0, 0}, {0.5f, -0.5f, 0, 1, 0}, {0.5f, 0.5f, 0, 1, 1},
+                            {-0.5f, -0.5f, 0, 0, 0}, {0.5f, 0.5f, 0, 1, 1},  {-0.5f, 0.5f, 0, 0, 1}};
+    v.insert(v.end(), quad, quad + 6);
+    // Floor at y = 0, 60 m across.
+    const float f = 30.0f;
+    const Vertex floor[6] = {{-f, 0, -f, 0, 0}, {-f, 0, f, 0, 1}, {f, 0, f, 1, 1},
+                             {-f, 0, -f, 0, 0}, {f, 0, f, 1, 1},  {f, 0, -f, 1, 0}};
+    v.insert(v.end(), floor, floor + 6);
+    // Unit cube.
+    const float c[8][3] = {{-.5f, -.5f, -.5f}, {.5f, -.5f, -.5f}, {.5f, .5f, -.5f}, {-.5f, .5f, -.5f},
+                           {-.5f, -.5f, .5f},  {.5f, -.5f, .5f},  {.5f, .5f, .5f},  {-.5f, .5f, .5f}};
+    const int faces[6][4] = {{4, 5, 6, 7}, {1, 0, 3, 2}, {5, 1, 2, 6}, {0, 4, 7, 3}, {7, 6, 2, 3}, {0, 1, 5, 4}};
+    for (const auto& face : faces) {
+        const int order[6] = {0, 1, 2, 0, 2, 3};
+        for (int i : order) v.push_back({c[face[i]][0], c[face[i]][1], c[face[i]][2], 0, 0});
+    }
+    return v;
+}
+
+GLuint compile(GLenum type, const char* source) {
+    GLuint shader = glr.glCreateShader(type);
+    glr.glShaderSource(shader, 1, &source, nullptr);
+    glr.glCompileShader(shader);
+    GLint ok = 0;
+    glr.glGetShaderiv(shader, gl::COMPILE_STATUS, &ok);
+    if (!ok) {
+        char text[1024] = {};
+        glr.glGetShaderInfoLog(shader, sizeof(text), nullptr, text);
+        logf("VR scene shader failed: %s", text);
+        glr.glDeleteShader(shader);
+        return 0;
+    }
+    return shader;
+}
+
+// Rotation that points local -Z along a direction, plus translation.
+Mat4 aim(Vec3 position, Vec3 forward) {
+    const Vec3 back = normalize(forward * -1.0f);
+    Vec3 up{0, 1, 0};
+    if (std::fabs(dot(up, back)) > 0.98f) up = {1, 0, 0};
+    const Vec3 right = normalize(cross(up, back));
+    const Vec3 true_up = cross(back, right);
+    Mat4 m;
+    m.at(0, 0) = right.x, m.at(1, 0) = right.y, m.at(2, 0) = right.z;
+    m.at(0, 1) = true_up.x, m.at(1, 1) = true_up.y, m.at(2, 1) = true_up.z;
+    m.at(0, 2) = back.x, m.at(1, 2) = back.y, m.at(2, 2) = back.z;
+    m.at(0, 3) = position.x, m.at(1, 3) = position.y, m.at(2, 3) = position.z;
+    return m;
+}
+
+}  // namespace
+
+bool EyeTarget::resize(int width, int height) {
+    if (fbo_ && width == width_ && height == height_) return true;
+    destroy();
+    width_ = width;
+    height_ = height;
+    glr.glGenTextures(1, &color_);
+    glr.glBindTexture(gl::TEXTURE_2D, color_);
+    glr.glTexImage2D(gl::TEXTURE_2D, 0, static_cast<GLint>(gl::RGBA8), width, height, 0, gl::RGBA, gl::UNSIGNED_BYTE, nullptr);
+    glr.glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, static_cast<GLint>(gl::LINEAR));
+    glr.glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, static_cast<GLint>(gl::LINEAR));
+    glr.glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAX_LEVEL, 0);
+    glr.glGenRenderbuffers(1, &depth_);
+    glr.glBindRenderbuffer(gl::RENDERBUFFER, depth_);
+    glr.glRenderbufferStorage(gl::RENDERBUFFER, gl::DEPTH24_STENCIL8, width, height);
+    glr.glGenFramebuffers(1, &fbo_);
+    glr.glBindFramebuffer(gl::FRAMEBUFFER, fbo_);
+    glr.glFramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, color_, 0);
+    glr.glFramebufferRenderbuffer(gl::FRAMEBUFFER, gl::DEPTH_STENCIL_ATTACHMENT, gl::RENDERBUFFER, depth_);
+    const bool complete = glr.glCheckFramebufferStatus(gl::FRAMEBUFFER) == gl::FRAMEBUFFER_COMPLETE;
+    if (!complete) logf("Eye render target %dx%d is incomplete", width, height);
+    return complete;
+}
+
+void EyeTarget::destroy() {
+    if (fbo_) glr.glDeleteFramebuffers(1, &fbo_);
+    if (color_) glr.glDeleteTextures(1, &color_);
+    if (depth_) glr.glDeleteRenderbuffers(1, &depth_);
+    fbo_ = color_ = depth_ = 0;
+    width_ = height_ = 0;
+}
+
+bool Scene::init() {
+    if (program_) return true;
+    GLuint vs = compile(gl::VERTEX_SHADER, kVertex);
+    GLuint fs = compile(gl::FRAGMENT_SHADER, kFragment);
+    if (!vs || !fs) return false;
+    program_ = glr.glCreateProgram();
+    glr.glAttachShader(program_, vs);
+    glr.glAttachShader(program_, fs);
+    glr.glLinkProgram(program_);
+    glr.glDeleteShader(vs);
+    glr.glDeleteShader(fs);
+    GLint ok = 0;
+    glr.glGetProgramiv(program_, gl::LINK_STATUS, &ok);
+    if (!ok) {
+        logf("VR scene program failed to link");
+        program_ = 0;
+        return false;
+    }
+    u_mvp_ = glr.glGetUniformLocation(program_, "uMvp");
+    u_model_ = glr.glGetUniformLocation(program_, "uModel");
+    u_mode_ = glr.glGetUniformLocation(program_, "uMode");
+    u_color_ = glr.glGetUniformLocation(program_, "uColor");
+    u_eye_ = glr.glGetUniformLocation(program_, "uEye");
+    u_tex_ = glr.glGetUniformLocation(program_, "uTex");
+    u_size_ = glr.glGetUniformLocation(program_, "uSize");
+
+    const std::vector<Vertex> vertices = build_geometry();
+    glr.glGenVertexArrays(1, &vao_);
+    glr.glBindVertexArray(vao_);
+    glr.glGenBuffers(1, &vbo_);
+    glr.glBindBuffer(gl::ARRAY_BUFFER, vbo_);
+    glr.glBufferData(gl::ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(Vertex)), vertices.data(),
+                     0x88E4 /* STATIC_DRAW */);
+    glr.glEnableVertexAttribArray(0);
+    glr.glVertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE_, sizeof(Vertex), nullptr);
+    glr.glEnableVertexAttribArray(1);
+    glr.glVertexAttribPointer(1, 2, gl::FLOAT, gl::FALSE_, sizeof(Vertex), reinterpret_cast<void*>(3 * sizeof(float)));
+    glr.glBindVertexArray(0);
+    return true;
+}
+
+void Scene::destroy() {
+    if (screen_fbo_) glr.glDeleteFramebuffers(1, &screen_fbo_);
+    if (screen_texture_) glr.glDeleteTextures(1, &screen_texture_);
+    screen_fbo_ = screen_texture_ = 0;
+    width_ = height_ = 0;
+    program_ = vao_ = vbo_ = 0;  // freed with the context
+}
+
+void Scene::capture_window(int width, int height) {
+    if (width <= 0 || height <= 0) return;
+    if (!screen_fbo_ || width != width_ || height != height_) {
+        if (screen_fbo_) glr.glDeleteFramebuffers(1, &screen_fbo_);
+        if (screen_texture_) glr.glDeleteTextures(1, &screen_texture_);
+        width_ = width;
+        height_ = height;
+        glr.glGenTextures(1, &screen_texture_);
+        glr.glBindTexture(gl::TEXTURE_2D, screen_texture_);
+        int levels = 1;
+        for (int size = width > height ? width : height; size > 1; size /= 2) ++levels;
+        for (int level = 0, w = width, h = height; level < levels; ++level, w = w > 1 ? w / 2 : 1, h = h > 1 ? h / 2 : 1)
+            glr.glTexImage2D(gl::TEXTURE_2D, level, static_cast<GLint>(gl::RGBA8), w, h, 0, gl::RGBA, gl::UNSIGNED_BYTE, nullptr);
+        glr.glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, static_cast<GLint>(gl::LINEAR_MIPMAP_LINEAR));
+        glr.glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, static_cast<GLint>(gl::LINEAR));
+        glr.glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, static_cast<GLint>(gl::CLAMP_TO_EDGE));
+        glr.glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, static_cast<GLint>(gl::CLAMP_TO_EDGE));
+        glr.glTexParameterf(gl::TEXTURE_2D, gl::TEXTURE_MAX_ANISOTROPY, 8.0f);
+        while (glr.glGetError() != 0) {
+        }
+        glr.glGenFramebuffers(1, &screen_fbo_);
+        glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, screen_fbo_);
+        glr.glFramebufferTexture2D(gl::DRAW_FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, screen_texture_, 0);
+        logf("Screen texture %dx%d", width, height);
+    }
+    glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, 0);
+    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, screen_fbo_);
+    glr.glDisable(gl::SCISSOR_TEST);
+    glr.glDisable(gl::FRAMEBUFFER_SRGB);
+    glr.glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+    glr.glBindTexture(gl::TEXTURE_2D, screen_texture_);
+    glr.glGenerateMipmap(gl::TEXTURE_2D);
+}
+
+void Scene::draw(int first, int count, const Mat4& view_projection, const Mat4& model, int mode, const float color[4]) {
+    const Mat4 mvp = view_projection * model;
+    glr.glUniformMatrix4fv(u_mvp_, 1, gl::FALSE_, mvp.m);
+    glr.glUniformMatrix4fv(u_model_, 1, gl::FALSE_, model.m);
+    glr.glUniform1i(u_mode_, mode);
+    if (color) glr.glUniform4f(u_color_, color[0], color[1], color[2], color[3]);
+    glr.glDrawArrays(gl::TRIANGLES, first, count);
+}
+
+void Scene::render(const EyeTarget& target, const Mat4& projection, const Mat4& view, const SceneView& scene) {
+    if (!program_) return;
+    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, target.fbo());
+    glr.glViewport(0, 0, target.width(), target.height());
+    glr.glDisable(gl::SCISSOR_TEST);
+    glr.glDisable(gl::STENCIL_TEST);
+    glr.glDisable(gl::CULL_FACE);
+    glr.glDisable(gl::FRAMEBUFFER_SRGB);
+    glr.glColorMask(1, 1, 1, 1);
+    glr.glDepthMask(1);
+    glr.glClearColor(0.01f, 0.012f, 0.018f, 1.0f);
+    glr.glClear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+    glr.glUseProgram(program_);
+    glr.glBindVertexArray(vao_);
+    glr.glActiveTexture(gl::TEXTURE0);
+    glr.glBindSampler(0, 0);
+    glr.glBindTexture(gl::TEXTURE_2D, screen_texture_);
+    glr.glUniform1i(u_tex_, 0);
+    glr.glUniform4f(u_color_, 1, 1, 1, 1);
+    glr.glBlendEquation(gl::FUNC_ADD);
+    glr.glBlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
+    glr.glUniform3f(u_eye_, scene.eye.x, scene.eye.y, scene.eye.z);
+    const Mat4 vp = projection * view;
+
+    // Sky
+    glr.glDisable(gl::DEPTH_TEST);
+    glr.glDepthMask(0);
+    glr.glDisable(gl::BLEND);
+    draw(kCubeFirst, kCubeCount, vp, translation(scene.eye) * hvr::scale({80, 80, 80}), 3, nullptr);
+
+    // Floor
+    glr.glEnable(gl::DEPTH_TEST);
+    glr.glDepthMask(1);
+    glr.glEnable(gl::BLEND);
+    if (scene.floor) draw(kFloorFirst, kFloorCount, vp, Mat4{}, 2, nullptr);
+
+    // Screen glow, then the screen itself.
+    const Screen& s = scene.screen;
+    const Mat4 screen_frame = translation(s.center) * rotation_y(s.yaw);
+    const float glow[4] = {0.55f, 0.62f, 0.75f, 1.0f};
+    glr.glDepthMask(0);
+    glr.glUniform4f(u_color_, glow[0], glow[1], glow[2], glow[3]);
+    {
+        const float w = s.width * 1.25f, h = s.height * 1.25f;
+        glr.glUniform2f(u_size_, w, h);
+        draw(kQuadFirst, kQuadCount, vp, screen_frame * translation({0, 0, -0.02f}) * hvr::scale({w, h, 1}), 4, glow);
+    }
+    glr.glDepthMask(1);
+    glr.glUniform2f(u_size_, s.width, s.height);
+    draw(kQuadFirst, kQuadCount, vp, s.model(), 0, nullptr);
+
+    // Controllers and lasers
+    for (const HandView& hand : scene.hands) {
+        if (!hand.valid) continue;
+        const float body[4] = {0.32f, 0.34f, 0.38f, 1.0f};
+        draw(kCubeFirst, kCubeCount, vp, hand.pose * translation({0, -0.01f, 0.05f}) * hvr::scale({0.035f, 0.03f, 0.11f}), 1,
+             body);
+        if (!hand.laser) continue;
+        const Vec3 origin = position_of(hand.pose);
+        const Vec3 forward = normalize(transform_direction(hand.pose, {0, 0, -1}));
+        const float length = hand.laser_length;
+        const float beam[4] = {hand.hovering ? 1.0f : 0.75f, hand.hovering ? 0.78f : 0.82f, hand.hovering ? 0.3f : 0.95f,
+                               hand.hovering ? 0.85f : 0.45f};
+        draw(kCubeFirst, kCubeCount, vp,
+             aim(origin + forward * (length * 0.5f), forward) * hvr::scale({0.003f, 0.003f, length}), 1, beam);
+    }
+    if (scene.dot) {
+        const float dot_color[4] = {1.0f, 0.82f, 0.35f, 1.0f};
+        const Vec3 local{(scene.dot_u - 0.5f) * s.width, (0.5f - scene.dot_v) * s.height, 0.004f};
+        glr.glDisable(gl::DEPTH_TEST);
+        draw(kQuadFirst, kQuadCount, vp, screen_frame * translation(local) * hvr::scale({0.03f, 0.03f, 1}), 5, dot_color);
+    }
+    glr.glBindVertexArray(0);
+}
+
+}  // namespace hvr

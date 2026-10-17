@@ -1,0 +1,22 @@
+# Build output
+build/
+build-*/
+out/
+dist/
+Testing/
+
+# Visual Studio
+.vs/
+*.user
+*.pdb
+*.ilk
+*.exp
+
+# Logs
+*.log
+
+# OS and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

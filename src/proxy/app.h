@@ -1,0 +1,19 @@
+// Ties the pieces together at the end of every Hytale frame.
+#pragma once
+
+#include <windows.h>
+
+#include "../core/settings.h"
+
+namespace hvr::app {
+
+void before_swap(HDC dc);
+void after_swap();
+
+Settings& settings();
+void settings_changed();
+
+bool menu_open();
+void set_menu_open(bool open);
+
+}  // namespace hvr::app
