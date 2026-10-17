@@ -439,7 +439,24 @@ Mat4 eye_projection_near(int eye) {
 
 void submit(int eye, GLuint texture) {
     ::vr::Texture_t t{reinterpret_cast<void*>(static_cast<uintptr_t>(texture)), ::vr::TextureType_OpenGL, ::vr::ColorSpace_Gamma};
-    ::vr::VRCompositor()->Submit(eye == 0 ? ::vr::Eye_Left : ::vr::Eye_Right, &t);
+    const ::vr::EVRCompositorError error = ::vr::VRCompositor()->Submit(eye == 0 ? ::vr::Eye_Left : ::vr::Eye_Right, &t);
+    static int logged = 0;
+    if (error != ::vr::VRCompositorError_None && logged < 20) {
+        ++logged;
+        logf("SteamVR refused the %s eye's frame (texture %u, error %d)", eye == 0 ? "left" : "right", texture,
+             static_cast<int>(error));
+    }
+}
+
+// Copies a world eye image into the headset-sized eye target, which SteamVR
+// is known to accept, and submits that.
+void submit_world(int eye, GLuint fbo, int width, int height) {
+    EyeTarget& target = g_eyes[eye];
+    glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, fbo);
+    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, target.fbo());
+    glr.glDisable(gl::SCISSOR_TEST);
+    glr.glBlitFramebuffer(0, 0, width, height, 0, 0, target.width(), target.height(), gl::COLOR_BUFFER_BIT, gl::LINEAR);
+    submit(eye, target.texture());
 }
 
 // The HUD floats ahead of you and catches up when you look well away.
@@ -623,7 +640,7 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
         for (int eye = 0; eye < 2; ++eye) {
             g_scene.render_overlay(world.eye_fbo[eye], world.width, world.height, eye_projection_near(eye), eye_view(eye),
                                    g_view, world.hud_texture);
-            submit(eye, world.eye_texture[eye]);
+            submit_world(eye, world.eye_fbo[eye], world.width, world.height);
             g_last_world_texture[eye] = world.eye_texture[eye];
         }
     } else {

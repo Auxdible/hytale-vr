@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.2.4
+
+- The headset stayed frozen on the last big-screen frame in 3D. World frames are
+  now copied into the same headset-sized images the big screen uses before
+  they're sent to SteamVR, and any frame SteamVR refuses is logged with its
+  error.
+
 ## 2.2.3
 
 - Faster 3D: Hytale's render targets were re-examined every frame, and each
