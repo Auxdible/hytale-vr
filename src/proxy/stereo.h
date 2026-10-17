@@ -81,6 +81,8 @@ GLuint current_program();
 void on_uniform(GLuint program, GLint location, GLsizei count, const GLfloat* value, int floats_each);
 void on_draw_buffers(GLsizei count, const GLenum* buffers);
 void on_delete_framebuffers(GLsizei count, const GLuint* framebuffers);
+// Hytale attached, resized or deleted a texture or framebuffer.
+void on_layout_change();
 
 // Draw doubling. Returns true when the draw must run a second time: call
 // draw, second(), draw again, then finish(). When it returns false nothing
@@ -102,6 +104,7 @@ void after_generate_mipmap(GLenum target);
 std::string summary();
 // Why recent frames were or weren't drawn per eye; resets the counts.
 std::string take_frame_stats();
+void add_draw_time(long long ticks);  // QueryPerformanceCounter ticks spent in a wrapped draw
 
 // Virtual back buffer: Hytale's window drawing goes to an offscreen buffer of
 // this size (0 turns it off). Returns whether it's on.

@@ -82,6 +82,21 @@ HVR_REAL(glDeleteFramebuffers, void, (GLsizei, const GLuint*))
 HVR_REAL(glGenerateMipmap, void, (GLenum))
 HVR_REAL(glClearBufferiv, void, (GLenum, GLint, const GLint*))
 HVR_REAL(glClearBufferuiv, void, (GLenum, GLint, const GLuint*))
+// Framebuffer and texture layout changes, so stereo knows to look again.
+HVR_REAL(glFramebufferTexture, void, (GLenum, GLenum, GLuint, GLint))
+HVR_REAL(glFramebufferTexture2D, void, (GLenum, GLenum, GLenum, GLuint, GLint))
+HVR_REAL(glFramebufferTextureLayer, void, (GLenum, GLenum, GLuint, GLint, GLint))
+HVR_REAL(glFramebufferRenderbuffer, void, (GLenum, GLenum, GLenum, GLuint))
+HVR_REAL(glNamedFramebufferTexture, void, (GLuint, GLenum, GLuint, GLint))
+HVR_REAL(glNamedFramebufferTextureLayer, void, (GLuint, GLenum, GLuint, GLint, GLint))
+HVR_REAL(glNamedFramebufferRenderbuffer, void, (GLuint, GLenum, GLenum, GLuint))
+HVR_REAL(glTexStorage2D, void, (GLenum, GLsizei, GLenum, GLsizei, GLsizei))
+HVR_REAL(glTexStorage3D, void, (GLenum, GLsizei, GLenum, GLsizei, GLsizei, GLsizei))
+HVR_REAL(glTextureStorage2D, void, (GLuint, GLsizei, GLenum, GLsizei, GLsizei))
+HVR_REAL(glTexImage3D, void, (GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*))
+HVR_REAL(glRenderbufferStorage, void, (GLenum, GLenum, GLsizei, GLsizei))
+HVR_REAL(glRenderbufferStorageMultisample, void, (GLenum, GLsizei, GLenum, GLsizei, GLsizei))
+HVR_REAL(glNamedRenderbufferStorage, void, (GLuint, GLenum, GLsizei, GLsizei))
 
 using PFN_wglSwapIntervalEXT = BOOL(WINAPI*)(int);
 PFN_wglSwapIntervalEXT real_wglSwapIntervalEXT = nullptr;
@@ -346,6 +361,62 @@ void APIENTRY hook_glDeleteFramebuffers(GLsizei count, const GLuint* framebuffer
     if (WATCHING) stereo::on_delete_framebuffers(count, framebuffers);
     real_glDeleteFramebuffers(count, framebuffers);
 }
+void APIENTRY hook_glFramebufferTexture(GLenum a, GLenum b, GLuint c, GLint d) {
+    real_glFramebufferTexture(a, b, c, d);
+    if (WATCHING) stereo::on_layout_change();
+}
+void APIENTRY hook_glFramebufferTexture2D(GLenum a, GLenum b, GLenum c, GLuint d, GLint e) {
+    real_glFramebufferTexture2D(a, b, c, d, e);
+    if (WATCHING) stereo::on_layout_change();
+}
+void APIENTRY hook_glFramebufferTextureLayer(GLenum a, GLenum b, GLuint c, GLint d, GLint e) {
+    real_glFramebufferTextureLayer(a, b, c, d, e);
+    if (WATCHING) stereo::on_layout_change();
+}
+void APIENTRY hook_glFramebufferRenderbuffer(GLenum a, GLenum b, GLenum c, GLuint d) {
+    real_glFramebufferRenderbuffer(a, b, c, d);
+    if (WATCHING) stereo::on_layout_change();
+}
+void APIENTRY hook_glNamedFramebufferTexture(GLuint a, GLenum b, GLuint c, GLint d) {
+    real_glNamedFramebufferTexture(a, b, c, d);
+    if (WATCHING) stereo::on_layout_change();
+}
+void APIENTRY hook_glNamedFramebufferTextureLayer(GLuint a, GLenum b, GLuint c, GLint d, GLint e) {
+    real_glNamedFramebufferTextureLayer(a, b, c, d, e);
+    if (WATCHING) stereo::on_layout_change();
+}
+void APIENTRY hook_glNamedFramebufferRenderbuffer(GLuint a, GLenum b, GLenum c, GLuint d) {
+    real_glNamedFramebufferRenderbuffer(a, b, c, d);
+    if (WATCHING) stereo::on_layout_change();
+}
+void APIENTRY hook_glTexStorage2D(GLenum a, GLsizei b, GLenum c, GLsizei d, GLsizei e) {
+    real_glTexStorage2D(a, b, c, d, e);
+    if (WATCHING) stereo::on_layout_change();
+}
+void APIENTRY hook_glTexStorage3D(GLenum a, GLsizei b, GLenum c, GLsizei d, GLsizei e, GLsizei f) {
+    real_glTexStorage3D(a, b, c, d, e, f);
+    if (WATCHING) stereo::on_layout_change();
+}
+void APIENTRY hook_glTextureStorage2D(GLuint a, GLsizei b, GLenum c, GLsizei d, GLsizei e) {
+    real_glTextureStorage2D(a, b, c, d, e);
+    if (WATCHING) stereo::on_layout_change();
+}
+void APIENTRY hook_glTexImage3D(GLenum a, GLint b, GLint c, GLsizei d, GLsizei e, GLsizei f, GLint g, GLenum h, GLenum i, const void* j) {
+    real_glTexImage3D(a, b, c, d, e, f, g, h, i, j);
+    if (WATCHING) stereo::on_layout_change();
+}
+void APIENTRY hook_glRenderbufferStorage(GLenum a, GLenum b, GLsizei c, GLsizei d) {
+    real_glRenderbufferStorage(a, b, c, d);
+    if (WATCHING) stereo::on_layout_change();
+}
+void APIENTRY hook_glRenderbufferStorageMultisample(GLenum a, GLsizei b, GLenum c, GLsizei d, GLsizei e) {
+    real_glRenderbufferStorageMultisample(a, b, c, d, e);
+    if (WATCHING) stereo::on_layout_change();
+}
+void APIENTRY hook_glNamedRenderbufferStorage(GLuint a, GLenum b, GLsizei c, GLsizei d) {
+    real_glNamedRenderbufferStorage(a, b, c, d);
+    if (WATCHING) stereo::on_layout_change();
+}
 void APIENTRY hook_glGenerateMipmap(GLenum target) {
     real_glGenerateMipmap(target);
     if (WATCHING) stereo::after_generate_mipmap(target);
@@ -429,6 +500,20 @@ const Hook kHooks[] = {
     HVR_HOOK(glDrawBuffers),
     HVR_HOOK(glDeleteFramebuffers),
     HVR_HOOK(glGenerateMipmap),
+    HVR_HOOK(glFramebufferTexture),
+    HVR_HOOK(glFramebufferTexture2D),
+    HVR_HOOK(glFramebufferTextureLayer),
+    HVR_HOOK(glFramebufferRenderbuffer),
+    HVR_HOOK(glNamedFramebufferTexture),
+    HVR_HOOK(glNamedFramebufferTextureLayer),
+    HVR_HOOK(glNamedFramebufferRenderbuffer),
+    HVR_HOOK(glTexStorage2D),
+    HVR_HOOK(glTexStorage3D),
+    HVR_HOOK(glTextureStorage2D),
+    HVR_HOOK(glTexImage3D),
+    HVR_HOOK(glRenderbufferStorage),
+    HVR_HOOK(glRenderbufferStorageMultisample),
+    HVR_HOOK(glNamedRenderbufferStorage),
     HVR_HOOK(glClearBufferiv),
     HVR_HOOK(glClearBufferuiv),
     HVR_HOOK(wglSwapIntervalEXT),
@@ -437,7 +522,8 @@ const Hook kHooks[] = {
 // GL 1.1 functions we already wrap as exports, in case Hytale also fetches
 // them through wglGetProcAddress.
 const char* const kExportWrapped[] = {"glClear", "glViewport", "glDrawArrays", "glDrawElements", "glBindTexture",
-                                     "glDrawBuffer", "glReadBuffer"};
+                                     "glDrawBuffer", "glReadBuffer", "glTexImage2D",
+                                     "glDeleteTextures"};
 
 }  // namespace
 

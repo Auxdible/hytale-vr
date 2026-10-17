@@ -67,7 +67,7 @@ EXPORTS
     glCullFace = hvr_x_glCullFace
     glDebugEntry = hvr_x_glDebugEntry
     glDeleteLists = hvr_x_glDeleteLists
-    glDeleteTextures = hvr_x_glDeleteTextures
+    glDeleteTextures = hvr_glDeleteTextures
     glDepthFunc = hvr_x_glDepthFunc
     glDepthMask = hvr_x_glDepthMask
     glDepthRange = hvr_x_glDepthRange
@@ -309,7 +309,7 @@ EXPORTS
     glTexGeni = hvr_x_glTexGeni
     glTexGeniv = hvr_x_glTexGeniv
     glTexImage1D = hvr_x_glTexImage1D
-    glTexImage2D = hvr_x_glTexImage2D
+    glTexImage2D = hvr_glTexImage2D
     glTexParameterf = hvr_x_glTexParameterf
     glTexParameterfv = hvr_x_glTexParameterfv
     glTexParameteri = hvr_x_glTexParameteri

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.2.3
+
+- Faster 3D: Hytale's render targets were re-examined every frame, and each
+  question to the driver made it wait for the GPU. They're now looked at again
+  only after Hytale changes a texture or framebuffer (or every 600 frames).
+- Frames without the world while playing submit nothing, so SteamVR turns the
+  last frame with your head instead of showing a stale frame stuck to your view.
+- The 5-second log line adds the time spent in our draw hooks per 3D frame.
+
 ## 2.2.2
 
 - Fixes chunks missing in the middle distance: besides its occluders, Hytale

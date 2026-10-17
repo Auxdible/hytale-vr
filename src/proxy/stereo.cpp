@@ -76,9 +76,18 @@ struct TextureInfo {
     GLenum format = 0;
     bool twin_failed = false;
     int frame_checked = -1;
+    int epoch_checked = -1;
 };
 std::vector<TextureInfo> g_textures;
 extern int g_frame;
+// Bumped whenever Hytale attaches, resizes or deletes textures and
+// framebuffers. Asking the driver about them makes it wait for the GPU, so
+// they're only looked at again after a change (or once in a while).
+int g_layout_epoch = 0;
+constexpr int kRecheckFrames = 600;
+bool layout_fresh(int frame_checked, int epoch_checked) {
+    return frame_checked >= 0 && epoch_checked == g_layout_epoch && g_frame - frame_checked < kRecheckFrames;
+}
 
 TextureInfo* texture_info(GLuint texture, bool create) {
     if (texture == 0 || texture > 4000000) return nullptr;
@@ -112,6 +121,7 @@ struct Attachment {
 
 struct FboInfo {
     int frame_checked = -1;
+    int epoch_checked = -1;
     bool stereo = false;
     bool occluder = false;  // Hytale's small depth-only target for occlusion culling
     GLuint twin = 0;
@@ -230,6 +240,7 @@ struct Pending {
 
 struct Stats {
     int frames = 0, wanted = 0, stale_setup = 0, failed = 0, no_targets = 0, composited = 0, stereo = 0, no_draws = 0;
+    long long draw_ticks = 0, draws = 0;
 } g_stats;
 
 void problem(const char* text) {
@@ -313,8 +324,11 @@ void pick_format(GLenum internal, GLenum& format, GLenum& type) {
 GLuint ensure_twin(GLuint texture) {
     TextureInfo* info = texture_info(texture, true);
     if (!info) return 0;
-    if (info->twin && info->frame_checked == g_frame) return info->twin;
+    if (info->twin && (info->frame_checked == g_frame || layout_fresh(info->frame_checked, info->epoch_checked)))
+        return info->twin;
+    if (!info->twin && info->twin_failed) return 0;
     info->frame_checked = g_frame;
+    info->epoch_checked = g_layout_epoch;
     const GLenum target = texture_target(texture);
     if (target != gl::TEXTURE_2D && target != gl::TEXTURE_2D_ARRAY) return 0;
     const int width = texture_level_param(texture, target, 0, gl::TEXTURE_WIDTH);
@@ -486,8 +500,10 @@ bool build_twin_fbo(GLuint fb, FboInfo& info) {
 FboInfo* classify(GLenum target, GLuint fb) {
     if (fb == 0) return nullptr;
     FboInfo& info = g_fbos[fb];
-    if (info.frame_checked == g_frame) return info.stereo ? &info : nullptr;
+    if (info.frame_checked == g_frame || layout_fresh(info.frame_checked, info.epoch_checked))
+        return info.stereo ? &info : nullptr;
     info.frame_checked = g_frame;
+    info.epoch_checked = g_layout_epoch;
     std::vector<Attachment> now;
     bool usable = read_attachments(target, now);
     int colors = 0;
@@ -1119,6 +1135,8 @@ namespace {
 int g_window_viewport_w = 0;
 }
 
+void on_layout_change() { ++g_layout_epoch; }
+
 void on_viewport(GLsizei width) {
     if (on_render_thread() && t.draw_fb == 0) g_window_viewport_w = width;
 }
@@ -1274,7 +1292,7 @@ bool skip_draw(GLenum mode) {
         !t.program)
         return false;
     FboInfo& info = g_fbos[t.draw_fb];
-    if (info.frame_checked != g_frame) classify(gl::DRAW_FRAMEBUFFER, t.draw_fb);
+    classify(gl::DRAW_FRAMEBUFFER, t.draw_fb);
     if (!info.occluder) return false;
     static bool logged[2] = {};
     if (mode == gl::POINTS) {
@@ -1457,13 +1475,24 @@ void after_generate_mipmap(GLenum target) {
     glr.glBindTexture(gl::TEXTURE_2D, t.tex2d[t.active_unit]);
 }
 
+void add_draw_time(long long ticks) {
+    g_stats.draw_ticks += ticks;
+    ++g_stats.draws;
+}
+
 std::string take_frame_stats() {
-    char text[256];
+    LARGE_INTEGER frequency;
+    QueryPerformanceFrequency(&frequency);
+    const double ms = g_stats.stereo > 0 ? 1000.0 * static_cast<double>(g_stats.draw_ticks) /
+                                               static_cast<double>(frequency.QuadPart) / g_stats.stereo
+                                         : 0.0;
+    char text[320];
     std::snprintf(text, sizeof(text),
                   "%d frames: %d wanted 3D, %d per eye, %d composited, %d no doubled draws, %d late setup, %d camera "
-                  "failed, %d no targets",
+                  "failed, %d no targets; %.1f ms and %lld draws per 3D frame in our draw hooks",
                   g_stats.frames, g_stats.wanted, g_stats.stereo, g_stats.composited, g_stats.no_draws,
-                  g_stats.stale_setup, g_stats.failed, g_stats.no_targets);
+                  g_stats.stale_setup, g_stats.failed, g_stats.no_targets, ms,
+                  g_stats.stereo > 0 ? g_stats.draws / g_stats.stereo : 0LL);
     g_stats = Stats{};
     return text;
 }

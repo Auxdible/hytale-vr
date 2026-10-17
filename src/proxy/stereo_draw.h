@@ -1,6 +1,8 @@
 // Runs one of Hytale's draw calls once per eye when stereo is on.
 #pragma once
 
+#include <windows.h>
+
 #include "internal.h"
 #include "stereo.h"
 
@@ -12,8 +14,15 @@ inline void stereo_draw(GLenum mode, GLsizei count, Draw&& draw) {
         draw();
         return;
     }
-    if (stereo::skip_draw(mode)) return;
-    if (stereo::draw_begin(mode, count)) {
+    if (!stereo::active()) {
+        draw();
+        return;
+    }
+    // Time spent here while stereo is on goes in the log's frame stats.
+    LARGE_INTEGER start, end;
+    QueryPerformanceCounter(&start);
+    if (stereo::skip_draw(mode)) {
+    } else if (stereo::draw_begin(mode, count)) {
         draw();
         stereo::draw_second();
         draw();
@@ -21,6 +30,8 @@ inline void stereo_draw(GLenum mode, GLsizei count, Draw&& draw) {
     } else {
         draw();
     }
+    QueryPerformanceCounter(&end);
+    stereo::add_draw_time(end.QuadPart - start.QuadPart);
 }
 
 }  // namespace hvr

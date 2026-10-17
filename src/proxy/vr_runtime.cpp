@@ -607,9 +607,8 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
     }
     if (g_world_frame && !drawn && g_last_world_texture[0]) {
         // A frame without the world in the middle of playing (chunks loading):
-        // keep showing the last world frame rather than flicking to the screen.
-        if (g_hmd_valid)
-            for (int eye = 0; eye < 2; ++eye) submit(eye, g_last_world_texture[eye]);
+        // submit nothing, so SteamVR keeps the last world frame and turns it
+        // with your head, instead of flicking to the big screen.
     } else if (drawn && (g_world_frame || recent >= 11)) {
         g_world_frame = true;
         if (!was_world) {

@@ -33,6 +33,8 @@ using PFN_glDrawArrays = void(APIENTRY*)(GLenum, GLint, GLsizei);
 using PFN_glDrawElements = void(APIENTRY*)(GLenum, GLsizei, GLenum, const void*);
 using PFN_glBindTexture = void(APIENTRY*)(GLenum, GLuint);
 using PFN_glColorBuffer = void(APIENTRY*)(GLenum);
+using PFN_glTexImage2D = void(APIENTRY*)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*);
+using PFN_glDeleteTextures = void(APIENTRY*)(GLsizei, const GLuint*);
 
 PFN_wglGetProcAddress real_wglGetProcAddress = nullptr;
 PFN_wglSwapBuffers real_wglSwapBuffers = nullptr;
@@ -43,6 +45,8 @@ PFN_glDrawElements real_glDrawElements = nullptr;
 PFN_glBindTexture real_glBindTexture = nullptr;
 PFN_glColorBuffer real_glDrawBuffer = nullptr;
 PFN_glColorBuffer real_glReadBuffer = nullptr;
+PFN_glTexImage2D real_glTexImage2D = nullptr;
+PFN_glDeleteTextures real_glDeleteTextures = nullptr;
 
 // Stands in for an export the real library lacks, so a call returns 0
 // instead of jumping to nowhere.
@@ -73,9 +77,11 @@ bool load_real_library() {
     real_glBindTexture = reinterpret_cast<PFN_glBindTexture>(GetProcAddress(g_real, "glBindTexture"));
     real_glDrawBuffer = reinterpret_cast<PFN_glColorBuffer>(GetProcAddress(g_real, "glDrawBuffer"));
     real_glReadBuffer = reinterpret_cast<PFN_glColorBuffer>(GetProcAddress(g_real, "glReadBuffer"));
+    real_glTexImage2D = reinterpret_cast<PFN_glTexImage2D>(GetProcAddress(g_real, "glTexImage2D"));
+    real_glDeleteTextures = reinterpret_cast<PFN_glDeleteTextures>(GetProcAddress(g_real, "glDeleteTextures"));
     hvr::logf("Loaded %ls (%d of %d forwarded exports missing)", path, missing, kForwardedExportCount);
     return real_wglGetProcAddress && real_wglSwapBuffers && real_glClear && real_glViewport && real_glDrawArrays &&
-           real_glDrawElements && real_glBindTexture && real_glDrawBuffer && real_glReadBuffer;
+           real_glDrawElements && real_glBindTexture && real_glDrawBuffer && real_glReadBuffer && real_glTexImage2D && real_glDeleteTextures;
 }
 
 }  // namespace
@@ -151,6 +157,18 @@ void APIENTRY hvr_glDrawBuffer(GLenum mode) {
 
 void APIENTRY hvr_glReadBuffer(GLenum mode) {
     real_glReadBuffer(hvr::internal_call() ? mode : hvr::stereo::map_color_buffer(false, mode));
+}
+
+// Texture size changes and deletions: stereo looks at its targets again.
+void APIENTRY hvr_glTexImage2D(GLenum target, GLint level, GLint internal_format, GLsizei width, GLsizei height,
+                               GLint border, GLenum format, GLenum type, const void* pixels) {
+    real_glTexImage2D(target, level, internal_format, width, height, border, format, type, pixels);
+    if (!hvr::internal_call()) hvr::stereo::on_layout_change();
+}
+
+void APIENTRY hvr_glDeleteTextures(GLsizei count, const GLuint* textures) {
+    real_glDeleteTextures(count, textures);
+    if (!hvr::internal_call()) hvr::stereo::on_layout_change();
 }
 
 }  // extern "C"
