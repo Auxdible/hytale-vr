@@ -26,9 +26,14 @@ struct Settings {
     float hud_width = 1.9f;         // meters
     float world_scale = 1.0f;       // Hytale blocks per meter of head movement
     float render_scale = 1.0f;      // Hytale draws at this many times the window's size while in VR (1 = off)
+    bool lens_shape = false;        // Hytale draws in the headset lens's shape (same pixels, sharper up and down)
     int turn_mode = 0;              // 0 snap, 1 smooth
     float snap_degrees = 30.0f;
     float smooth_speed = 120.0f;    // degrees per second at full stick
+    bool steady_view = true;        // smooths Hytale's camera sway out of the view while you walk
+    int move_with = 0;              // the stick walks where 0 your head or 1 your other hand points
+    bool real_crouch = true;        // crouching in your room crouches your character
+    float crouch_depth = 0.35f;     // meters your head drops before that counts as crouching
     float vignette = 0.5f;          // comfort: how much the edges darken while the stick moves or turns you (0 = off)
 
     // Hands
@@ -43,6 +48,7 @@ struct Settings {
     float hotbar_right = 0.69f;
     float hotbar_top = 0.88f;
     float hotbar_bottom = 0.995f;
+    bool aim_with_hand = false;     // Hytale aims (and breaks and places) where the right controller points
     bool swing_to_hit = true;       // a quick swing of the right controller attacks
     float swing_speed = 2.2f;       // meters per second
 

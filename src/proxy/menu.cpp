@@ -139,15 +139,17 @@ ImGuiKey imgui_key(int scancode) {
     }
 }
 
+float g_taller = 1.0f;
+
 void feed_input(float points_to_pixels) {
     ImGuiIO& io = ImGui::GetIO();
     for (const sdl::MenuInput& in : sdl::take_menu_input()) {
         switch (in.kind) {
             case sdl::MenuInput::Motion:
-                io.AddMousePosEvent(in.x * points_to_pixels, in.y * points_to_pixels);
+                io.AddMousePosEvent(in.x * points_to_pixels, in.y * points_to_pixels * g_taller);
                 break;
             case sdl::MenuInput::Button: {
-                io.AddMousePosEvent(in.x * points_to_pixels, in.y * points_to_pixels);
+                io.AddMousePosEvent(in.x * points_to_pixels, in.y * points_to_pixels * g_taller);
                 const int button = in.button == 1 ? 0 : (in.button == 3 ? 1 : (in.button == 2 ? 2 : -1));
                 if (button >= 0) io.AddMouseButtonEvent(button, in.down);
                 break;
@@ -235,10 +237,23 @@ void tab_world(Settings& s) {
         changed |= slider("Turn speed", &s.smooth_speed, 30.0f, 360.0f, "%.0f deg/s");
     changed |= slider("Comfort vignette", &s.vignette, 0.0f, 1.0f, "%.2f");
     hint("Darkens the edges while the stick moves or turns you. 0 turns it off.");
+    changed |= ImGui::Checkbox("Steady view", &s.steady_view);
+    hint("Smooths Hytale's camera sway out of the view while you walk. Also turn off View Bobbing and Camera "
+         "Shake in Hytale's Gameplay settings.");
+    ImGui::TextUnformatted("The stick walks where");
+    ImGui::SameLine();
+    changed |= ImGui::RadioButton("you look", &s.move_with, 0);
+    ImGui::SameLine();
+    changed |= ImGui::RadioButton("your other hand points", &s.move_with, 1);
+    changed |= ImGui::Checkbox("Crouch for real", &s.real_crouch);
+    if (s.real_crouch) changed |= slider("Crouch depth", &s.crouch_depth, 0.15f, 0.7f, "%.2f m");
     changed |= slider("HUD distance", &s.hud_distance, 0.6f, 5.0f, "%.1f m");
     changed |= slider("HUD width", &s.hud_width, 0.6f, 6.0f, "%.1f m");
     changed |= slider("World scale", &s.world_scale, 0.25f, 4.0f, "%.2fx");
     changed |= slider("Sharpness", &s.render_scale, 1.0f, 2.5f, "%.2fx window");
+    changed |= ImGui::Checkbox("Lens shape", &s.lens_shape);
+    hint("Draws in the headset lens's shape instead of the monitor's: sharper up and down for the same cost. "
+         "The monitor view looks squeezed while it's on.");
     hint(app::render_status().c_str());
     ImGui::Spacing();
     ImGui::TextUnformatted("Hands");
@@ -259,6 +274,8 @@ void tab_world(Settings& s) {
         changed |= slider("Hotbar top edge", &s.hotbar_top, 0.0f, 0.95f, "%.2f");
         changed |= slider("Hotbar bottom edge", &s.hotbar_bottom, 0.02f, 1.0f, "%.2f");
     }
+    changed |= ImGui::Checkbox("Aim with your hand", &s.aim_with_hand);
+    hint("Hytale aims, breaks and places where your right controller points instead of where you look.");
     changed |= ImGui::Checkbox("Swing to hit", &s.swing_to_hit);
     if (s.swing_to_hit) changed |= slider("Swing speed", &s.swing_speed, 0.8f, 6.0f, "%.1f m/s");
     if (changed) app::settings_changed();
@@ -446,11 +463,13 @@ void draw_window() {
 }  // namespace
 
 void render(int pixels_w, int pixels_h, float points_to_pixels, unsigned target_fbo, float framebuffer_scale,
-            unsigned extra_fbo) {
+            unsigned extra_fbo, float taller) {
     if (pixels_w <= 0 || pixels_h <= 0) return;
     if (!g_ready) init(pixels_h);
     ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = {static_cast<float>(pixels_w), static_cast<float>(pixels_h)};
+    // With Lens shape the menu lays out in Hytale's taller window, like Hytale's own UI.
+    io.DisplaySize = {static_cast<float>(pixels_w), static_cast<float>(pixels_h) * taller};
+    g_taller = taller;
     io.DisplayFramebufferScale = {framebuffer_scale, framebuffer_scale};
     LARGE_INTEGER now, frequency;
     QueryPerformanceCounter(&now);

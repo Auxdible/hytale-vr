@@ -53,6 +53,13 @@ void test_rigid_inverse() {
 
 void test_stick() {
     using namespace hvr;
+    {
+        // You look 90 degrees left of where Hytale's camera faces and push forward:
+        // that's Hytale's left.
+        float x = 0, y = 0;
+        rotate_stick(0, 1, 1.5707963f, x, y);
+        check(near(x, -1) && near(y, 0), "stick forward turns into the camera's left");
+    }
     MoveKeys idle = stick_to_keys(0.05f, 0.1f, 0.18f);
     check(!idle.forward && !idle.back && !idle.left && !idle.right, "deadzone holds nothing");
     MoveKeys forward = stick_to_keys(0.1f, 0.9f, 0.18f);
@@ -133,15 +140,25 @@ void test_stereo_math() {
     fit = eye_corners(world_corners, mono_p, view, eye_p, view, eye_world_corners);
     check(fit.ok && fit.world_space, "world-space corners recognized");
 
-    MouseFollower follow;
-    float engine_yaw = 0.0f;
-    const float true_gain = -0.004f;  // inverted and larger than the guess
-    for (int frame = 0; frame < 120; ++frame) {
-        int cx = 0, cy = 0;
-        follow.step(engine_yaw, 0, 1.0f, 0, cx, cy);
-        engine_yaw += static_cast<float>(cx) * true_gain;
+    for (int delay = 0; delay <= 2; ++delay) {
+        MouseFollower follow;
+        float engine_yaw = 0.0f;
+        const float true_gain = 0.004f;  // inverted and larger than the guess
+        int in_flight[3] = {};
+        float worst_late = 0;
+        for (int frame = 0; frame < 300; ++frame) {
+            int cx = 0, cy = 0;
+            // Walking bob: a small sway the follower shouldn't chase into a wobble.
+            const float bob = 0.003f * std::sin(static_cast<float>(frame) * 0.4f);
+            follow.step(engine_yaw + bob, 0, 1.0f, 0, cx, cy);
+            in_flight[delay] += cx;
+            engine_yaw += static_cast<float>(in_flight[0]) * true_gain;
+            for (int i = 0; i < 2; ++i) in_flight[i] = in_flight[i + 1];
+            in_flight[2] = 0;
+            if (frame > 200) worst_late = std::fmax(worst_late, std::fabs(MouseFollower::wrap(engine_yaw - 1.0f)));
+        }
+        check(worst_late < 0.02f, "mouse follower settles with unknown gain and sign, a late camera and bobbing");
     }
-    check(std::fabs(MouseFollower::wrap(engine_yaw - 1.0f)) < 0.02f, "mouse follower converges with unknown gain and sign");
     {
         RoomWalker walker;
         const MoveKeys idle = walker.step({0.1f, 0, 0}, 0);

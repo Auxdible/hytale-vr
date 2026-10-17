@@ -34,6 +34,12 @@ struct EyeSetup {
     // the same space as head (meters, before world_scale).
     bool item_in_hand = false;
     Mat4 item;
+    // Smooths small, quick wobbles out of Hytale's camera position (bobbing,
+    // sway), while still following walking, jumping and falling.
+    bool steady = true;
+    // Raises the view this many world units (undoing Hytale's own crouch drop
+    // while you crouch for real).
+    float lift = 0;
 };
 
 // Turns stereo on for the coming frames, with this frame's poses.

@@ -33,6 +33,7 @@ HANDLE g_worker = nullptr;
 // Render thread
 Scene g_scene;
 EyeTarget g_eyes[2];
+std::atomic<float> g_lens_aspect{0.0f};
 SceneView g_view;
 bool g_screen_placed = false;
 std::atomic<bool> g_recenter{false};
@@ -243,6 +244,17 @@ struct Swing {
     int click_frames = 0;
 } g_swing;
 
+// Crouching in your room: holds Hytale's crouch key, and lifts the view by
+// however far Hytale lowers its camera, since your own head already went down.
+struct Crouch {
+    bool down = false;
+    float t = 0;          // seconds since crouching or standing
+    float ref_y = 0;      // Hytale's camera height before crouching
+    float release_y = 0;  // and when you stood back up
+    float peak = 0;       // how far Hytale lowered its camera (world units)
+    float lift = 0;       // what the view is lifted by now
+} g_crouch;
+
 Vec3 g_anchor_head{0, 1.6f, 0};
 Vec3 g_anchor_forward{0, 0, -1};
 
@@ -345,6 +357,21 @@ void controls(const FrameContext& context, float dt) {
     const bool play = !context.menu_open;
     float mx, my;
     stick(g_actions.move, mx, my);
+    {
+        // In the world the stick walks where you look (or your other hand
+        // points), even while Hytale's camera is still turning to catch up:
+        // the push is turned into the camera's own facing before it becomes keys.
+        Mat4 engine_view;
+        Vec3 engine_forward, engine_position;
+        const HandView& off_hand = g_view.hands[s.left_handed ? 1 : 0];
+        const bool by_hand = s.move_with == 1 && off_hand.valid;
+        if (g_world_frame && g_hmd_valid && stereo::engine_camera(engine_view, engine_forward, engine_position)) {
+            const Vec3 facing = by_hand ? transform_direction(off_hand.pose, {0, 0, -1})
+                                        : transform_direction(g_hmd, {0, 0, -1});
+            const float turn = MouseFollower::wrap(yaw_of(facing) + g_yaw_offset - yaw_of(engine_forward));
+            rotate_stick(mx, my, turn, mx, my);
+        }
+    }
     MoveKeys move = play ? stick_to_keys(mx, my, s.deadzone) : MoveKeys{};
     g_stick_moving = move.forward || move.back || move.left || move.right;
     g_motion = g_stick_moving ? std::fmin(1.0f, std::sqrt(mx * mx + my * my)) : 0.0f;
@@ -355,7 +382,7 @@ void controls(const FrameContext& context, float dt) {
     input::key(s.key_right, move.right);
     input::key(s.key_jump, play && boolean(g_actions.jump).down);
     input::key(s.key_sprint, play && boolean(g_actions.sprint).down);
-    input::key(s.key_crouch, play && boolean(g_actions.crouch).down);
+    input::key(s.key_crouch, play && (boolean(g_actions.crouch).down || g_crouch.down));
     input::key(s.key_inventory, play && boolean(g_actions.inventory).down);
     input::key(41 /* Escape */, play && boolean(g_actions.back).down);
     if (play && boolean(g_actions.hotbar_next).pressed) input::wheel(-1);
@@ -432,6 +459,7 @@ std::string headset_name() {
 void recenter() { g_recenter = true; }
 void force_world() { g_force_world = true; }
 bool take_menu_button() { return g_menu_button.exchange(false); }
+float lens_aspect() { return g_lens_aspect; }
 
 void begin_frame(const FrameContext& context) {
     g_context = context;
@@ -455,6 +483,7 @@ void begin_frame(const FrameContext& context) {
             return;
         }
         logf("Eye targets %ux%u", width, height);
+        if (width && height) g_lens_aspect = static_cast<float>(width) / static_cast<float>(height);
         g_gl_ready = true;
         QueryPerformanceCounter(&g_last_frame);
     }
@@ -506,8 +535,8 @@ void place_hotbar(const Settings& s) {
     g_view.hotbar_uv[1] = v0;
     g_view.hotbar_uv[2] = u1 - u0;
     g_view.hotbar_uv[3] = v1 - v0;
-    const float window_aspect = g_context.window_points_h > 0
-                                    ? static_cast<float>(g_context.window_points_w) / g_context.window_points_h
+    const float window_aspect = g_context.render_aspect > 0
+                                    ? g_context.render_aspect
                                     : 16.0f / 9.0f;
     const float aspect = (u1 - u0) * window_aspect / (v1 - v0);
     const Vec3 at = position_of(hand.pose) + Vec3{0, 0.075f, 0};
@@ -532,8 +561,8 @@ void place_hud(const Settings& s, bool force) {
     const float head_yaw = yaw_of(forward);
     const float off = std::fabs(MouseFollower::wrap(head_yaw - g_hud_panel.yaw));
     if (force || !g_hud_placed || off > 0.6f) {
-        g_hud_panel = place_screen(head, forward, s.hud_distance, s.hud_width, g_context.window_points_h > 0
-                                       ? static_cast<float>(g_context.window_points_w) / g_context.window_points_h
+        g_hud_panel = place_screen(head, forward, s.hud_distance, s.hud_width, g_context.render_aspect > 0
+                                       ? g_context.render_aspect
                                        : 16.0f / 9.0f,
                                    -0.1f);
         g_hud_placed = true;
@@ -577,6 +606,7 @@ void prepare_world(const Settings& s, bool showed_world) {
         g_world_aligned = false;
         g_room_keys = {};
         g_room_locked = false;
+        g_crouch = {};
         return;
     }
     const Vec3 forward = transform_direction(g_hmd, {0, 0, -1});
@@ -596,9 +626,12 @@ void prepare_world(const Settings& s, bool showed_world) {
     // Steer Hytale's camera after the head, so aiming, movement and what it
     // loads all follow where you look.
     if (have_engine && g_context.game_relative && !g_context.menu_open && s.controller_input) {
-        const float target_yaw = MouseFollower::wrap(yaw_of(forward) + g_yaw_offset);
+        // Or after the right controller, with Aim with your hand.
+        const HandView& aim_hand = g_view.hands[s.left_handed ? 0 : 1];
+        const Vec3 aim = s.aim_with_hand && aim_hand.valid ? transform_direction(aim_hand.pose, {0, 0, -1}) : forward;
+        const float target_yaw = MouseFollower::wrap(yaw_of(aim) + g_yaw_offset);
         int dx = 0, dy = 0;
-        g_follower.step(yaw_of(engine_forward), pitch_of(engine_forward), target_yaw, pitch_of(forward), dx, dy);
+        g_follower.step(yaw_of(engine_forward), pitch_of(engine_forward), target_yaw, pitch_of(aim), dx, dy);
         sdl::inject_mouse_motion(dx, dy);
     } else {
         g_follower.have_last = false;
@@ -637,12 +670,40 @@ void prepare_world(const Settings& s, bool showed_world) {
     }
 
     // Height follows your head 1:1 from where it was when 3D started or you
-    // last recentered, kept within half a meter so it can't leave the body.
+    // last recentered, kept within half a meter up (a meter down, for
+    // crouching) so it can't leave the body.
+    const float head_y = position_of(g_hmd).y;
     {
-        const float head_y = position_of(g_hmd).y;
-        const float limit = 0.5f;
-        if (head_y - g_neutral.y > limit) g_neutral.y = head_y - limit;
-        if (head_y - g_neutral.y < -limit) g_neutral.y = head_y + limit;
+        const float up = 0.5f, down = s.real_crouch ? 1.0f : 0.5f;
+        if (head_y - g_neutral.y > up) g_neutral.y = head_y - up;
+        if (head_y - g_neutral.y < -down) g_neutral.y = head_y + down;
+    }
+    {
+        const float drop = g_neutral.y - head_y;  // meters below standing
+        const bool can = s.real_crouch && have_engine && g_context.game_relative && !g_context.menu_open;
+        const float engine_y = engine_position.y;
+        if (!g_crouch.down && can && drop > s.crouch_depth) {
+            g_crouch.down = true;
+            g_crouch.t = 0;
+            g_crouch.ref_y = engine_y;
+            g_crouch.peak = 0;
+        } else if (g_crouch.down && (!can || drop < s.crouch_depth * 0.6f)) {
+            g_crouch.down = false;
+            g_crouch.t = 0;
+            g_crouch.release_y = engine_y;
+        }
+        g_crouch.t += g_frame_dt;
+        if (g_crouch.down) {
+            // While Hytale lowers its camera, lift by exactly that; then hold it.
+            if (g_crouch.t < 0.5f) g_crouch.peak = std::fmax(g_crouch.peak, std::fmin(0.8f, g_crouch.ref_y - engine_y));
+            g_crouch.lift = g_crouch.t < 0.5f ? std::fmax(0.0f, std::fmin(0.8f, g_crouch.ref_y - engine_y)) : g_crouch.peak;
+        } else if (g_crouch.peak > 0) {
+            // Standing: give it back as Hytale raises its camera.
+            const float rise = engine_y - g_crouch.release_y;
+            g_crouch.lift = std::fmax(0.0f, std::fmin(g_crouch.lift, g_crouch.peak - rise));
+            if (g_crouch.t > 0.5f) g_crouch.lift *= 1.0f - std::fmin(1.0f, 8.0f * g_frame_dt);
+            if (g_crouch.lift < 0.003f) g_crouch.peak = g_crouch.lift = 0;
+        }
     }
 
     stereo::EyeSetup setup;
@@ -656,6 +717,8 @@ void prepare_world(const Settings& s, bool showed_world) {
     setup.anchor = g_room_locked ? g_room_anchor : g_body_offset;
     setup.world_locked = g_room_locked;
     setup.no_occlusion = s.no_occlusion;
+    setup.steady = s.steady_view;
+    setup.lift = g_crouch.lift;
     // The held item: Hytale's first-person view, moved so its grip point sits
     // in the attack hand and points where the controller points.
     const HandView& item_hand = g_view.hands[s.left_handed ? 0 : 1];

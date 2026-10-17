@@ -23,6 +23,15 @@ inline MoveKeys stick_to_keys(float x, float y, float deadzone) {
     return keys;
 }
 
+// Re-expresses a stick push (x right, y forward) meant relative to one facing
+// relative to another facing, where turn is how far the first facing is to
+// the left of the second (yaw angles grow to the left).
+inline void rotate_stick(float x, float y, float turn, float& out_x, float& out_y) {
+    const float c = std::cos(turn), s = std::sin(turn);
+    out_x = x * c - y * s;
+    out_y = x * s + y * c;
+}
+
 // Stick deflection to a smooth 0..1 response past the deadzone.
 inline float stick_curve(float value, float deadzone) {
     const float a = std::fabs(value);

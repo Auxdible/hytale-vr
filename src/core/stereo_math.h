@@ -140,9 +140,13 @@ inline CornerFit eye_corners(const Vec3 mono[4], const Mat4& mono_p, const Mat4&
 struct MouseFollower {
     float gain_yaw = -0.0025f;    // radians per count, sign included (mouse right turns right)
     float gain_pitch = -0.0025f;  // radians per count (mouse down looks down)
-    int sent_x = 0, sent_y = 0;
-    float last_yaw = 0, last_pitch = 0;
+    float last_yaw = 0, last_pitch = 0, last_error_yaw = 0;
     bool have_last = false;
+    // Learning: what the camera did over a stretch of frames against what was
+    // sent, so the camera answering a frame or two late, or bobbing while you
+    // walk, can't teach it the wrong gain (or sign).
+    float moved_yaw = 0, moved_pitch = 0;
+    int counts_x = 0, counts_y = 0, window = 0;
 
     static float wrap(float a) {
         const float pi = 3.14159265f;
@@ -152,32 +156,51 @@ struct MouseFollower {
     }
 
     static void learn(float& gain, float moved, int counts) {
-        if (counts == 0 || std::abs(counts) < 4) return;
+        if (std::abs(counts) < 60) return;
         const float observed = moved / static_cast<float>(counts);
-        if (!std::isfinite(observed) || std::fabs(observed) < 1e-6f || std::fabs(observed) > 0.1f) return;
-        gain += (observed - gain) * 0.15f;
+        if (!std::isfinite(observed) || std::fabs(observed) < 2e-5f || std::fabs(observed) > 0.05f) return;
+        // Opposite sign: the camera clearly went the other way; take it.
+        if ((observed > 0) != (gain > 0)) gain = observed;
+        else gain += (observed - gain) * 0.4f;
     }
 
     // Engine and target angles in radians. Returns counts to send now.
     void step(float engine_yaw, float engine_pitch, float target_yaw, float target_pitch, int& out_x, int& out_y) {
         if (have_last) {
-            learn(gain_yaw, wrap(engine_yaw - last_yaw), sent_x);
-            learn(gain_pitch, engine_pitch - last_pitch, sent_y);
+            moved_yaw += wrap(engine_yaw - last_yaw);
+            moved_pitch += engine_pitch - last_pitch;
+            if (++window >= 10) {
+                learn(gain_yaw, moved_yaw, counts_x);
+                learn(gain_pitch, moved_pitch, counts_y);
+                moved_yaw = moved_pitch = 0;
+                counts_x = counts_y = window = 0;
+            }
         }
         last_yaw = engine_yaw;
         last_pitch = engine_pitch;
         have_last = true;
-        const float yaw_error = wrap(target_yaw - engine_yaw);
-        const float pitch_error = target_pitch - engine_pitch;
-        // Close half the gap per frame: the camera answers a frame late.
-        float x = 0.5f * yaw_error / gain_yaw;
-        float y = 0.5f * pitch_error / gain_pitch;
+        float yaw_error = wrap(target_yaw - engine_yaw);
+        float pitch_error = target_pitch - engine_pitch;
+        // Near half a turn away, keep turning the way we were going instead
+        // of flipping back and forth across the far side.
+        const float pi = 3.14159265f;
+        if (std::fabs(yaw_error) > 2.6f && last_error_yaw * yaw_error < 0)
+            yaw_error += yaw_error > 0 ? -2 * pi : 2 * pi;
+        last_error_yaw = yaw_error;
+        // Tiny errors are left alone, so the character doesn't jitter.
+        const float deadband = 0.004f;  // about a quarter of a degree
+        if (std::fabs(yaw_error) < deadband) yaw_error = 0;
+        if (std::fabs(pitch_error) < deadband) pitch_error = 0;
+        // Close part of the gap per frame. The camera answers a frame or more
+        // late, and closing too much at once overshoots and sways.
+        float x = 0.3f * yaw_error / gain_yaw;
+        float y = 0.3f * pitch_error / gain_pitch;
         x = std::fmax(-400.0f, std::fmin(400.0f, x));
         y = std::fmax(-400.0f, std::fmin(400.0f, y));
         out_x = static_cast<int>(std::lround(x));
         out_y = static_cast<int>(std::lround(y));
-        sent_x = out_x;
-        sent_y = out_y;
+        counts_x += out_x;
+        counts_y += out_y;
     }
 };
 

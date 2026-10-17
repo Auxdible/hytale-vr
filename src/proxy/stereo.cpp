@@ -241,6 +241,7 @@ struct Pending {
 struct Stats {
     int frames = 0, wanted = 0, stale_setup = 0, failed = 0, no_targets = 0, composited = 0, stereo = 0, no_draws = 0;
     long long draw_ticks = 0, draws = 0;
+    float smoothed_max = 0;  // the most the steady view sat off Hytale's camera
 } g_stats;
 
 void problem(const char* text) {
@@ -639,17 +640,66 @@ bool read_mono(const float* f, Mono& mono) {
 Mat4 to_camera(Mat4 m, Vec3 body) {
     const float s = g_setup.world_scale;
     m.at(0, 3) = m.at(0, 3) * s + body.x;
-    m.at(1, 3) = m.at(1, 3) * s;
+    m.at(1, 3) = m.at(1, 3) * s + body.y;
     m.at(2, 3) = m.at(2, 3) * s + body.z;
     return m;
 }
 
+// Where the view sits instead of Hytale's camera: a filter that follows the
+// camera's steady motion (level plus velocity, so walking doesn't lag) and
+// smooths out what wobbles around it. Updated once a frame.
+struct Steady {
+    bool valid = false;
+    int frame = -1;
+    Vec3 level, velocity;
+    LARGE_INTEGER at{};
+} g_steady;
+
+Vec3 steady_offset(const Vec3& camera) {
+    if (!g_setup.steady || g_setup.world_locked) {
+        g_steady.valid = false;
+        return {};
+    }
+    LARGE_INTEGER now, frequency;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&frequency);
+    if (g_steady.frame != g_frame) {
+        const float dt =
+            static_cast<float>(now.QuadPart - g_steady.at.QuadPart) / static_cast<float>(frequency.QuadPart);
+        const bool stale = !g_steady.valid || g_frame - g_steady.frame > 5 || dt <= 0 || dt > 0.25f;
+        if (stale) {
+            g_steady.level = camera;
+            g_steady.velocity = {};
+        } else {
+            const float a = 1.0f - std::exp(-dt / 0.07f);   // position
+            const float b = 1.0f - std::exp(-dt / 0.25f);   // velocity
+            const Vec3 predicted = g_steady.level + g_steady.velocity * dt;
+            const Vec3 level = predicted + (camera - predicted) * a;
+            g_steady.velocity = g_steady.velocity + ((level - g_steady.level) * (1.0f / dt) - g_steady.velocity) * b;
+            g_steady.level = level;
+        }
+        g_steady.valid = true;
+        g_steady.frame = g_frame;
+        g_steady.at = now;
+    }
+    // A teleport or a sudden stop against a wall: don't drift far from the camera.
+    Vec3 offset = g_steady.level - camera;
+    const float away = length(offset);
+    g_stats.smoothed_max = std::fmax(g_stats.smoothed_max, away);
+    if (away > 0.35f) {
+        offset = offset * (0.35f / away);
+        g_steady.level = camera + offset;
+    }
+    return offset;
+}
+
 void compute_eyes(const Mono& mono) {
     const float s = g_setup.world_scale;
+    const Vec3 steady = steady_offset(mono.camera);
     // Uses this frame's camera, so a world-locked view doesn't trail the character.
     const Vec3 body = g_setup.world_locked
-                          ? Vec3{g_setup.anchor.x - mono.camera.x, 0, g_setup.anchor.z - mono.camera.z}
-                          : Vec3{g_setup.anchor.x, 0, g_setup.anchor.z};
+                          ? Vec3{g_setup.anchor.x - mono.camera.x, g_setup.lift, g_setup.anchor.z - mono.camera.z}
+                          : Vec3{g_setup.anchor.x + steady.x, g_setup.lift + steady.y, g_setup.anchor.z + steady.z};
     const Mat4 mono_vp_inverse = inverse(mono.projection * mono.view);
     const Mat4 mono_view_inverse = inverse_rigid(mono.view);
     for (int e = 0; e < 2; ++e) {
@@ -1568,13 +1618,14 @@ std::string take_frame_stats() {
     const double ms = g_stats.stereo > 0 ? 1000.0 * static_cast<double>(g_stats.draw_ticks) /
                                                static_cast<double>(frequency.QuadPart) / g_stats.stereo
                                          : 0.0;
-    char text[320];
+    char text[384];
     std::snprintf(text, sizeof(text),
                   "%d frames: %d wanted 3D, %d per eye, %d composited, %d no doubled draws, %d late setup, %d camera "
-                  "failed, %d no targets; %.1f ms and %lld draws per 3D frame in our draw hooks",
+                  "failed, %d no targets; %.1f ms and %lld draws per 3D frame in our draw hooks; steady view up to "
+                  "%.3f off the camera",
                   g_stats.frames, g_stats.wanted, g_stats.stereo, g_stats.composited, g_stats.no_draws,
                   g_stats.stale_setup, g_stats.failed, g_stats.no_targets, ms,
-                  g_stats.stereo > 0 ? g_stats.draws / g_stats.stereo : 0LL);
+                  g_stats.stereo > 0 ? g_stats.draws / g_stats.stereo : 0LL, g_stats.smoothed_max);
     g_stats = Stats{};
     return text;
 }
