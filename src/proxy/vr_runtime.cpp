@@ -372,6 +372,7 @@ void controls(const FrameContext& context, float dt) {
         } else if (std::fabs(lx) > 0.7f && g_snap_armed) {
             g_yaw_offset -= (lx > 0 ? 1.0f : -1.0f) * s.snap_degrees * pi / 180.0f;
             g_snap_armed = false;
+            g_vignette = std::fmax(g_vignette, s.vignette);  // a short dim over the jump
         } else if (std::fabs(lx) < 0.35f) {
             g_snap_armed = true;
         }
