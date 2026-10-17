@@ -12,6 +12,7 @@
 #include "log.h"
 #include "menu.h"
 #include "sdl_hooks.h"
+#include "stereo.h"
 #include "vr_runtime.h"
 
 namespace hvr::app {
@@ -113,7 +114,7 @@ void before_swap(HDC dc) {
         context.window_points_w = points_w;
         context.window_points_h = points_h;
         session::begin_frame(context);
-        if (g_menu_open) menu::render(pixels_w, pixels_h, points_to_pixels);
+        if (g_menu_open) menu::render(pixels_w, pixels_h, points_to_pixels, stereo::hud_fbo_this_frame());
         session::end_frame(pixels_w, pixels_h, g_settings);
     }
 

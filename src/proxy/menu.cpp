@@ -13,6 +13,7 @@
 #include "gl_api.h"
 #include "log.h"
 #include "sdl_hooks.h"
+#include "stereo.h"
 #include "vr_runtime.h"
 
 namespace hvr::menu {
@@ -209,6 +210,33 @@ bool slider(const char* label, float* value, float min, float max, const char* f
     return ImGui::SliderFloat(id.c_str(), value, min, max, format, ImGuiSliderFlags_AlwaysClamp);
 }
 
+void tab_world(Settings& s) {
+    bool changed = false;
+    changed |= ImGui::Checkbox("See the world in 3D", &s.world_view);
+    hint("Hytale draws every frame once per eye, so you stand in the world. Menus and the main screen still use "
+         "the big screen. Turn this off to always use the big screen.");
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Turning");
+    ImGui::SameLine(150 * g_scale);
+    changed |= ImGui::RadioButton("Snap", &s.turn_mode, 0);
+    ImGui::SameLine();
+    changed |= ImGui::RadioButton("Smooth", &s.turn_mode, 1);
+    if (s.turn_mode == 0)
+        changed |= slider("Snap angle", &s.snap_degrees, 10.0f, 90.0f, "%.0f deg");
+    else
+        changed |= slider("Turn speed", &s.smooth_speed, 30.0f, 360.0f, "%.0f deg/s");
+    changed |= slider("HUD distance", &s.hud_distance, 0.6f, 5.0f, "%.1f m");
+    changed |= slider("HUD width", &s.hud_width, 0.6f, 6.0f, "%.1f m");
+    changed |= slider("World scale", &s.world_scale, 0.25f, 4.0f, "%.2fx");
+    if (changed) app::settings_changed();
+    ImGui::Spacing();
+    if (ImGui::Button("Recenter")) session::recenter();
+    ImGui::SameLine();
+    hint("or click the right stick");
+    ImGui::Spacing();
+    hint(("Renderer: " + stereo::summary()).c_str());
+}
+
 void tab_screen(Settings& s) {
     bool changed = false;
     changed |= slider("Distance", &s.screen_distance, 0.8f, 8.0f, "%.1f m");
@@ -235,14 +263,14 @@ void tab_controls(Settings& s) {
         {"Right trigger", "Attack / break (left click)"},
         {"Left trigger", "Use / place (right click)"},
         {"Left stick", "Move, click to sprint"},
-        {"Right stick", "Look, or scroll in menus"},
+        {"Right stick", "Turn (in the world), look, or scroll in menus"},
         {"A", "Jump"},
         {"B", "Back (Esc)"},
         {"X", "Inventory"},
         {"Y", "This VR menu"},
         {"Left grip", "Crouch"},
         {"Right grip", "Next hotbar slot"},
-        {"Right stick click", "Recenter screen"},
+        {"Right stick click", "Recenter"},
     };
     if (ImGui::BeginTable("controls", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
         ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthFixed, 170 * g_scale);
@@ -352,6 +380,10 @@ void draw_window() {
     ImGui::Spacing();
 
     if (ImGui::BeginTabBar("tabs")) {
+        if (ImGui::BeginTabItem("World")) {
+            tab_world(s);
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("Screen")) {
             tab_screen(s);
             ImGui::EndTabItem();
@@ -380,7 +412,7 @@ void draw_window() {
 
 }  // namespace
 
-void render(int pixels_w, int pixels_h, float points_to_pixels) {
+void render(int pixels_w, int pixels_h, float points_to_pixels, unsigned extra_fbo) {
     if (pixels_w <= 0 || pixels_h <= 0) return;
     if (!g_ready) init(pixels_h);
     ImGuiIO& io = ImGui::GetIO();
@@ -401,6 +433,11 @@ void render(int pixels_w, int pixels_h, float points_to_pixels) {
     glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
     glr.glViewport(0, 0, pixels_w, pixels_h);
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    if (extra_fbo) {
+        glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, extra_fbo);
+        glr.glViewport(0, 0, pixels_w, pixels_h);
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    }
 }
 
 }  // namespace hvr::menu

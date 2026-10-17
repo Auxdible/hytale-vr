@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 #ifndef APIENTRY
 #define APIENTRY __stdcall
@@ -63,6 +64,14 @@ constexpr GLenum VIEWPORT = 0x0BA2, SCISSOR_BOX = 0x0C10, CURRENT_PROGRAM = 0x8B
                  BLEND_SRC_ALPHA = 0x80CB, BLEND_DST_ALPHA = 0x80CA, READ_BUFFER = 0x0C02, DRAW_BUFFER0 = 0x8825,
                  UNPACK_ALIGNMENT = 0x0CF5;
 constexpr GLenum COLOR_CLEAR_VALUE = 0x0C22, BLEND_EQUATION_RGB = 0x8009, FUNC_ADD = 0x8006;
+constexpr GLenum TEXTURE_2D_ARRAY = 0x8C1A, TEXTURE_BINDING_2D_ARRAY = 0x8C1D, TEXTURE_DEPTH = 0x8071,
+                 TEXTURE_COMPARE_MODE = 0x884C, TEXTURE_COMPARE_FUNC = 0x884D, TEXTURE_BASE_LEVEL = 0x813C,
+                 TEXTURE_TARGET = 0x1006, TEXTURE_IMMUTABLE_FORMAT = 0x912F;
+constexpr GLenum COPY_WRITE_BUFFER = 0x8F37, STENCIL_WRITEMASK = 0x0B98, DRAW_BUFFER_ = 0x0C01, COLOR = 0x1800,
+                 DEPTH = 0x1801, STENCIL = 0x1802, DEPTH_STENCIL = 0x84F9, UNSIGNED_INT_24_8 = 0x84FA,
+                 DEPTH_COMPONENT = 0x1902, RED_INTEGER = 0x8D94, FLOAT_32_UNSIGNED_INT_24_8_REV = 0x8DAD,
+                 FRAMEBUFFER_ATTACHMENT_TEXTURE_CUBE_MAP_FACE = 0x8CD3, MAX_COLOR_ATTACHMENTS = 0x8CDF,
+                 TEXTURE_CUBE_MAP_POSITIVE_X = 0x8515, BLEND_DST = 0x0BE0;
 constexpr GLenum VENDOR = 0x1F00, RENDERER = 0x1F01, VERSION = 0x1F02, SHADING_LANGUAGE_VERSION = 0x8B8C;
 }  // namespace gl
 
@@ -73,7 +82,6 @@ constexpr GLenum VENDOR = 0x1F00, RENDERER = 0x1F01, VERSION = 0x1F02, SHADING_L
     X(void, glGetIntegerv, (GLenum pname, GLint * data))                                                     \
     X(void, glGetFloatv, (GLenum pname, GLfloat * data))                                                     \
     X(void, glGetIntegeri_v, (GLenum target, GLuint index, GLint * data))                                    \
-    X(void, glGetInteger64i_v, (GLenum target, GLuint index, long long* data))                               \
     X(GLboolean, glIsEnabled, (GLenum cap))                                                                  \
     X(void, glEnable, (GLenum cap))                                                                          \
     X(void, glDisable, (GLenum cap))                                                                         \
@@ -114,13 +122,6 @@ constexpr GLenum VENDOR = 0x1F00, RENDERER = 0x1F01, VERSION = 0x1F02, SHADING_L
     X(void, glDrawBuffer, (GLenum mode))                                                                     \
     X(void, glGetFramebufferAttachmentParameteriv, (GLenum target, GLenum attachment, GLenum pname,          \
                                                     GLint * params))                                         \
-    X(void, glGetNamedFramebufferAttachmentParameteriv, (GLuint fb, GLenum attachment, GLenum pname,         \
-                                                         GLint * params))                                    \
-    X(void, glGetTextureLevelParameteriv, (GLuint texture, GLint level, GLenum pname, GLint * params))       \
-    X(void, glGetNamedRenderbufferParameteriv, (GLuint rb, GLenum pname, GLint * params))                    \
-    X(void, glGetNamedBufferSubData, (GLuint buffer, GLintptr offset, GLsizeiptr size, void* data))          \
-    X(void, glGetObjectLabel, (GLenum identifier, GLuint name, GLsizei bufSize, GLsizei * length,            \
-                               GLchar * label))                                                              \
     X(GLuint, glCreateShader, (GLenum type))                                                                 \
     X(void, glDeleteShader, (GLuint shader))                                                                 \
     X(void, glShaderSource, (GLuint shader, GLsizei count, const GLchar* const* string, const GLint* length)) \
@@ -157,11 +158,51 @@ constexpr GLenum VENDOR = 0x1F00, RENDERER = 0x1F01, VERSION = 0x1F02, SHADING_L
     X(void, glVertexAttribPointer, (GLuint index, GLint size, GLenum type, GLboolean normalized,             \
                                     GLsizei stride, const void* pointer))                                    \
     X(void, glEnableVertexAttribArray, (GLuint index))                                                       \
-    X(void, glDrawArrays, (GLenum mode, GLint first, GLsizei count))
+    X(void, glDrawArrays, (GLenum mode, GLint first, GLsizei count))                                       \
+    X(void, glDeleteBuffers, (GLsizei n, const GLuint* buffers))                                             \
+    X(void, glBindBufferBase, (GLenum target, GLuint index, GLuint buffer))                                  \
+    X(void, glBindBufferRange, (GLenum target, GLuint index, GLuint buffer, GLintptr offset,                 \
+                                GLsizeiptr size))                                                            \
+    X(void, glBufferSubData, (GLenum target, GLintptr offset, GLsizeiptr size, const void* data))            \
+    X(void, glGetBufferSubData, (GLenum target, GLintptr offset, GLsizeiptr size, void* data))               \
+    X(void, glCopyBufferSubData, (GLenum read, GLenum write, GLintptr read_offset, GLintptr write_offset,    \
+                                  GLsizeiptr size))                                                          \
+    X(void, glUniform3fv, (GLint location, GLsizei count, const GLfloat* value))                             \
+    X(void, glDrawBuffers, (GLsizei n, const GLenum* bufs))                                                  \
+    X(void, glGetTexLevelParameteriv, (GLenum target, GLint level, GLenum pname, GLint * params))            \
+    X(void, glGetTexParameteriv, (GLenum target, GLenum pname, GLint * params))                              \
+    X(void, glRenderbufferStorageMultisample, (GLenum target, GLsizei samples, GLenum format, GLsizei width, \
+                                               GLsizei height))                                              \
+    X(void, glClearBufferfv, (GLenum buffer, GLint drawbuffer, const GLfloat* value))                        \
+    X(void, glClearBufferiv, (GLenum buffer, GLint drawbuffer, const GLint* value))                          \
+    X(void, glClearBufferuiv, (GLenum buffer, GLint drawbuffer, const GLuint* value))                        \
+    X(void, glClearBufferfi, (GLenum buffer, GLint drawbuffer, GLfloat depth, GLint stencil))                \
+    X(void, glStencilMask, (GLuint mask))                                                                    \
+    X(void, glGetBooleanv, (GLenum pname, GLboolean * data))                                                 \
+    X(void, glTexImage3D, (GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height,  \
+                           GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels))
+
+// Used when the driver has them.
+#define HVR_GL_OPTIONAL(X)                                                                                   \
+    X(void, glGetNamedBufferSubData, (GLuint buffer, GLintptr offset, GLsizeiptr size, void* data))          \
+    X(void, glGetObjectLabel, (GLenum identifier, GLuint name, GLsizei bufSize, GLsizei * length,            \
+                               GLchar * label))                                                              \
+    X(void, glGetNamedFramebufferAttachmentParameteriv, (GLuint fb, GLenum attachment, GLenum pname,         \
+                                                         GLint * params))                                    \
+    X(void, glGetTextureLevelParameteriv, (GLuint texture, GLint level, GLenum pname, GLint * params))       \
+    X(void, glGetTextureParameteriv, (GLuint texture, GLenum pname, GLint * params))                         \
+    X(void, glGetNamedRenderbufferParameteriv, (GLuint rb, GLenum pname, GLint * params))                    \
+    X(void, glGetInteger64i_v, (GLenum target, GLuint index, long long* data))                               \
+    X(void, glTexStorage2D, (GLenum target, GLsizei levels, GLenum format, GLsizei width, GLsizei height))   \
+    X(void, glTexStorage3D, (GLenum target, GLsizei levels, GLenum format, GLsizei width, GLsizei height,    \
+                             GLsizei depth))                                                                 \
+    X(void, glBindImageTexture, (GLuint unit, GLuint texture, GLint level, GLboolean layered, GLint layer,   \
+                                 GLenum access, GLenum format))
 
 struct GlApi {
 #define HVR_GL_DECLARE(ret, name, params) ret(APIENTRY* name) params = nullptr;
     HVR_GL_FUNCTIONS(HVR_GL_DECLARE)
+    HVR_GL_OPTIONAL(HVR_GL_DECLARE)
 #undef HVR_GL_DECLARE
 
     bool ready = false;

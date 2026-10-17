@@ -12,7 +12,7 @@ EXPORTS
     glAreTexturesResident = hvr_x_glAreTexturesResident
     glArrayElement = hvr_x_glArrayElement
     glBegin = hvr_x_glBegin
-    glBindTexture = hvr_x_glBindTexture
+    glBindTexture = hvr_glBindTexture
     glBitmap = hvr_x_glBitmap
     glBlendFunc = hvr_x_glBlendFunc
     glCallList = hvr_x_glCallList

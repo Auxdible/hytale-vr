@@ -1,0 +1,96 @@
+// Real stereo: renders Hytale's own 3D frame once per eye.
+//
+// Each draw Hytale makes into one of its full-screen render targets runs
+// twice: first as usual with the left eye's camera, then into a twin target
+// with the right eye's camera. The camera comes from Hytale's SceneData
+// uniform block, which we copy per eye with the headset's matrices, plus a
+// few loose uniforms (projection, view, frustum corners) set per eye. The
+// final composite into the window also goes to the right eye's texture, and
+// everything Hytale draws after it (the HUD and menus) is copied onto a
+// transparent panel for the headset.
+#pragma once
+
+#include <string>
+
+#include "../core/vrmath.h"
+#include "gl_api.h"
+
+namespace hvr::stereo {
+
+// --- From the VR session (render thread) ---
+
+struct EyeSetup {
+    Mat4 headset_projection[2];  // GetProjectionMatrix, any near/far
+    Mat4 eye_to_head[2];         // GetEyeToHeadTransform
+    Mat4 head;                   // headset pose in Hytale's axes, relative to where the camera sits
+    float world_scale = 1;       // world units per meter
+};
+
+// Turns stereo on for the coming frames, with this frame's poses.
+void set_eyes(const EyeSetup& setup);
+void disable();
+bool wanted();
+
+// At swap: whether the frame just drawn was rendered per eye, and its
+// textures (window-sized RGBA8). hud is premultiplied alpha.
+struct FrameResult {
+    bool stereo = false;
+    GLuint eye_texture[2] = {};
+    GLuint eye_fbo[2] = {};
+    GLuint hud_texture = 0;
+    GLuint hud_fbo = 0;
+    int width = 0, height = 0;
+};
+FrameResult end_frame(int window_w, int window_h);
+// The HUD target for the menu to draw into this frame (0 when not stereo).
+GLuint hud_fbo_this_frame();
+
+// Hytale's own camera this frame, read from SceneData: rotation-only view
+// (camera-relative), forward direction. Valid once a stereo frame ran.
+bool engine_camera(Mat4& view, Vec3& forward);
+
+// --- Hooks ---
+
+bool active();  // stereo drawing is on this frame
+
+void on_bind_texture(GLenum target, GLuint texture);
+void on_active_texture(GLenum unit);
+void on_bind_textures(GLuint first, GLsizei count, const GLuint* textures);
+void on_bind_texture_unit(GLuint unit, GLuint texture);
+void on_bind_image_texture(GLuint unit, GLuint texture, GLint level, GLboolean layered, GLint layer, GLenum access,
+                           GLenum format);
+void on_bind_framebuffer(GLenum target, GLuint framebuffer);
+void on_use_program(GLuint program);
+void on_link(GLuint program);
+void on_uniform_block_binding(GLuint program, GLuint index, GLuint binding);
+void on_bind_buffer(GLenum target, GLuint buffer);
+void on_bind_buffer_range(GLenum target, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size);
+void on_buffer_data(GLuint buffer, GLsizeiptr size, const void* data);
+void on_buffer_sub_data(GLuint buffer, GLintptr offset, GLsizeiptr size, const void* data);
+void on_map(GLuint buffer, GLintptr offset, GLsizeiptr length, GLbitfield access, void* pointer);
+void on_flush(GLuint buffer, GLintptr offset, GLsizeiptr length);  // relative to the mapped range
+void on_unmap(GLuint buffer);
+GLuint buffer_bound(GLenum target);
+GLuint current_program();
+void on_uniform(GLuint program, GLint location, GLsizei count, const GLfloat* value, int floats_each);
+void on_draw_buffers(GLsizei count, const GLenum* buffers);
+void on_delete_framebuffers(GLsizei count, const GLuint* framebuffers);
+
+// Draw doubling. Returns true when the draw must run a second time: call
+// draw, second(), draw again, then finish(). When it returns false nothing
+// was changed.
+bool draw_begin(GLenum mode, GLsizei count);
+void draw_second();
+void draw_finish();
+
+// Clears and blits on stereo targets are repeated on their twins.
+void after_clear(GLbitfield mask);
+void after_clear_buffer(GLenum buffer, GLint drawbuffer, const void* value, int kind);  // kind 0 fv, 1 iv, 2 uiv
+void after_clear_buffer_fi(GLenum buffer, GLint drawbuffer, GLfloat depth, GLint stencil);
+void after_blit(GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0, GLint dy0, GLint dx1, GLint dy1, GLbitfield mask,
+                GLenum filter);
+void after_generate_mipmap(GLenum target);
+
+std::string summary();
+
+}  // namespace hvr::stereo

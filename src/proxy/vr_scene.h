@@ -46,8 +46,13 @@ public:
     void capture_window(int width, int height);
     float screen_aspect() const { return height_ > 0 ? static_cast<float>(width_) / height_ : 16.0f / 9.0f; }
     void render(const EyeTarget& target, const Mat4& projection, const Mat4& view, const SceneView& scene);
+    // Over an eye image already drawn by Hytale: the HUD panel (premultiplied
+    // texture on scene.screen) and the controllers.
+    void render_overlay(GLuint fbo, int width, int height, const Mat4& projection, const Mat4& view,
+                        const SceneView& scene, GLuint hud_texture);
 
 private:
+    void draw_hands(const Mat4& vp, const SceneView& scene);
     void draw(int first, int count, const Mat4& view_projection, const Mat4& model, int mode, const float color[4]);
 
     GLuint program_ = 0, vao_ = 0, vbo_ = 0;

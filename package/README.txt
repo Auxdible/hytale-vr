@@ -11,13 +11,15 @@ Install
   3. Start Hytale and press F6 for the VR menu. Choose Enter VR.
 
 What you get in this version
-  - Hytale on a big screen in front of you in VR, menus included.
+  - In a world: real 3D, drawn by Hytale once per eye. Your head aims, the
+    right stick turns you, and the HUD floats in front of you. This is new and
+    experimental; turn it off in the VR menu's World tab if it misbehaves.
+  - Everywhere else (main menu, loading): Hytale on a big screen in VR.
   - Point a controller at the screen and pull the trigger to click.
   - Play with the controllers: move, look, jump, attack, use, inventory.
   - The VR menu (F6, or Y on the left controller) to start and stop VR,
     move the screen, and change controls.
-  - Real 3D from Hytale's own renderer is the next step. It is built from the
-    renderer log you can capture from the VR menu (General tab).
+  - Next: your hands and held item on the controllers.
 
 Uninstall
   Double-click Uninstall.bat.

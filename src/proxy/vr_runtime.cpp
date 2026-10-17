@@ -9,11 +9,13 @@
 #include <mutex>
 
 #include "../core/controls.h"
+#include "../core/stereo_math.h"
 #include "gl_api.h"
 #include "gl_hooks.h"
 #include "input.h"
 #include "log.h"
 #include "sdl_hooks.h"
+#include "stereo.h"
 #include "vr_scene.h"
 
 namespace hvr::session {
@@ -43,6 +45,19 @@ float g_scroll = 0;
 bool g_was_hovering = false;
 bool g_pointer_was_active = false;
 float g_last_warp_x = -1, g_last_warp_y = -1;
+FrameContext g_context;  // from begin_frame, used at the end of the frame
+
+// World view
+bool g_world_frame = false;     // the frame being shown was drawn per eye
+Screen g_cinema_screen;
+Screen g_hud_panel;
+bool g_hud_placed = false;
+bool g_world_aligned = false;   // yaw offset and neutral spot are set
+float g_yaw_offset = 0;         // Hytale yaw = headset yaw + this
+Vec3 g_neutral;                 // headset spot that maps to Hytale's camera
+MouseFollower g_follower;
+bool g_snap_armed = true;
+int g_world_frames = 0;
 
 struct Actions {
     ::vr::VRActionSetHandle_t set = 0;
@@ -144,6 +159,10 @@ DWORD WINAPI start_worker(void*) {
 // Render thread: tears the session down.
 void shutdown_now() {
     input::release_all();
+    stereo::disable();
+    g_world_frame = false;
+    g_world_aligned = false;
+    g_hud_placed = false;
     for (EyeTarget& eye : g_eyes) eye.destroy();
     g_scene.destroy();
     g_gl_ready = false;
@@ -197,6 +216,7 @@ void place_screen_now(const Settings& settings) {
     g_screen_placed = true;
     g_view.screen = place_screen(g_anchor_head, g_anchor_forward, settings.screen_distance, settings.screen_width,
                                  g_scene.screen_aspect(), settings.screen_height);
+    g_cinema_screen = g_view.screen;
 }
 
 void handle_events() {
@@ -285,7 +305,21 @@ void controls(const FrameContext& context, float dt) {
 
     float lx, ly;
     stick(g_actions.look, lx, ly);
-    if (!pointer_mode) {
+    if (g_world_frame && !pointer_mode) {
+        // In the world your head aims; the stick turns your body.
+        const float x = stick_curve(lx, s.deadzone);
+        const float pi = 3.14159265f;
+        if (s.turn_mode == 1) {
+            g_yaw_offset -= x * s.smooth_speed * pi / 180.0f * dt;
+        } else if (std::fabs(lx) > 0.7f && g_snap_armed) {
+            g_yaw_offset -= (lx > 0 ? 1.0f : -1.0f) * s.snap_degrees * pi / 180.0f;
+            g_snap_armed = false;
+        } else if (std::fabs(lx) < 0.35f) {
+            g_snap_armed = true;
+        }
+        g_yaw_offset = MouseFollower::wrap(g_yaw_offset);
+        g_scroll = 0;
+    } else if (!pointer_mode) {
         int dx = 0, dy = 0;
         g_look.add(stick_curve(lx, s.deadzone) * s.look_speed * dt, -stick_curve(ly, s.deadzone) * s.look_speed * dt * 0.6f,
                    dx, dy);
@@ -340,7 +374,11 @@ void recenter() { g_recenter = true; }
 bool take_menu_button() { return g_menu_button.exchange(false); }
 
 void begin_frame(const FrameContext& context) {
-    if (g_state != State::Running) return;
+    g_context = context;
+    if (g_state != State::Running) {
+        stereo::disable();
+        return;
+    }
     if (g_stop_requested) {
         shutdown_now();
         return;
@@ -361,7 +399,132 @@ void begin_frame(const FrameContext& context) {
         QueryPerformanceCounter(&g_last_frame);
     }
     set_vsync_override(context.settings->vsync_off_in_vr);
+}
 
+namespace {
+
+Mat4 eye_view(int eye) {
+    const ::vr::HmdMatrix34_t e = ::vr::VRSystem()->GetEyeToHeadTransform(eye == 0 ? ::vr::Eye_Left : ::vr::Eye_Right);
+    return inverse_rigid(g_hmd * from_rows34(e.m));
+}
+
+Mat4 eye_projection_near(int eye) {
+    return from_rows44(::vr::VRSystem()->GetProjectionMatrix(eye == 0 ? ::vr::Eye_Left : ::vr::Eye_Right, 0.05f, 200.0f).m);
+}
+
+void submit(int eye, GLuint texture) {
+    ::vr::Texture_t t{reinterpret_cast<void*>(static_cast<uintptr_t>(texture)), ::vr::TextureType_OpenGL, ::vr::ColorSpace_Gamma};
+    ::vr::VRCompositor()->Submit(eye == 0 ? ::vr::Eye_Left : ::vr::Eye_Right, &t);
+}
+
+// The HUD floats ahead of you and catches up when you look well away.
+void place_hud(const Settings& s, bool force) {
+    const Vec3 head = position_of(g_hmd);
+    const Vec3 forward = transform_direction(g_hmd, {0, 0, -1});
+    const float head_yaw = yaw_of(forward);
+    const float off = std::fabs(MouseFollower::wrap(head_yaw - g_hud_panel.yaw));
+    if (force || !g_hud_placed || off > 0.6f) {
+        g_hud_panel = place_screen(head, forward, s.hud_distance, s.hud_width, g_context.window_points_h > 0
+                                       ? static_cast<float>(g_context.window_points_w) / g_context.window_points_h
+                                       : 16.0f / 9.0f,
+                                   -0.1f);
+        g_hud_placed = true;
+    } else {
+        // Keep size and distance live from the menu.
+        const Vec3 flat = normalize({-std::sin(g_hud_panel.yaw), 0, -std::cos(g_hud_panel.yaw)});
+        const float aspect = g_hud_panel.width / g_hud_panel.height;
+        g_hud_panel.width = s.hud_width;
+        g_hud_panel.height = s.hud_width / aspect;
+        g_hud_panel.center = {head.x + flat.x * s.hud_distance, g_hud_panel.center.y, head.z + flat.z * s.hud_distance};
+    }
+}
+
+// After the poses for the next frame arrive: where each eye goes in Hytale.
+void prepare_world(const Settings& s) {
+    if (!s.world_view || !g_hmd_valid) {
+        stereo::disable();
+        g_world_aligned = false;
+        return;
+    }
+    const Vec3 forward = transform_direction(g_hmd, {0, 0, -1});
+    Mat4 engine_view;
+    Vec3 engine_forward;
+    const bool have_engine = stereo::engine_camera(engine_view, engine_forward);
+    if (!g_world_aligned || g_recenter.exchange(false)) {
+        g_neutral = position_of(g_hmd);
+        g_yaw_offset = have_engine ? MouseFollower::wrap(yaw_of(engine_forward) - yaw_of(forward)) : 0.0f;
+        g_world_aligned = true;
+        g_hud_placed = false;
+        g_follower = MouseFollower{};
+    }
+
+    // Steer Hytale's camera after the head, so aiming, movement and what it
+    // loads all follow where you look.
+    if (have_engine && g_context.game_relative && !g_context.menu_open && s.controller_input) {
+        const float target_yaw = MouseFollower::wrap(yaw_of(forward) + g_yaw_offset);
+        int dx = 0, dy = 0;
+        g_follower.step(yaw_of(engine_forward), pitch_of(engine_forward), target_yaw, pitch_of(forward), dx, dy);
+        sdl::inject_mouse_motion(dx, dy);
+    } else {
+        g_follower.have_last = false;
+    }
+
+    stereo::EyeSetup setup;
+    for (int e = 0; e < 2; ++e) {
+        setup.headset_projection[e] = eye_projection_near(e);
+        setup.eye_to_head[e] =
+            from_rows34(::vr::VRSystem()->GetEyeToHeadTransform(e == 0 ? ::vr::Eye_Left : ::vr::Eye_Right).m);
+    }
+    setup.head = rotation_y(g_yaw_offset) * translation(Vec3{} - g_neutral) * g_hmd;
+    setup.world_scale = s.world_scale;
+    stereo::set_eyes(setup);
+}
+
+}  // namespace
+
+void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
+    const stereo::FrameResult world = stereo::end_frame(pixels_w, pixels_h);
+    if (g_state != State::Running || !g_gl_ready) return;
+
+    // 1. Show the frame that was just drawn, with the poses it was drawn for.
+    if (world.stereo && g_hmd_valid) {
+        if (!g_world_frame) {
+            logf("Showing Hytale's world in 3D");
+            set_status("You're in the world. Look around; the stick turns you.");
+        }
+        g_world_frame = true;
+        ++g_world_frames;
+        place_hud(settings, false);
+        g_view.screen = g_hud_panel;
+        g_view.floor = false;
+        g_view.eye = position_of(g_hmd);
+        for (int eye = 0; eye < 2; ++eye) {
+            g_scene.render_overlay(world.eye_fbo[eye], world.width, world.height, eye_projection_near(eye), eye_view(eye),
+                                   g_view, world.hud_texture);
+            submit(eye, world.eye_texture[eye]);
+        }
+    } else {
+        if (g_world_frame) {
+            logf("Back to the big screen");
+            set_status("Hytale is on the big screen. Point at it to use the mouse.");
+        }
+        g_world_frame = false;
+        g_scene.capture_window(pixels_w, pixels_h);
+        if (g_hmd_valid) {
+            g_cinema_screen = place_screen(g_anchor_head, g_anchor_forward, settings.screen_distance, settings.screen_width,
+                                           g_scene.screen_aspect(), settings.screen_height);
+            g_view.screen = g_cinema_screen;
+            g_view.floor = settings.show_floor;
+            g_view.eye = position_of(g_hmd);
+            for (int eye = 0; eye < 2; ++eye) {
+                g_scene.render(g_eyes[eye], eye_projection_near(eye), eye_view(eye), g_view);
+                submit(eye, g_eyes[eye].texture());
+            }
+        }
+    }
+
+    // 2. Wait for the next frame's poses, then read the controllers and get
+    // the next frame's eyes ready before Hytale starts drawing it.
     handle_events();
     if (g_stop_requested) {
         shutdown_now();
@@ -379,32 +542,11 @@ void begin_frame(const FrameContext& context) {
     g_last_frame = now;
     if (dt > 0.1f) dt = 0.1f;
 
-    controls(context, dt);
-    if (g_hmd_valid && (!g_screen_placed || g_recenter.exchange(false))) place_screen_now(*context.settings);
-}
-
-void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
-    if (g_state != State::Running || !g_gl_ready) return;
-    g_scene.capture_window(pixels_w, pixels_h);
-    if (!g_hmd_valid) return;
-
-    // Screen settings from the menu apply live around where it was placed.
-    g_view.screen = place_screen(g_anchor_head, g_anchor_forward, settings.screen_distance, settings.screen_width,
-                                 g_scene.screen_aspect(), settings.screen_height);
-    g_view.floor = settings.show_floor;
-    g_view.eye = position_of(g_hmd);
-
-    for (int eye = 0; eye < 2; ++eye) {
-        const ::vr::EVREye which = eye == 0 ? ::vr::Eye_Left : ::vr::Eye_Right;
-        const ::vr::HmdMatrix44_t p = ::vr::VRSystem()->GetProjectionMatrix(which, 0.05f, 200.0f);
-        const ::vr::HmdMatrix34_t e = ::vr::VRSystem()->GetEyeToHeadTransform(which);
-        const Mat4 projection = from_rows44(p.m);
-        const Mat4 view = inverse_rigid(g_hmd * from_rows34(e.m));
-        g_scene.render(g_eyes[eye], projection, view, g_view);
-        ::vr::Texture_t texture{reinterpret_cast<void*>(static_cast<uintptr_t>(g_eyes[eye].texture())), ::vr::TextureType_OpenGL,
-                              ::vr::ColorSpace_Gamma};
-        ::vr::VRCompositor()->Submit(which, &texture);
-    }
+    if (g_hmd_valid && !g_world_frame && (!g_screen_placed || g_recenter.exchange(false))) place_screen_now(settings);
+    // The laser aims at whatever is showing: the HUD panel or the big screen.
+    g_view.screen = g_world_frame ? g_hud_panel : g_cinema_screen;
+    controls(g_context, dt);
+    prepare_world(settings);
 }
 
 }  // namespace hvr::session

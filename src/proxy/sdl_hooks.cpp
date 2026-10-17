@@ -39,6 +39,7 @@ bool (*fn_CursorVisible)() = nullptr;
 bool (*fn_PushEvent)(Event*) = nullptr;
 uint32_t (*fn_GetWindowID)(Window*) = nullptr;
 Window* (*fn_GL_GetCurrentWindow)() = nullptr;
+uint64_t (*fn_GetTicksNS)() = nullptr;
 
 std::atomic<bool> g_installed{false};
 std::atomic<void*> g_hwnd{nullptr};
@@ -49,6 +50,7 @@ std::atomic<bool> g_capture_applied{false};
 bool g_saved_relative = false;
 bool g_saved_cursor_hidden = false;
 
+std::atomic<int> g_inject_x{0}, g_inject_y{0};
 std::atomic<bool> g_warp_pending{false};
 std::atomic<float> g_warp_x{0}, g_warp_y{0};
 
@@ -174,14 +176,30 @@ bool pass(Event& e) {
     }
 }
 
+// Motion we owe Hytale's camera, as one relative mouse event.
+bool take_injected_motion(Event* e) {
+    if (g_capture_applied) return false;
+    const int x = g_inject_x.exchange(0), y = g_inject_y.exchange(0);
+    if (x == 0 && y == 0) return false;
+    std::memset(e, 0, sizeof(*e));
+    e->motion.type = sdl3::MOUSE_MOTION;
+    e->motion.reserved = sdl3::kOurEvent;
+    Window* w = window();
+    e->motion.windowID = (w && fn_GetWindowID) ? fn_GetWindowID(w) : 0;
+    e->motion.timestamp = fn_GetTicksNS ? fn_GetTicksNS() : 0;
+    e->motion.xrel = static_cast<float>(x);
+    e->motion.yrel = static_cast<float>(y);
+    return true;
+}
+
 bool hook_PollEvent(Event* e) {
     ++g_polls;
     apply_pending();
-    if (!e) return real_PollEvent(e);
+    if (!e) return real_PollEvent(e) || g_inject_x.load() != 0 || g_inject_y.load() != 0;
     while (real_PollEvent(e)) {
         if (pass(*e)) return true;
     }
-    return false;
+    return take_injected_motion(e);
 }
 
 int hook_PeepEvents(Event* events, int count, int action, uint32_t min_type, uint32_t max_type) {
@@ -282,6 +300,7 @@ bool install() {
     ok &= find(module, "SDL_PushEvent", fn_PushEvent);
     ok &= find(module, "SDL_GetWindowID", fn_GetWindowID);
     ok &= find(module, "SDL_GL_GetCurrentWindow", fn_GL_GetCurrentWindow);
+    fn_GetTicksNS = reinterpret_cast<uint64_t (*)()>(GetProcAddress(module, "SDL_GetTicksNS"));
     if (!ok) {
         logf("SDL3 is missing functions; the VR menu can't take input");
         return false;
@@ -356,6 +375,11 @@ bool window_size(int& points_w, int& points_h, int& pixels_w, int& pixels_h) {
     if (!w || !fn_GetWindowSize || !fn_GetWindowSizeInPixels) return false;
     return fn_GetWindowSize(w, &points_w, &points_h) && fn_GetWindowSizeInPixels(w, &pixels_w, &pixels_h) &&
            points_w > 0 && points_h > 0;
+}
+
+void inject_mouse_motion(int dx, int dy) {
+    if (dx) g_inject_x += dx;
+    if (dy) g_inject_y += dy;
 }
 
 void warp_mouse(float x, float y) {

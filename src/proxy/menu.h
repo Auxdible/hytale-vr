@@ -4,7 +4,8 @@
 
 namespace hvr::menu {
 
-// Draws one frame of the menu into the window's back buffer.
-void render(int pixels_w, int pixels_h, float points_to_pixels);
+// Draws one frame of the menu into the window's back buffer, and into
+// extra_fbo too when it isn't 0 (the headset's HUD panel).
+void render(int pixels_w, int pixels_h, float points_to_pixels, unsigned extra_fbo = 0);
 
 }  // namespace hvr::menu

@@ -44,6 +44,8 @@ bool window_size(int& points_w, int& points_h, int& pixels_w, int& pixels_h);
 // Moves the OS cursor to a point in the window (applied on SDL's thread).
 void warp_mouse(float x, float y);
 std::string scancode_name(int scancode);
+// Adds relative mouse motion for Hytale's camera, delivered as an SDL event.
+void inject_mouse_motion(int dx, int dy);
 
 std::string usage_summary();
 

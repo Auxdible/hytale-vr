@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(hytale_vr VERSION 2.0.0 LANGUAGES C CXX)
+project(hytale_vr VERSION 2.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -60,6 +60,7 @@ add_library(hytalevr_proxy SHARED
     src/proxy/menu.cpp
     src/proxy/proxy.cpp
     src/proxy/sdl_hooks.cpp
+    src/proxy/stereo.cpp
     src/proxy/vr_runtime.cpp
     src/proxy/vr_scene.cpp
     src/proxy/generated/stubs.asm

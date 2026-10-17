@@ -10,6 +10,8 @@
 #include "gl_hooks.h"
 #include "internal.h"
 #include "log.h"
+#include "stereo.h"
+#include "stereo_draw.h"
 
 #include "generated/export_names.inc"
 
@@ -29,6 +31,7 @@ using PFN_glClear = void(APIENTRY*)(GLbitfield);
 using PFN_glViewport = void(APIENTRY*)(GLint, GLint, GLsizei, GLsizei);
 using PFN_glDrawArrays = void(APIENTRY*)(GLenum, GLint, GLsizei);
 using PFN_glDrawElements = void(APIENTRY*)(GLenum, GLsizei, GLenum, const void*);
+using PFN_glBindTexture = void(APIENTRY*)(GLenum, GLuint);
 
 PFN_wglGetProcAddress real_wglGetProcAddress = nullptr;
 PFN_wglSwapBuffers real_wglSwapBuffers = nullptr;
@@ -36,6 +39,7 @@ PFN_glClear real_glClear = nullptr;
 PFN_glViewport real_glViewport = nullptr;
 PFN_glDrawArrays real_glDrawArrays = nullptr;
 PFN_glDrawElements real_glDrawElements = nullptr;
+PFN_glBindTexture real_glBindTexture = nullptr;
 
 // Stands in for an export the real library lacks, so a call returns 0
 // instead of jumping to nowhere.
@@ -63,9 +67,10 @@ bool load_real_library() {
     real_glViewport = reinterpret_cast<PFN_glViewport>(GetProcAddress(g_real, "glViewport"));
     real_glDrawArrays = reinterpret_cast<PFN_glDrawArrays>(GetProcAddress(g_real, "glDrawArrays"));
     real_glDrawElements = reinterpret_cast<PFN_glDrawElements>(GetProcAddress(g_real, "glDrawElements"));
+    real_glBindTexture = reinterpret_cast<PFN_glBindTexture>(GetProcAddress(g_real, "glBindTexture"));
     hvr::logf("Loaded %ls (%d of %d forwarded exports missing)", path, missing, kForwardedExportCount);
     return real_wglGetProcAddress && real_wglSwapBuffers && real_glClear && real_glViewport && real_glDrawArrays &&
-           real_glDrawElements;
+           real_glDrawElements && real_glBindTexture;
 }
 
 }  // namespace
@@ -104,8 +109,10 @@ BOOL WINAPI hvr_wglSwapBuffers(HDC dc) {
 }
 
 void APIENTRY hvr_glClear(GLbitfield mask) {
-    if (!hvr::internal_call()) hvr::census::on_clear(mask);
+    if (hvr::internal_call()) return real_glClear(mask);
+    hvr::census::on_clear(mask);
     real_glClear(mask);
+    hvr::stereo::after_clear(mask);
 }
 
 void APIENTRY hvr_glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
@@ -115,12 +122,17 @@ void APIENTRY hvr_glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
 
 void APIENTRY hvr_glDrawArrays(GLenum mode, GLint first, GLsizei count) {
     if (!hvr::internal_call()) hvr::census::on_draw("DrawArrays", mode, count, 1);
-    real_glDrawArrays(mode, first, count);
+    hvr::stereo_draw(mode, count, [&] { real_glDrawArrays(mode, first, count); });
 }
 
 void APIENTRY hvr_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void* indices) {
     if (!hvr::internal_call()) hvr::census::on_draw("DrawElements", mode, count, 1);
-    real_glDrawElements(mode, count, type, indices);
+    hvr::stereo_draw(mode, count, [&] { real_glDrawElements(mode, count, type, indices); });
+}
+
+void APIENTRY hvr_glBindTexture(GLenum target, GLuint texture) {
+    real_glBindTexture(target, texture);
+    if (!hvr::internal_call()) hvr::stereo::on_bind_texture(target, texture);
 }
 
 }  // extern "C"

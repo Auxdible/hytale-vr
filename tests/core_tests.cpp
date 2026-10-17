@@ -1,6 +1,7 @@
 // Tests for the platform-free parts of the VR runtime.
 #include "../src/core/controls.h"
 #include "../src/core/settings.h"
+#include "../src/core/stereo_math.h"
 #include "../src/core/vrmath.h"
 
 #include <cmath>
@@ -84,9 +85,71 @@ void test_settings_round_trip() {
     check(clamped.menu_key == scancode::F6, "bad key falls back to default");
 }
 
+void test_stereo_math() {
+    using namespace hvr;
+    // Hytale's projection from the renderer log (near 0.05, far ~1000).
+    Mat4 mono_p;
+    mono_p.at(0, 0) = 0.47199f;
+    mono_p.at(1, 1) = 0.8391f;
+    mono_p.at(2, 2) = -1.0001f;
+    mono_p.at(2, 3) = -0.10001f;
+    mono_p.at(3, 2) = -1.0f;
+    mono_p.at(3, 3) = 0.0f;
+    Mat4 inverse_p;
+    check(invert(mono_p, inverse_p), "projection inverts");
+    const Mat4 round = mono_p * inverse_p;
+    bool identity = true;
+    for (int i = 0; i < 16; ++i) identity = identity && near(round.m[i], (i % 5 == 0) ? 1.0f : 0.0f, 1e-3f);
+    check(identity, "inverse undoes projection");
+    check(is_perspective(mono_p) && !is_perspective(Mat4{}), "perspective detection");
+
+    const Mat4 headset = projection_from_tangents(-1.3f, 1.0f, -1.2f, 1.1f, 0.1f, 100.0f);
+    const Mat4 eye_p = eye_projection(headset, mono_p);
+    check(near(eye_p.at(2, 2), -1.0001f) && near(eye_p.at(2, 3), -0.10001f), "eye keeps Hytale's depth rows");
+    check(near(eye_p.at(0, 0), headset.at(0, 0)) && near(eye_p.at(0, 2), headset.at(0, 2)), "eye keeps headset sides");
+
+    float infos[4];
+    proj_infos(mono_p, infos);
+    check(near(infos[0], -4.23735f) && near(infos[1], -2.38351f, 1e-3f) && near(infos[2], 2.11867f) && near(infos[3], 1.19175f),
+          "ProjInfos match the renderer log");
+
+    // View-space corners from the log's SSAO pass: oversized triangle at far 1024.
+    const float d = 1024.0f;
+    Vec3 mono_corners[4] = {view_corner(mono_p, -1, 3, d), view_corner(mono_p, 3, -1, d), view_corner(mono_p, -1, -1, d),
+                            view_corner(mono_p, 1, 1, d)};
+    check(near(mono_corners[0].x, -2169.5f, 1.0f) && near(mono_corners[0].y, 3661.0f, 5.0f), "corner math matches log");
+    const Mat4 view = rotation_y(0.4f);
+    Vec3 eye_view_corners[4];
+    CornerFit fit = eye_corners(mono_corners, mono_p, view, eye_p, view, eye_view_corners);
+    check(fit.ok && !fit.world_space, "view-space corners recognized");
+    float x = 0, y = 0, dist = 0;
+    view_corner_ndc(eye_p, eye_view_corners[0], x, y, dist);
+    check(near(x, -1) && near(y, 3) && near(dist, d), "eye corner keeps its NDC and distance");
+
+    Vec3 world_corners[4];
+    const Mat4 to_world = inverse_rigid(view);
+    for (int i = 0; i < 4; ++i) world_corners[i] = transform_direction(to_world, mono_corners[i]);
+    Vec3 eye_world_corners[4];
+    fit = eye_corners(world_corners, mono_p, view, eye_p, view, eye_world_corners);
+    check(fit.ok && fit.world_space, "world-space corners recognized");
+
+    MouseFollower follow;
+    float engine_yaw = 0.0f;
+    const float true_gain = -0.004f;  // inverted and larger than the guess
+    for (int frame = 0; frame < 120; ++frame) {
+        int cx = 0, cy = 0;
+        follow.step(engine_yaw, 0, 1.0f, 0, cx, cy);
+        engine_yaw += static_cast<float>(cx) * true_gain;
+    }
+    check(std::fabs(MouseFollower::wrap(engine_yaw - 1.0f)) < 0.02f, "mouse follower converges with unknown gain and sign");
+    check(near(yaw_of({0, 0, -1}), 0) && near(yaw_of({-1, 0, 0}), 1.5708f) && near(pitch_of({0, 1, 0}), 1.5708f),
+          "yaw and pitch conventions");
+}
+
 }  // namespace
 
 int main() {
+    test_stereo_math();
     test_screen_placement_and_hits();
     test_rigid_inverse();
     test_stick();

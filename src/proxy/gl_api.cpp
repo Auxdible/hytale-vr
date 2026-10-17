@@ -23,14 +23,13 @@ bool gl_api_init() {
     }
     HVR_GL_FUNCTIONS(HVR_GL_RESOLVE)
 #undef HVR_GL_RESOLVE
+#define HVR_GL_RESOLVE_OPTIONAL(ret, name, params) \
+    glr.name = reinterpret_cast<ret(APIENTRY*) params>(real_gl_proc(#name));
+    HVR_GL_OPTIONAL(HVR_GL_RESOLVE_OPTIONAL)
+#undef HVR_GL_RESOLVE_OPTIONAL
     glr.has_dsa = glr.glGetNamedBufferSubData && glr.glGetTextureLevelParameteriv &&
                   glr.glGetNamedFramebufferAttachmentParameteriv && glr.glGetNamedRenderbufferParameteriv;
-    // Everything except the optional DSA queries is needed.
-    const int optional = (glr.glGetNamedBufferSubData ? 0 : 1) + (glr.glGetTextureLevelParameteriv ? 0 : 1) +
-                         (glr.glGetNamedFramebufferAttachmentParameteriv ? 0 : 1) +
-                         (glr.glGetNamedRenderbufferParameteriv ? 0 : 1) + (glr.glGetObjectLabel ? 0 : 1) +
-                         (glr.glGetInteger64i_v ? 0 : 1);
-    glr.ready = missing - optional == 0;
+    glr.ready = missing == 0;
     if (glr.ready) {
         logf("OpenGL %s on %s", reinterpret_cast<const char*>(glr.glGetString(gl::VERSION)),
              reinterpret_cast<const char*>(glr.glGetString(gl::RENDERER)));

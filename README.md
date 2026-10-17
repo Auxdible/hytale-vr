@@ -7,7 +7,11 @@ shader mods do, and adds an in-game VR menu.
 
 - **In-game VR menu.** Press `F6` (or `Y` on the left controller) to open it.
   Start and stop VR, place the screen, and change controls without leaving the game.
-- **Hytale on a big screen in VR**, main menu included, in a dark room with a floor.
+- **Standing in the world (experimental).** In a world, Hytale's own renderer
+  draws each frame once per eye, so you see real 3D around you. Your head aims,
+  the right stick turns you, and the HUD floats on a panel in front of you.
+- **Hytale on a big screen in VR** for everything else (main menu, loading), in
+  a dark room with a floor.
 - **Laser pointer.** Point at the screen and pull the trigger to click.
 - **Controller play.** Move, look, jump, sprint, crouch, attack, use, inventory and hotbar.
 - **Renderer log.** One button writes how Hytale draws a frame (render targets,
@@ -15,11 +19,10 @@ shader mods do, and adds an in-game VR menu.
 
 ## What's next
 
-Real 3D, rendered by Hytale's own renderer for each eye. Hytale's engine can't
-draw a frame twice, so Hytale VR will repeat each of its draw calls on the GPU
-with a second eye's camera, the way 3D Vision and VorpX's geometry 3D work.
-That needs the exact layout of Hytale's renderer, which is what the renderer log
-captures.
+- Hands: Hytale's first-person arms and held item on your controllers, and
+  swinging to hit. For now they stay in front of your face.
+- Polish from testing: performance, transparency (water, glass) in the right
+  eye, and the HUD layout.
 
 ## Install
 
@@ -43,14 +46,14 @@ puts it back.
 | Right trigger | Attack / break (left click) |
 | Left trigger | Use / place (right click) |
 | Left stick | Move, click to sprint |
-| Right stick | Look, or scroll in menus |
+| Right stick | Turn (in the world), look, or scroll in menus |
 | A | Jump |
 | B | Back (Esc) |
 | X | Inventory |
 | Y | VR menu |
 | Left grip | Crouch |
 | Right grip | Next hotbar slot |
-| Right stick click | Recenter screen |
+| Right stick click | Recenter |
 
 Bindings can be changed in SteamVR's controller settings.
 
@@ -64,6 +67,15 @@ draws the VR menu with Dear ImGui, copies the finished frame to a texture, and
 draws the VR view for SteamVR. Controller input reaches Hytale as ordinary
 keyboard and mouse input. Hooks on Hytale's SDL3 let the menu take the mouse and
 keyboard while it's open.
+
+In a world, Hytale VR also renders per eye. Every draw call into one of
+Hytale's full-screen render targets runs a second time into a twin target with
+the right eye's camera. The camera comes from Hytale's SceneData uniform block,
+copied per eye with the headset's view and projection, plus the loose camera
+uniforms some passes use. The final composite into the window also goes to the
+right eye's texture, and what Hytale draws after it (HUD and menus) is copied
+onto a transparent panel. Mouse motion sent through SDL keeps Hytale's own
+camera pointed where your head is, so aiming and culling follow you.
 
 Files at runtime, next to `HytaleClient.exe`:
 

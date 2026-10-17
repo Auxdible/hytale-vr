@@ -18,6 +18,15 @@ struct Settings {
     bool vr_enabled = false;        // start VR with the game
     bool vsync_off_in_vr = true;    // SteamVR paces frames; vsync would halve them
 
+    // World view: Hytale's own 3D, drawn once per eye
+    bool world_view = true;
+    float hud_distance = 1.6f;      // meters
+    float hud_width = 1.9f;         // meters
+    float world_scale = 1.0f;       // Hytale blocks per meter of head movement
+    int turn_mode = 0;              // 0 snap, 1 smooth
+    float snap_degrees = 30.0f;
+    float smooth_speed = 120.0f;    // degrees per second at full stick
+
     // Screen
     float screen_distance = 2.6f;   // meters
     float screen_width = 3.4f;      // meters

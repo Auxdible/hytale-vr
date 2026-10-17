@@ -22,7 +22,7 @@ void main() {
 }
 )";
 
-// Modes: 0 screen, 1 solid, 2 floor, 3 sky, 4 screen glow, 5 pointer dot.
+// Modes: 0 screen, 1 solid, 2 floor, 3 sky, 4 screen glow, 5 pointer dot, 6 HUD (premultiplied).
 const char* kFragment = R"(#version 330 core
 in vec2 vUv;
 in vec3 vWorld;
@@ -65,6 +65,8 @@ void main() {
         float d = roundedBox(p, uSize * 0.5 / 1.25, 0.05);
         float glow = exp(-max(d, 0.0) * 5.0) * 0.22;
         oColor = vec4(uColor.rgb, glow);
+    } else if (uMode == 6) {
+        oColor = texture(uTex, vUv);
     } else {
         float r = length(vUv - 0.5) * 2.0;
         float ring = smoothstep(1.0, 0.8, r);
@@ -260,6 +262,68 @@ void Scene::draw(int first, int count, const Mat4& view_projection, const Mat4& 
     glr.glDrawArrays(gl::TRIANGLES, first, count);
 }
 
+void Scene::draw_hands(const Mat4& vp, const SceneView& scene) {
+    const Screen& s = scene.screen;
+    const Mat4 screen_frame = translation(s.center) * rotation_y(s.yaw);
+    glr.glEnable(gl::DEPTH_TEST);
+    glr.glDepthMask(1);
+    glr.glEnable(gl::BLEND);
+    glr.glBlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
+    for (const HandView& hand : scene.hands) {
+        if (!hand.valid) continue;
+        const float body[4] = {0.32f, 0.34f, 0.38f, 1.0f};
+        draw(kCubeFirst, kCubeCount, vp, hand.pose * translation({0, -0.01f, 0.05f}) * hvr::scale({0.035f, 0.03f, 0.11f}), 1,
+             body);
+        if (!hand.laser) continue;
+        const Vec3 origin = position_of(hand.pose);
+        const Vec3 forward = normalize(transform_direction(hand.pose, {0, 0, -1}));
+        const float length = hand.laser_length;
+        const float beam[4] = {hand.hovering ? 1.0f : 0.75f, hand.hovering ? 0.78f : 0.82f, hand.hovering ? 0.3f : 0.95f,
+                               hand.hovering ? 0.85f : 0.45f};
+        draw(kCubeFirst, kCubeCount, vp,
+             aim(origin + forward * (length * 0.5f), forward) * hvr::scale({0.003f, 0.003f, length}), 1, beam);
+    }
+    if (scene.dot) {
+        const float dot_color[4] = {1.0f, 0.82f, 0.35f, 1.0f};
+        const Vec3 local{(scene.dot_u - 0.5f) * s.width, (0.5f - scene.dot_v) * s.height, 0.004f};
+        glr.glDisable(gl::DEPTH_TEST);
+        draw(kQuadFirst, kQuadCount, vp, screen_frame * translation(local) * hvr::scale({0.03f, 0.03f, 1}), 5, dot_color);
+    }
+}
+
+void Scene::render_overlay(GLuint fbo, int width, int height, const Mat4& projection, const Mat4& view,
+                           const SceneView& scene, GLuint hud_texture) {
+    if (!program_ || !fbo) return;
+    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, fbo);
+    glr.glViewport(0, 0, width, height);
+    glr.glDisable(gl::SCISSOR_TEST);
+    glr.glDisable(gl::STENCIL_TEST);
+    glr.glDisable(gl::CULL_FACE);
+    glr.glDisable(gl::FRAMEBUFFER_SRGB);
+    glr.glColorMask(1, 1, 1, 1);
+    glr.glDepthMask(1);
+    glr.glClear(gl::DEPTH_BUFFER_BIT);
+    glr.glUseProgram(program_);
+    glr.glBindVertexArray(vao_);
+    glr.glActiveTexture(gl::TEXTURE0);
+    glr.glBindSampler(0, 0);
+    glr.glUniform1i(u_tex_, 0);
+    glr.glUniform4f(u_color_, 1, 1, 1, 1);
+    glr.glUniform3f(u_eye_, scene.eye.x, scene.eye.y, scene.eye.z);
+    glr.glBlendEquation(gl::FUNC_ADD);
+    const Mat4 vp = projection * view;
+    if (hud_texture) {
+        glr.glBindTexture(gl::TEXTURE_2D, hud_texture);
+        glr.glDisable(gl::DEPTH_TEST);
+        glr.glDepthMask(0);
+        glr.glEnable(gl::BLEND);
+        glr.glBlendFuncSeparate(gl::ONE, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
+        draw(kQuadFirst, kQuadCount, vp, scene.screen.model(), 6, nullptr);
+    }
+    draw_hands(vp, scene);
+    glr.glBindVertexArray(0);
+}
+
 void Scene::render(const EyeTarget& target, const Mat4& projection, const Mat4& view, const SceneView& scene) {
     if (!program_) return;
     glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, target.fbo());
@@ -311,27 +375,7 @@ void Scene::render(const EyeTarget& target, const Mat4& projection, const Mat4& 
     glr.glUniform2f(u_size_, s.width, s.height);
     draw(kQuadFirst, kQuadCount, vp, s.model(), 0, nullptr);
 
-    // Controllers and lasers
-    for (const HandView& hand : scene.hands) {
-        if (!hand.valid) continue;
-        const float body[4] = {0.32f, 0.34f, 0.38f, 1.0f};
-        draw(kCubeFirst, kCubeCount, vp, hand.pose * translation({0, -0.01f, 0.05f}) * hvr::scale({0.035f, 0.03f, 0.11f}), 1,
-             body);
-        if (!hand.laser) continue;
-        const Vec3 origin = position_of(hand.pose);
-        const Vec3 forward = normalize(transform_direction(hand.pose, {0, 0, -1}));
-        const float length = hand.laser_length;
-        const float beam[4] = {hand.hovering ? 1.0f : 0.75f, hand.hovering ? 0.78f : 0.82f, hand.hovering ? 0.3f : 0.95f,
-                               hand.hovering ? 0.85f : 0.45f};
-        draw(kCubeFirst, kCubeCount, vp,
-             aim(origin + forward * (length * 0.5f), forward) * hvr::scale({0.003f, 0.003f, length}), 1, beam);
-    }
-    if (scene.dot) {
-        const float dot_color[4] = {1.0f, 0.82f, 0.35f, 1.0f};
-        const Vec3 local{(scene.dot_u - 0.5f) * s.width, (0.5f - scene.dot_v) * s.height, 0.004f};
-        glr.glDisable(gl::DEPTH_TEST);
-        draw(kQuadFirst, kQuadCount, vp, screen_frame * translation(local) * hvr::scale({0.03f, 0.03f, 1}), 5, dot_color);
-    }
+    draw_hands(vp, scene);
     glr.glBindVertexArray(0);
 }
 

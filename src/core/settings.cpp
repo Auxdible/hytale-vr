@@ -12,6 +12,13 @@ template <typename Visit>
 void visit_fields(Settings& s, Visit&& visit) {
     visit("vr_enabled", s.vr_enabled);
     visit("vsync_off_in_vr", s.vsync_off_in_vr);
+    visit("world_view", s.world_view);
+    visit("hud_distance", s.hud_distance);
+    visit("hud_width", s.hud_width);
+    visit("world_scale", s.world_scale);
+    visit("turn_mode", s.turn_mode);
+    visit("snap_degrees", s.snap_degrees);
+    visit("smooth_speed", s.smooth_speed);
     visit("screen_distance", s.screen_distance);
     visit("screen_width", s.screen_width);
     visit("screen_height", s.screen_height);
@@ -67,6 +74,12 @@ int clamp_key(int key, int fallback) { return key > 0 && key < 512 ? key : fallb
 
 void clamp(Settings& s) {
     const Settings defaults;
+    s.hud_distance = std::clamp(s.hud_distance, 0.6f, 5.0f);
+    s.hud_width = std::clamp(s.hud_width, 0.6f, 6.0f);
+    s.world_scale = std::clamp(s.world_scale, 0.25f, 4.0f);
+    s.turn_mode = std::clamp(s.turn_mode, 0, 1);
+    s.snap_degrees = std::clamp(s.snap_degrees, 10.0f, 90.0f);
+    s.smooth_speed = std::clamp(s.smooth_speed, 30.0f, 360.0f);
     s.screen_distance = std::clamp(s.screen_distance, 0.8f, 8.0f);
     s.screen_width = std::clamp(s.screen_width, 0.8f, 12.0f);
     s.screen_height = std::clamp(s.screen_height, -1.5f, 2.0f);
