@@ -9266,6 +9266,69 @@ bool install_engine_render_hook() {
     return true;
 }
 
+// Decodes "movaps [rbp+disp32], xmmN" (any N) at code; returns its length or 0.
+size_t decode_rbp_movaps_store(const unsigned char* code, int32_t& displacement) {
+    size_t prefix = 0;
+    if (code[0] == 0x44) prefix = 1;
+    if (code[prefix] != 0x0F || code[prefix + 1] != 0x29) return 0;
+    const unsigned char modrm = code[prefix + 2];
+    if ((modrm & 0xC7) != 0x85) return 0;  // mod=10, rm=101: [rbp+disp32]
+    std::memcpy(&displacement, code + prefix + 3, sizeof(displacement));
+    return prefix + 7;
+}
+
+// When no interaction-ray pattern matches, list every pair of adjacent
+// [rbp]-relative vector stores shaped like the ray origin/direction pair, so a
+// new pattern can be written from the player's log without a debugger.
+void write_interaction_probe_log() {
+    char temp_path[MAX_PATH]{};
+    const DWORD length = GetTempPathA(static_cast<DWORD>(sizeof(temp_path)), temp_path);
+    if (length == 0 || length >= sizeof(temp_path)) return;
+    const std::string directory = std::string(temp_path) + "HytaleVR";
+    CreateDirectoryA(directory.c_str(), nullptr);
+    std::ofstream log(directory + "\\hook_probe.log", std::ios_base::trunc);
+    if (!log.is_open()) return;
+
+    const ModuleRange range = current_executable_range();
+    log << "interaction-ray probe: module base=0x" << std::hex
+        << reinterpret_cast<uintptr_t>(range.base) << " size=0x" << range.size << "\n";
+    if (!range.base || !range.size) return;
+    size_t written = 0;
+    unsigned char* cursor = range.base;
+    const unsigned char* end = range.base + range.size;
+    while (cursor < end && written < 60) {
+        MEMORY_BASIC_INFORMATION memory{};
+        if (VirtualQuery(cursor, &memory, sizeof(memory)) != sizeof(memory)) break;
+        auto* region = static_cast<unsigned char*>(memory.BaseAddress);
+        unsigned char* region_end = region + memory.RegionSize;
+        if (memory.State == MEM_COMMIT && is_executable_page(memory.Protect)) {
+            unsigned char* scan_begin = std::max(region, range.base);
+            unsigned char* scan_end = std::min(region_end, const_cast<unsigned char*>(end));
+            for (unsigned char* at = scan_begin; at + 64 <= scan_end && written < 60; ++at) {
+                int32_t first_offset = 0;
+                int32_t second_offset = 0;
+                const size_t first_length = decode_rbp_movaps_store(at, first_offset);
+                if (!first_length) continue;
+                const size_t second_length =
+                    decode_rbp_movaps_store(at + first_length, second_offset);
+                if (!second_length || first_offset > -0x20 || first_offset < -0x4000 ||
+                    (first_offset & 0x0F) != 0 || second_offset != first_offset - 0x10) {
+                    continue;
+                }
+                log << "rva=0x" << std::hex << static_cast<uintptr_t>(at - range.base) << " bytes";
+                for (size_t i = 0; i < 48; ++i) {
+                    log << ' ' << std::setw(2) << std::setfill('0')
+                        << static_cast<unsigned int>(at[i]);
+                }
+                log << std::setfill(' ') << "\n";
+                ++written;
+            }
+        }
+        cursor = region_end > cursor ? region_end : cursor + 0x1000;
+    }
+    log << "candidates=" << std::dec << written << "\n";
+}
+
 bool install_interaction_hook() {
     constexpr const char* patterns[] = {
         // Match the ray origin/direction stores and their first two consumers.
@@ -9851,11 +9914,12 @@ DWORD WINAPI worker(void*) {
             return false;
         }
         if (!install_interaction_hook()) {
-            const bool camera_restored = restore_camera_hook();
-            g_shared->hook_active = camera_restored ? 0u : 1u;
-            g_shared->hook_error = camera_restored ? 4 : 3;
-            render_log("install_all_hooks failed: interaction hook");
-            return false;
+            // Hand aiming is optional: VR still runs with head aiming. Leave a
+            // probe log so a pattern for this Hytale build can be written.
+            g_interaction_hook_target = nullptr;
+            g_shared->interaction_hook_active = 0;
+            write_interaction_probe_log();
+            render_log("interaction hook unavailable; continuing with head aiming");
         }
         // The renderer export hook only forwarded the call and depended on an
         // unvalidated Noesis prologue. UI handling is owned by HytaleUIScaleHook.

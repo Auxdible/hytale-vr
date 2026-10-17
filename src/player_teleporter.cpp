@@ -2931,7 +2931,12 @@ void start_vr_tracking() {
     ++g_vr_recenter_sequence;
     SetTimer(g_window, kVrTimer, 8, nullptr);
     publish_vr_controls(true, false);
-    set_status(L"VR active. Standing height calibrated; physical jump and crouch are enabled.");
+    if (g_vr_camera_shared->interaction_hook_active == 0) {
+        set_status(L"VR active with head aiming: hand aiming does not support this Hytale version yet. "
+                   L"Please send %TEMP%\\HytaleVR\\hook_probe.log.");
+    } else {
+        set_status(L"VR active. Standing height calibrated; physical jump and crouch are enabled.");
+    }
 }
 
 void update_vr_tracking() {
