@@ -112,6 +112,7 @@ add_executable(hytale_noesis_probe_tool
 add_executable(hytale_player_teleporter WIN32
     src/player_teleporter.cpp
     src/dashboard_updater.cpp
+    src/plugin_bridge.cpp
 )
 
 target_compile_definitions(hytale_camera_dashboard PRIVATE
@@ -177,6 +178,7 @@ target_include_directories(hytale_camera_dashboard PRIVATE
 )
 
 target_link_libraries(hytale_player_teleporter PRIVATE
+    ws2_32
     bcrypt
     comctl32
     shell32
