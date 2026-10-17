@@ -32,6 +32,7 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("hotbar_bottom", s.hotbar_bottom);
     visit("swing_to_hit", s.swing_to_hit);
     visit("swing_speed", s.swing_speed);
+    visit("vignette", s.vignette);
     visit("turn_mode", s.turn_mode);
     visit("snap_degrees", s.snap_degrees);
     visit("smooth_speed", s.smooth_speed);
@@ -104,6 +105,7 @@ void clamp(Settings& s) {
     s.hotbar_top = std::clamp(s.hotbar_top, 0.0f, 0.95f);
     s.hotbar_bottom = std::clamp(s.hotbar_bottom, s.hotbar_top + 0.02f, 1.0f);
     s.swing_speed = std::clamp(s.swing_speed, 0.8f, 6.0f);
+    s.vignette = std::clamp(s.vignette, 0.0f, 1.0f);
     s.turn_mode = std::clamp(s.turn_mode, 0, 1);
     s.snap_degrees = std::clamp(s.snap_degrees, 10.0f, 90.0f);
     s.smooth_speed = std::clamp(s.smooth_speed, 30.0f, 360.0f);

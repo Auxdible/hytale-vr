@@ -14,7 +14,7 @@ EXPORTS
     glBegin = hvr_x_glBegin
     glBindTexture = hvr_glBindTexture
     glBitmap = hvr_x_glBitmap
-    glBlendFunc = hvr_x_glBlendFunc
+    glBlendFunc = hvr_glBlendFunc
     glCallList = hvr_x_glCallList
     glCallLists = hvr_x_glCallLists
     glClear = hvr_glClear
@@ -71,7 +71,7 @@ EXPORTS
     glDepthFunc = hvr_x_glDepthFunc
     glDepthMask = hvr_x_glDepthMask
     glDepthRange = hvr_x_glDepthRange
-    glDisable = hvr_x_glDisable
+    glDisable = hvr_glDisable
     glDisableClientState = hvr_x_glDisableClientState
     glDrawArrays = hvr_glDrawArrays
     glDrawBuffer = hvr_glDrawBuffer
@@ -80,7 +80,7 @@ EXPORTS
     glEdgeFlag = hvr_x_glEdgeFlag
     glEdgeFlagPointer = hvr_x_glEdgeFlagPointer
     glEdgeFlagv = hvr_x_glEdgeFlagv
-    glEnable = hvr_x_glEnable
+    glEnable = hvr_glEnable
     glEnableClientState = hvr_x_glEnableClientState
     glEnd = hvr_x_glEnd
     glEndList = hvr_x_glEndList

@@ -87,6 +87,9 @@ void on_draw_buffers(GLsizei count, const GLenum* buffers);
 void on_delete_framebuffers(GLsizei count, const GLuint* framebuffers);
 // Hytale attached, resized or deleted a texture or framebuffer.
 void on_layout_change();
+// Blend, scissor and rasterizer-discard changes, tracked to avoid asking the driver.
+void on_enable(GLenum cap, bool on);
+void on_blend_func(GLenum src_rgb, GLenum dst_rgb, GLenum src_alpha, GLenum dst_alpha);
 
 // Draw doubling. Returns true when the draw must run a second time: call
 // draw, second(), draw again, then finish(). When it returns false nothing

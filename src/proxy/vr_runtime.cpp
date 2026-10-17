@@ -219,6 +219,8 @@ void stick(::vr::VRActionHandle_t action, float& x, float& y) {
 }
 
 float g_hand_speed[2] = {};  // meters per second, this frame
+float g_motion = 0;          // 0..1: how hard the stick is moving or smoothly turning you
+float g_vignette = 0;        // eased toward g_motion
 
 bool hand_pose(int hand, Mat4& pose) {
     g_hand_speed[hand] = 0;
@@ -268,6 +270,7 @@ void controls(const FrameContext& context, float dt) {
     const Settings& s = *context.settings;
     for (HandView& hand : g_view.hands) hand.laser = hand.hovering = false;
     g_view.dot = false;
+    g_motion = 0;
     if (!g_actions.ready) return;
 
     ::vr::VRActiveActionSet_t active{};
@@ -344,6 +347,7 @@ void controls(const FrameContext& context, float dt) {
     stick(g_actions.move, mx, my);
     MoveKeys move = play ? stick_to_keys(mx, my, s.deadzone) : MoveKeys{};
     g_stick_moving = move.forward || move.back || move.left || move.right;
+    g_motion = g_stick_moving ? std::fmin(1.0f, std::sqrt(mx * mx + my * my)) : 0.0f;
     if (play && !g_stick_moving) move = g_room_keys;
     input::key(s.key_forward, move.forward);
     input::key(s.key_back, move.back);
@@ -362,6 +366,7 @@ void controls(const FrameContext& context, float dt) {
         // In the world your head aims; the stick turns your body.
         const float x = stick_curve(lx, s.deadzone);
         const float pi = 3.14159265f;
+        if (s.turn_mode == 1) g_motion = std::fmax(g_motion, std::fabs(x));
         if (s.turn_mode == 1) {
             g_yaw_offset -= x * s.smooth_speed * pi / 180.0f * dt;
         } else if (std::fabs(lx) > 0.7f && g_snap_armed) {
@@ -708,6 +713,10 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
         g_view.floor = false;
         g_view.eye = position_of(g_hmd);
         place_hotbar(settings);
+        // Comfort: the edges darken while the stick moves or turns you.
+        const float target = settings.vignette * g_motion;
+        g_vignette += (target - g_vignette) * std::fmin(1.0f, (target > g_vignette ? 6.0f : 3.0f) * g_frame_dt);
+        g_view.vignette = g_vignette * 0.85f;
         for (int eye = 0; eye < 2; ++eye) {
             g_scene.render_overlay(world.eye_fbo[eye], world.width, world.height, eye_projection_near(eye), eye_view(eye),
                                    g_view, world.hud_texture);

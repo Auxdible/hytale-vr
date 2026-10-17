@@ -912,9 +912,66 @@ bool samples_stereo_texture() {
     return false;
 }
 
+// Blend, scissor and rasterizer-discard state as Hytale sets it, so draws
+// don't have to ask the driver (each question makes it wait for the GPU).
+// The first answers are checked against the driver; any mismatch goes back
+// to asking.
+struct Caps {
+    bool blend = false, scissor = false, discard = false;
+    GLenum blend_func[4] = {gl::ONE, 0 /* ZERO */, gl::ONE, 0};
+} g_caps;
+int g_cap_checks = 400;
+bool g_caps_trusted = true;
+
+bool* tracked_cap(GLenum cap) {
+    switch (cap) {
+        case gl::BLEND: return &g_caps.blend;
+        case gl::SCISSOR_TEST: return &g_caps.scissor;
+        case 0x8C89 /* RASTERIZER_DISCARD */: return &g_caps.discard;
+        default: return nullptr;
+    }
+}
+
+bool cap_enabled(GLenum cap) {
+    bool* tracked = tracked_cap(cap);
+    if (!tracked || !g_caps_trusted) return glr.glIsEnabled(cap) != 0;
+    if (g_cap_checks > 0) {
+        --g_cap_checks;
+        const bool real = glr.glIsEnabled(cap) != 0;
+        if (real != *tracked) {
+            logf("Stereo: GL state 0x%X wasn't where we tracked it; asking the driver from now on", cap);
+            g_caps_trusted = false;
+            return real;
+        }
+    }
+    return *tracked;
+}
+
+void blend_funcs(GLint out[4]) {
+    if (!g_caps_trusted || g_cap_checks > 0) {
+        GLint real[4];
+        glr.glGetIntegerv(gl::BLEND_SRC_RGB, &real[0]);
+        glr.glGetIntegerv(gl::BLEND_DST_RGB, &real[1]);
+        glr.glGetIntegerv(gl::BLEND_SRC_ALPHA, &real[2]);
+        glr.glGetIntegerv(gl::BLEND_DST_ALPHA, &real[3]);
+        if (g_caps_trusted) {
+            --g_cap_checks;
+            for (int i = 0; i < 4; ++i)
+                if (static_cast<GLenum>(real[i]) != g_caps.blend_func[i]) {
+                    logf("Stereo: blend state wasn't where we tracked it; asking the driver from now on");
+                    g_caps_trusted = false;
+                    break;
+                }
+        }
+        for (int i = 0; i < 4; ++i) out[i] = real[i];
+        return;
+    }
+    for (int i = 0; i < 4; ++i) out[i] = static_cast<GLint>(g_caps.blend_func[i]);
+}
+
 // Clears one of our own targets, whatever masks and scissor Hytale left on.
 void clear_ours(GLuint fbo, bool color, bool depth_stencil) {
-    GLboolean scissor = glr.glIsEnabled(gl::SCISSOR_TEST);
+    const bool scissor = cap_enabled(gl::SCISSOR_TEST);
     GLboolean color_mask[4];
     GLboolean depth_mask = 1;
     GLint stencil_mask = -1;
@@ -953,7 +1010,7 @@ void begin_composite() {
 
 // Copies the window's back buffer (the left eye, as Hytale just drew it).
 void copy_left_eye() {
-    const GLboolean scissor = glr.glIsEnabled(gl::SCISSOR_TEST);
+    const bool scissor = cap_enabled(gl::SCISSOR_TEST);
     glr.glDisable(gl::SCISSOR_TEST);
     glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, real_fb(0));
     glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, g_eye_targets[0].fbo());
@@ -1136,7 +1193,7 @@ GLuint virtual_backbuffer() { return g_vfb_on ? g_vfb.fbo() : 0; }
 
 void present_virtual_backbuffer(int window_w, int window_h) {
     if (!g_vfb_on || window_w <= 0 || window_h <= 0) return;
-    const GLboolean scissor = glr.glIsEnabled(gl::SCISSOR_TEST);
+    const bool scissor = cap_enabled(gl::SCISSOR_TEST);
     glr.glDisable(gl::SCISSOR_TEST);
     glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, g_vfb.fbo());
     glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
@@ -1153,6 +1210,17 @@ int g_window_viewport_w = 0;
 }
 
 void on_layout_change() { ++g_layout_epoch; }
+
+void on_enable(GLenum cap, bool on) {
+    if (bool* tracked = tracked_cap(cap)) *tracked = on;
+}
+
+void on_blend_func(GLenum src_rgb, GLenum dst_rgb, GLenum src_alpha, GLenum dst_alpha) {
+    g_caps.blend_func[0] = src_rgb;
+    g_caps.blend_func[1] = dst_rgb;
+    g_caps.blend_func[2] = src_alpha;
+    g_caps.blend_func[3] = dst_alpha;
+}
 
 void on_viewport(GLsizei width) {
     if (on_render_thread() && t.draw_fb == 0) g_window_viewport_w = width;
@@ -1316,7 +1384,7 @@ bool skip_draw(GLenum mode) {
         // Last frame's depth, reprojected into the occlusion map one point per
         // texel. That depth came from the eyes, not Hytale's camera, so it hides
         // chunks that are really in view.
-        if (glr.glIsEnabled(0x8C89 /* RASTERIZER_DISCARD */)) return false;
+        if (cap_enabled(0x8C89 /* RASTERIZER_DISCARD */)) return false;
         if (!logged[1]) {
             logged[1] = true;
             logf("Stereo: skipping Hytale's reprojected occlusion depth");
@@ -1337,7 +1405,7 @@ bool draw_begin(GLenum mode, GLsizei count) {
     g_pending = Pending{};
     if (!active()) return false;
     // Simulation passes (transform feedback with rasterizing off) must run once.
-    if (mode == gl::POINTS && glr.glIsEnabled(0x8C89 /* RASTERIZER_DISCARD */)) return false;
+    if (mode == gl::POINTS && cap_enabled(0x8C89 /* RASTERIZER_DISCARD */)) return false;
     Pending& p = g_pending;
     if (t.draw_fb != 0) {
         if (!classify(gl::DRAW_FRAMEBUFFER, t.draw_fb)) return false;
@@ -1396,11 +1464,8 @@ void draw_second() {
             break;
         case Kind::Hud:
             glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, g_hud.fbo());
-            if (glr.glIsEnabled(gl::BLEND)) {
-                glr.glGetIntegerv(gl::BLEND_SRC_RGB, &p.blend[0]);
-                glr.glGetIntegerv(gl::BLEND_DST_RGB, &p.blend[1]);
-                glr.glGetIntegerv(gl::BLEND_SRC_ALPHA, &p.blend[2]);
-                glr.glGetIntegerv(gl::BLEND_DST_ALPHA, &p.blend[3]);
+            if (cap_enabled(gl::BLEND)) {
+                blend_funcs(p.blend);
                 // Keep the panel's alpha meaningful: coverage accumulates.
                 glr.glBlendFuncSeparate(p.blend[0], p.blend[1], gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
                 p.blend_changed = true;

@@ -82,6 +82,11 @@ HVR_REAL(glDeleteFramebuffers, void, (GLsizei, const GLuint*))
 HVR_REAL(glGenerateMipmap, void, (GLenum))
 HVR_REAL(glClearBufferiv, void, (GLenum, GLint, const GLint*))
 HVR_REAL(glClearBufferuiv, void, (GLenum, GLint, const GLuint*))
+HVR_REAL(glBlendFuncSeparate, void, (GLenum, GLenum, GLenum, GLenum))
+HVR_REAL(glBlendFuncSeparatei, void, (GLuint, GLenum, GLenum, GLenum, GLenum))
+HVR_REAL(glBlendFunci, void, (GLuint, GLenum, GLenum))
+HVR_REAL(glEnablei, void, (GLenum, GLuint))
+HVR_REAL(glDisablei, void, (GLenum, GLuint))
 // Framebuffer and texture layout changes, so stereo knows to look again.
 HVR_REAL(glFramebufferTexture, void, (GLenum, GLenum, GLuint, GLint))
 HVR_REAL(glFramebufferTexture2D, void, (GLenum, GLenum, GLenum, GLuint, GLint))
@@ -417,6 +422,27 @@ void APIENTRY hook_glNamedRenderbufferStorage(GLuint a, GLenum b, GLsizei c, GLs
     real_glNamedRenderbufferStorage(a, b, c, d);
     if (WATCHING) stereo::on_layout_change();
 }
+// Blend state for stereo's tracking (draw buffer 0 is the one it cares about).
+void APIENTRY hook_glBlendFuncSeparate(GLenum a, GLenum b, GLenum c, GLenum d) {
+    real_glBlendFuncSeparate(a, b, c, d);
+    if (WATCHING) stereo::on_blend_func(a, b, c, d);
+}
+void APIENTRY hook_glBlendFuncSeparatei(GLuint buf, GLenum a, GLenum b, GLenum c, GLenum d) {
+    real_glBlendFuncSeparatei(buf, a, b, c, d);
+    if (WATCHING && buf == 0) stereo::on_blend_func(a, b, c, d);
+}
+void APIENTRY hook_glBlendFunci(GLuint buf, GLenum a, GLenum b) {
+    real_glBlendFunci(buf, a, b);
+    if (WATCHING && buf == 0) stereo::on_blend_func(a, b, a, b);
+}
+void APIENTRY hook_glEnablei(GLenum cap, GLuint index) {
+    real_glEnablei(cap, index);
+    if (WATCHING && index == 0) stereo::on_enable(cap, true);
+}
+void APIENTRY hook_glDisablei(GLenum cap, GLuint index) {
+    real_glDisablei(cap, index);
+    if (WATCHING && index == 0) stereo::on_enable(cap, false);
+}
 void APIENTRY hook_glGenerateMipmap(GLenum target) {
     real_glGenerateMipmap(target);
     if (WATCHING) stereo::after_generate_mipmap(target);
@@ -500,6 +526,11 @@ const Hook kHooks[] = {
     HVR_HOOK(glDrawBuffers),
     HVR_HOOK(glDeleteFramebuffers),
     HVR_HOOK(glGenerateMipmap),
+    HVR_HOOK(glBlendFuncSeparate),
+    HVR_HOOK(glBlendFuncSeparatei),
+    HVR_HOOK(glBlendFunci),
+    HVR_HOOK(glEnablei),
+    HVR_HOOK(glDisablei),
     HVR_HOOK(glFramebufferTexture),
     HVR_HOOK(glFramebufferTexture2D),
     HVR_HOOK(glFramebufferTextureLayer),
@@ -523,7 +554,7 @@ const Hook kHooks[] = {
 // them through wglGetProcAddress.
 const char* const kExportWrapped[] = {"glClear", "glViewport", "glDrawArrays", "glDrawElements", "glBindTexture",
                                      "glDrawBuffer", "glReadBuffer", "glTexImage2D",
-                                     "glDeleteTextures"};
+                                     "glDeleteTextures", "glEnable", "glDisable", "glBlendFunc"};
 
 }  // namespace
 

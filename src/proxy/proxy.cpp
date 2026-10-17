@@ -35,6 +35,8 @@ using PFN_glBindTexture = void(APIENTRY*)(GLenum, GLuint);
 using PFN_glColorBuffer = void(APIENTRY*)(GLenum);
 using PFN_glTexImage2D = void(APIENTRY*)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*);
 using PFN_glDeleteTextures = void(APIENTRY*)(GLsizei, const GLuint*);
+using PFN_glCap = void(APIENTRY*)(GLenum);
+using PFN_glBlendFunc = void(APIENTRY*)(GLenum, GLenum);
 
 PFN_wglGetProcAddress real_wglGetProcAddress = nullptr;
 PFN_wglSwapBuffers real_wglSwapBuffers = nullptr;
@@ -47,6 +49,9 @@ PFN_glColorBuffer real_glDrawBuffer = nullptr;
 PFN_glColorBuffer real_glReadBuffer = nullptr;
 PFN_glTexImage2D real_glTexImage2D = nullptr;
 PFN_glDeleteTextures real_glDeleteTextures = nullptr;
+PFN_glCap real_glEnable = nullptr;
+PFN_glCap real_glDisable = nullptr;
+PFN_glBlendFunc real_glBlendFunc = nullptr;
 
 // Stands in for an export the real library lacks, so a call returns 0
 // instead of jumping to nowhere.
@@ -79,9 +84,13 @@ bool load_real_library() {
     real_glReadBuffer = reinterpret_cast<PFN_glColorBuffer>(GetProcAddress(g_real, "glReadBuffer"));
     real_glTexImage2D = reinterpret_cast<PFN_glTexImage2D>(GetProcAddress(g_real, "glTexImage2D"));
     real_glDeleteTextures = reinterpret_cast<PFN_glDeleteTextures>(GetProcAddress(g_real, "glDeleteTextures"));
+    real_glEnable = reinterpret_cast<PFN_glCap>(GetProcAddress(g_real, "glEnable"));
+    real_glDisable = reinterpret_cast<PFN_glCap>(GetProcAddress(g_real, "glDisable"));
+    real_glBlendFunc = reinterpret_cast<PFN_glBlendFunc>(GetProcAddress(g_real, "glBlendFunc"));
     hvr::logf("Loaded %ls (%d of %d forwarded exports missing)", path, missing, kForwardedExportCount);
     return real_wglGetProcAddress && real_wglSwapBuffers && real_glClear && real_glViewport && real_glDrawArrays &&
-           real_glDrawElements && real_glBindTexture && real_glDrawBuffer && real_glReadBuffer && real_glTexImage2D && real_glDeleteTextures;
+           real_glDrawElements && real_glBindTexture && real_glDrawBuffer && real_glReadBuffer && real_glTexImage2D && real_glDeleteTextures &&
+           real_glEnable && real_glDisable && real_glBlendFunc;
 }
 
 }  // namespace
@@ -169,6 +178,22 @@ void APIENTRY hvr_glTexImage2D(GLenum target, GLint level, GLint internal_format
 void APIENTRY hvr_glDeleteTextures(GLsizei count, const GLuint* textures) {
     real_glDeleteTextures(count, textures);
     if (!hvr::internal_call()) hvr::stereo::on_layout_change();
+}
+
+// Tracked so stereo never has to ask the driver what's on.
+void APIENTRY hvr_glEnable(GLenum cap) {
+    real_glEnable(cap);
+    if (!hvr::internal_call()) hvr::stereo::on_enable(cap, true);
+}
+
+void APIENTRY hvr_glDisable(GLenum cap) {
+    real_glDisable(cap);
+    if (!hvr::internal_call()) hvr::stereo::on_enable(cap, false);
+}
+
+void APIENTRY hvr_glBlendFunc(GLenum src, GLenum dst) {
+    real_glBlendFunc(src, dst);
+    if (!hvr::internal_call()) hvr::stereo::on_blend_func(src, dst, src, dst);
 }
 
 }  // extern "C"

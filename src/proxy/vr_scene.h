@@ -26,6 +26,7 @@ struct SceneView {
     bool hotbar = false;
     Mat4 hotbar_model;
     float hotbar_uv[4] = {0, 0, 1, 1};  // u, v of the bottom-left corner, then width, height
+    float vignette = 0;  // 0..1: how dark the edges of the view are (comfort while moving)
 };
 
 class EyeTarget {

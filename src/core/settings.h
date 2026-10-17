@@ -29,6 +29,7 @@ struct Settings {
     int turn_mode = 0;              // 0 snap, 1 smooth
     float snap_degrees = 30.0f;
     float smooth_speed = 120.0f;    // degrees per second at full stick
+    float vignette = 0.5f;          // comfort: how much the edges darken while the stick moves or turns you (0 = off)
 
     // Hands
     bool item_in_hand = true;       // Hytale's held item and arm follow the right controller

@@ -23,7 +23,8 @@ void main() {
 }
 )";
 
-// Modes: 0 screen, 1 solid, 2 floor, 3 sky, 4 screen glow, 5 pointer dot, 6 HUD (premultiplied).
+// Modes: 0 screen, 1 solid, 2 floor, 3 sky, 4 screen glow, 5 pointer dot, 6 HUD (premultiplied),
+// 7 vignette (vWorld.xy is the offset from the view's center in clip units).
 const char* kFragment = R"(#version 330 core
 in vec2 vUv;
 in vec3 vWorld;
@@ -68,6 +69,9 @@ void main() {
         oColor = vec4(uColor.rgb, glow);
     } else if (uMode == 6) {
         oColor = texture(uTex, vUv);
+    } else if (uMode == 7) {
+        float r = length(vWorld.xy);
+        oColor = vec4(0.0, 0.0, 0.0, uColor.a * smoothstep(0.45, 1.05, r));
     } else {
         float r = length(vUv - 0.5) * 2.0;
         float ring = smoothstep(1.0, 0.8, r);
@@ -335,6 +339,21 @@ void Scene::render_overlay(GLuint fbo, int width, int height, const Mat4& projec
         }
     }
     draw_hands(vp, scene);
+    if (scene.vignette > 0.01f) {
+        // Centered on straight ahead, which isn't the middle of an off-center eye image.
+        const float cx = -projection.at(0, 2), cy = -projection.at(1, 2);
+        glr.glDisable(gl::DEPTH_TEST);
+        glr.glEnable(gl::BLEND);
+        glr.glBlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
+        const float color[4] = {0, 0, 0, scene.vignette};
+        const Mat4 clip = hvr::scale({4, 4, 1});
+        glr.glUniformMatrix4fv(u_mvp_, 1, gl::FALSE_, clip.m);
+        const Mat4 offset = translation({-cx, -cy, 0}) * clip;
+        glr.glUniformMatrix4fv(u_model_, 1, gl::FALSE_, offset.m);
+        glr.glUniform1i(u_mode_, 7);
+        glr.glUniform4f(u_color_, color[0], color[1], color[2], color[3]);
+        glr.glDrawArrays(gl::TRIANGLES, kQuadFirst, kQuadCount);
+    }
     glr.glBindVertexArray(0);
 }
 

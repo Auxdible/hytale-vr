@@ -233,6 +233,8 @@ void tab_world(Settings& s) {
         changed |= slider("Snap angle", &s.snap_degrees, 10.0f, 90.0f, "%.0f deg");
     else
         changed |= slider("Turn speed", &s.smooth_speed, 30.0f, 360.0f, "%.0f deg/s");
+    changed |= slider("Comfort vignette", &s.vignette, 0.0f, 1.0f, "%.2f");
+    hint("Darkens the edges while the stick moves or turns you. 0 turns it off.");
     changed |= slider("HUD distance", &s.hud_distance, 0.6f, 5.0f, "%.1f m");
     changed |= slider("HUD width", &s.hud_width, 0.6f, 6.0f, "%.1f m");
     changed |= slider("World scale", &s.world_scale, 0.25f, 4.0f, "%.2fx");
