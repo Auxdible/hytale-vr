@@ -1,126 +1,149 @@
-===== DISASM com.hypixel.hytale.server.core.modules.interaction.interaction.config.client.BreakBlockInteraction
-       385: checkcast     #177                // class com/hypixel/hytale/server/core/entity/entities/Player
-       388: astore        25
-       390: aload         25
-       392: ifnull        410
-       395: aload         25
-       397: invokevirtual #182                // Method com/hypixel/hytale/server/core/entity/entities/Player.getGameMode:()Lcom/hypixel/hytale/protocol/GameMode;
-       400: getstatic     #186                // Field com/hypixel/hytale/protocol/GameMode.Creative:Lcom/hypixel/hytale/protocol/GameMode;
-       403: if_acmpne     410
-       406: iconst_1
-       407: goto          411
-       410: iconst_0
-       411: istore        26
-       413: aload         24
-       415: ifnonnull     473
-       418: iload         26
-       420: ifeq          443
-       423: aload         21
-       425: aload         5
-       427: aload         6
-       429: sipush        4096
-       432: aload         12
-       434: aload_2
-       435: aload         11
-       437: invokestatic  #194                // Method com/hypixel/hytale/server/core/modules/interaction/BlockHarvestUtils.performBlockBreak:(Lcom/hypixel/hytale/component/Ref;Lcom/hypixel/hytale/server/core/inventory/ItemStack;Lorg/joml/Vector3i;ILcom/hypixel/hytale/component/Ref;Lcom/hypixel/hytale/component/ComponentAccessor;Lcom/hypixel/hytale/component/ComponentAccessor;)V
-       440: goto          472
-       443: aload         21
-       445: aload         8
-       447: aload         6
-       449: aload         5
-       451: aconst_null
-       452: aload_0
-       453: getfield      #198                // Field toolId:Ljava/lang/String;
-       456: aload_0
-       457: getfield      #202                // Field matchTool:Z
-       460: fconst_1
-       461: iconst_0
-       462: iconst_0
-       463: aload         12
-       465: aload_2
-       466: aload         11
-       468: invokestatic  #205                // Method com/hypixel/hytale/server/core/modules/interaction/BlockHarvestUtils.performBlockDamage:(Lcom/hypixel/hytale/component/Ref;Lcom/hypixel/hytale/component/Ref;Lorg/joml/Vector3i;Lcom/hypixel/hytale/server/core/inventory/ItemStack;Lcom/hypixel/hytale/server/core/asset/type/item/config/ItemTool;Ljava/lang/String;ZFIZLcom/hypixel/hytale/component/Ref;Lcom/hypixel/hytale/component/ComponentAccessor;Lcom/hypixel/hytale/component/ComponentAccessor;)Z
---
-       567: new           #272                // class java/util/ArrayList
-       570: dup
-       571: aload         27
-       573: invokespecial #274                // Method java/util/ArrayList."<init>":(Ljava/util/Collection;)V
-       576: astore        28
-       578: iload         26
-       580: ifeq          602
-       583: aload         21
-       585: aload         5
-       587: aload         28
-       589: sipush        4096
-       592: aload_2
-       593: aload         11
-       595: invokestatic  #277                // Method com/hypixel/hytale/server/core/modules/interaction/BlockHarvestUtils.performBlockBreak:(Lcom/hypixel/hytale/component/Ref;Lcom/hypixel/hytale/server/core/inventory/ItemStack;Ljava/util/List;ILcom/hypixel/hytale/component/ComponentAccessor;Lcom/hypixel/hytale/component/ComponentAccessor;)I
-       598: pop
-       599: goto          651
-       602: aload         23
-       604: invokevirtual #280                // Method com/hypixel/hytale/server/core/asset/type/item/config/ItemTool.getBreakShapeDurabilityMode:()Lcom/hypixel/hytale/server/core/asset/type/item/config/BreakShapeDurabilityMode;
-       607: getstatic     #284                // Field com/hypixel/hytale/server/core/asset/type/item/config/BreakShapeDurabilityMode.PerBlock:Lcom/hypixel/hytale/server/core/asset/type/item/config/BreakShapeDurabilityMode;
-       610: if_acmpne     617
-       613: iconst_1
-       614: goto          618
-       617: iconst_0
-       618: istore        29
-       620: aload         21
-       622: aload         8
-       624: aload         28
-       626: aload         6
-       628: aload         5
-       630: aconst_null
-       631: aload_0
-       632: getfield      #198                // Field toolId:Ljava/lang/String;
-       635: aload_0
-       636: getfield      #202                // Field matchTool:Z
-       639: fconst_1
-       640: iconst_0
-       641: iconst_0
-       642: iload         29
-       644: aload_2
-       645: aload         11
-       647: invokestatic  #290                // Method com/hypixel/hytale/server/core/modules/interaction/BlockHarvestUtils.performBlockDamage:(Lcom/hypixel/hytale/component/Ref;Lcom/hypixel/hytale/component/Ref;Ljava/util/List;Lorg/joml/Vector3i;Lcom/hypixel/hytale/server/core/inventory/ItemStack;Lcom/hypixel/hytale/server/core/asset/type/item/config/ItemTool;Ljava/lang/String;ZFIZZLcom/hypixel/hytale/component/ComponentAccessor;Lcom/hypixel/hytale/component/ComponentAccessor;)I
-===== DISASM com.hypixel.hytale.server.core.modules.interaction.interaction.config.server.DamageEntityInteraction
-       220: checkcast     #112                // class "[Lcom/hypixel/hytale/server/core/modules/entity/damage/Damage;"
-       223: invokevirtual #114                // Method processDamage:(Lcom/hypixel/hytale/server/core/entity/InteractionContext;[Lcom/hypixel/hytale/server/core/modules/entity/damage/Damage;)Z
-       226: ifeq          230
-       229: return
-       230: aload         4
-       232: invokevirtual #118                // Method com/hypixel/hytale/server/core/entity/InteractionContext.getOwningEntity:()Lcom/hypixel/hytale/component/Ref;
-       235: astore        9
-       237: aload         4
-       239: invokevirtual #31                 // Method com/hypixel/hytale/server/core/entity/InteractionContext.getEntity:()Lcom/hypixel/hytale/component/Ref;
-       242: astore        10
-       244: aload         4
-       246: invokevirtual #121                // Method com/hypixel/hytale/server/core/entity/InteractionContext.getMetaStore:()Lcom/hypixel/hytale/server/core/meta/DynamicMetaStore;
-       249: getstatic     #124                // Field com/hypixel/hytale/server/core/modules/interaction/interaction/config/Interaction.HIT_LOCATION:Lcom/hypixel/hytale/server/core/meta/MetaKey;
-       252: invokevirtual #127                // Method com/hypixel/hytale/server/core/meta/DynamicMetaStore.getMetaObject:(Lcom/hypixel/hytale/server/core/meta/MetaKey;)Ljava/lang/Object;
-       255: checkcast     #130                // class org/joml/Vector4d
-       258: astore        11
-       260: aload         10
-       262: aload         9
-       264: invokevirtual #132                // Method java/lang/Object.equals:(Ljava/lang/Object;)Z
-       267: ifne          287
-       270: aload         7
-       272: aload         10
-       274: invokestatic  #138                // Method com/hypixel/hytale/server/core/modules/projectile/component/Projectile.getComponentType:()Lcom/hypixel/hytale/component/ComponentType;
-       277: invokevirtual #88                 // Method com/hypixel/hytale/component/CommandBuffer.getComponent:(Lcom/hypixel/hytale/component/Ref;Lcom/hypixel/hytale/component/ComponentType;)Lcom/hypixel/hytale/component/Component;
-       280: ifnull        287
-       283: iconst_1
-       284: goto          288
-       287: iconst_0
-       288: istore        12
-       290: iload         12
-       292: ifeq          309
-       295: new           #141                // class com/hypixel/hytale/server/core/modules/entity/damage/Damage$ProjectileSource
-       298: dup
-       299: aload         9
-       301: aload         10
-       303: invokespecial #143                // Method com/hypixel/hytale/server/core/modules/entity/damage/Damage$ProjectileSource."<init>":(Lcom/hypixel/hytale/component/Ref;Lcom/hypixel/hytale/component/Ref;)V
-       306: goto          318
-       309: new           #146                // class com/hypixel/hytale/server/core/modules/entity/damage/Damage$EntitySource
-       312: dup
-       313: aload         9
-       315: invokespecial #148                // Method com/hypixel/hytale/server/core/modules/entity/damage/Damage$EntitySource."<init>":(Lcom/hypixel/hytale/component/Ref;)V
+===== DISASM Transform.getDirection
+  public static org.joml.Vector3d getDirection(float, float);
+    Code:
+         0: fload_0
+         1: invokestatic  #142                // Method java/lang/Float.isNaN:(F)Z
+         4: ifeq          17
+         7: new           #148                // class java/lang/IllegalStateException
+        10: dup
+        11: ldc           #150                // String Pitch can\'t be NaN
+        13: invokespecial #152                // Method java/lang/IllegalStateException."<init>":(Ljava/lang/String;)V
+        16: athrow
+        17: fload_1
+        18: invokestatic  #142                // Method java/lang/Float.isNaN:(F)Z
+        21: ifeq          34
+        24: new           #148                // class java/lang/IllegalStateException
+        27: dup
+        28: ldc           #155                // String Yaw can\'t be NaN
+        30: invokespecial #152                // Method java/lang/IllegalStateException."<init>":(Ljava/lang/String;)V
+        33: athrow
+        34: fload_0
+        35: invokestatic  #157                // Method com/hypixel/hytale/math/util/TrigMathUtil.cos:(F)F
+        38: f2d
+        39: dstore_2
+        40: dload_2
+        41: fload_1
+        42: invokestatic  #163                // Method com/hypixel/hytale/math/util/TrigMathUtil.sin:(F)F
+        45: fneg
+        46: f2d
+        47: dmul
+        48: dstore        4
+        50: fload_0
+        51: invokestatic  #163                // Method com/hypixel/hytale/math/util/TrigMathUtil.sin:(F)F
+        54: f2d
+        55: dstore        6
+        57: dload_2
+        58: fload_1
+        59: invokestatic  #157                // Method com/hypixel/hytale/math/util/TrigMathUtil.cos:(F)F
+        62: fneg
+        63: f2d
+        64: dmul
+        65: dstore        8
+        67: new           #87                 // class org/joml/Vector3d
+        70: dup
+        71: dload         4
+        73: dload         6
+        75: dload         8
+        77: invokespecial #104                // Method org/joml/Vector3d."<init>":(DDD)V
+        80: areturn
+
+  public org.joml.Vector3i getAxisDirection();
+    Code:
+         0: aload_0
+         1: aload_0
+         2: getfield      #114                // Field rotation:Lcom/hypixel/hytale/math/vector/Rotation3f;
+         5: invokevirtual #131                // Method com/hypixel/hytale/math/vector/Rotation3f.pitch:()F
+         8: aload_0
+         9: getfield      #114                // Field rotation:Lcom/hypixel/hytale/math/vector/Rotation3f;
+        12: invokevirtual #135                // Method com/hypixel/hytale/math/vector/Rotation3f.yaw:()F
+        15: invokevirtual #166                // Method getAxisDirection:(FF)Lorg/joml/Vector3i;
+        18: areturn
+
+===== DISASM ChunkUtil.indexBlock
+  public static int indexBlock(int, int, int);
+    Code:
+         0: iload_1
+         1: bipush        31
+         3: iand
+         4: bipush        10
+         6: ishl
+         7: iload_2
+         8: bipush        31
+        10: iand
+        11: iconst_5
+        12: ishl
+        13: ior
+        14: iload_0
+        15: bipush        31
+        17: iand
+        18: ior
+        19: ireturn
+
+  public static int xFromIndex(int);
+    Code:
+         0: iload_0
+         1: bipush        31
+         3: iand
+         4: ireturn
+
+===== DISASM TargetUtil.getLook
+  public static com.hypixel.hytale.math.vector.Transform getLook(com.hypixel.hytale.component.Ref<com.hypixel.hytale.server.core.universe.world.storage.EntityStore>, com.hypixel.hytale.component.ComponentAccessor<com.hypixel.hytale.server.core.universe.world.storage.EntityStore>);
+    Code:
+         0: aload_1
+         1: aload_0
+         2: invokestatic  #196                // Method com/hypixel/hytale/server/core/modules/entity/component/TransformComponent.getComponentType:()Lcom/hypixel/hytale/component/ComponentType;
+         5: invokeinterface #202,  3          // InterfaceMethod com/hypixel/hytale/component/ComponentAccessor.getComponent:(Lcom/hypixel/hytale/component/Ref;Lcom/hypixel/hytale/component/ComponentType;)Lcom/hypixel/hytale/component/Component;
+        10: checkcast     #197                // class com/hypixel/hytale/server/core/modules/entity/component/TransformComponent
+        13: astore_2
+        14: getstatic     #206                // Field $assertionsDisabled:Z
+        17: ifne          32
+        20: aload_2
+        21: ifnonnull     32
+        24: new           #210                // class java/lang/AssertionError
+        27: dup
+        28: invokespecial #212                // Method java/lang/AssertionError."<init>":()V
+        31: athrow
+        32: aload_0
+        33: aload_1
+        34: invokestatic  #259                // Method com/hypixel/hytale/server/core/modules/entity/component/ModelComponent.getEyeHeight:(Lcom/hypixel/hytale/component/Ref;Lcom/hypixel/hytale/component/ComponentAccessor;)F
+        37: fstore_3
+        38: aload_1
+        39: aload_0
+        40: invokestatic  #265                // Method com/hypixel/hytale/server/core/modules/entity/component/HeadRotation.getComponentType:()Lcom/hypixel/hytale/component/ComponentType;
+        43: invokeinterface #202,  3          // InterfaceMethod com/hypixel/hytale/component/ComponentAccessor.getComponent:(Lcom/hypixel/hytale/component/Ref;Lcom/hypixel/hytale/component/ComponentType;)Lcom/hypixel/hytale/component/Component;
+        48: checkcast     #266                // class com/hypixel/hytale/server/core/modules/entity/component/HeadRotation
+        51: astore        4
+        53: getstatic     #206                // Field $assertionsDisabled:Z
+        56: ifne          72
+        59: aload         4
+        61: ifnonnull     72
+        64: new           #210                // class java/lang/AssertionError
+        67: dup
+        68: invokespecial #212                // Method java/lang/AssertionError."<init>":()V
+        71: athrow
+        72: aload_2
+        73: invokevirtual #213                // Method com/hypixel/hytale/server/core/modules/entity/component/TransformComponent.getPosition:()Lorg/joml/Vector3d;
+        76: astore        5
+        78: aload         4
+        80: invokevirtual #268                // Method com/hypixel/hytale/server/core/modules/entity/component/HeadRotation.getRotation:()Lcom/hypixel/hytale/math/vector/Rotation3f;
+        83: astore        6
+        85: new           #122                // class com/hypixel/hytale/math/vector/Transform
+        88: dup
+        89: aload         5
+        91: invokevirtual #272                // Method org/joml/Vector3d.x:()D
+        94: aload         5
+        96: invokevirtual #275                // Method org/joml/Vector3d.y:()D
+        99: fload_3
+       100: f2d
+       101: dadd
+       102: aload         5
+       104: invokevirtual #277                // Method org/joml/Vector3d.z:()D
+       107: aload         6
+       109: invokevirtual #279                // Method com/hypixel/hytale/math/vector/Rotation3f.pitch:()F
+       112: aload         6
+       114: invokevirtual #285                // Method com/hypixel/hytale/math/vector/Rotation3f.yaw:()F
+       117: aload         6
+       119: invokevirtual #288                // Method com/hypixel/hytale/math/vector/Rotation3f.roll:()F
+       122: invokespecial #291                // Method com/hypixel/hytale/math/vector/Transform."<init>":(DDDFFF)V
+       125: areturn
+
