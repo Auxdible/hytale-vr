@@ -28,6 +28,7 @@ void begin_frame(const FrameContext& context);
 void end_frame(int pixels_w, int pixels_h, const Settings& settings);
 
 void recenter();
+void force_world();  // treat the current scene as a world now
 bool take_menu_button();  // the controller's menu button was pressed
 
 }  // namespace hvr::session

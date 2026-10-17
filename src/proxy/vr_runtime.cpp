@@ -61,7 +61,8 @@ MoveKeys g_room_keys;
 bool g_stick_moving = false;
 Vec3 g_prev_body;
 bool g_have_prev_body = false;
-bool g_world_latched = false;   // a world is loaded and playing (mouse look seen)
+bool g_world_latched = false;
+std::atomic<bool> g_force_world{false};   // a world is loaded and playing (mouse look seen)
 int g_non_world_frames = 0;
 bool g_snap_armed = true;
 int g_world_frames = 0;
@@ -380,6 +381,7 @@ std::string headset_name() {
 }
 
 void recenter() { g_recenter = true; }
+void force_world() { g_force_world = true; }
 bool take_menu_button() { return g_menu_button.exchange(false); }
 
 void begin_frame(const FrameContext& context) {
@@ -452,9 +454,12 @@ void place_hud(const Settings& s, bool force) {
 void prepare_world(const Settings& s, bool showed_world) {
     // 3D only once you're playing in a world: Hytale's main menu draws a 3D
     // scene too, from a fixed camera, and that belongs on the big screen.
-    if (g_context.game_relative && !g_context.menu_open) g_world_latched = true;
+    const bool was_latched = g_world_latched;
+    if ((g_context.game_relative && !g_context.menu_open) || g_force_world.exchange(false)) g_world_latched = true;
     g_non_world_frames = showed_world || !stereo::wanted() ? 0 : g_non_world_frames + 1;
     if (g_non_world_frames > 45) g_world_latched = false;  // a loading screen: the world is gone
+    if (was_latched != g_world_latched)
+        logf(g_world_latched ? "Playing in a world: 3D on" : "No world showing for a while: back to the big screen");
     if (!s.world_view || !g_hmd_valid || !g_world_latched) {
         stereo::disable();
         g_world_aligned = false;

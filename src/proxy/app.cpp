@@ -110,7 +110,13 @@ void before_swap(HDC dc) {
         session::FrameContext context;
         context.settings = &g_settings;
         context.menu_open = g_menu_open;
-        context.game_relative = sdl::game_wants_relative_mouse();
+        context.game_relative = sdl::game_mouse_look();
+        static int last_look = -1;
+        if (last_look != static_cast<int>(context.game_relative)) {
+            last_look = context.game_relative;
+            logf("Mouse look %s (relative mode %s)", context.game_relative ? "on" : "off",
+                 sdl::game_wants_relative_mouse() ? "on" : "off");
+        }
         context.window_points_w = points_w;
         context.window_points_h = points_h;
         session::begin_frame(context);

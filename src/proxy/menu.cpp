@@ -216,6 +216,9 @@ void tab_world(Settings& s) {
     hint("In a world, Hytale draws every frame once per eye so you stand in it. The main menu and loading "
          "screens use the big screen. Set Hytale's field of view to its maximum so nothing at the edge of your "
          "view gets left out.");
+    if (ImGui::Button("Switch to 3D now")) session::force_world();
+    ImGui::SameLine();
+    hint("if you're in a world and still see the big screen");
     changed |= ImGui::Checkbox("Walk when you move in your room", &s.room_walk);
     hint("Your character steps to where your head is, so leaning and walking around work.");
     ImGui::Spacing();

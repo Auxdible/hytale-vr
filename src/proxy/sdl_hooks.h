@@ -39,7 +39,10 @@ bool rebinding();
 int take_rebind_result();  // 0 while waiting
 
 // Window queries; zero when SDL isn't ready.
-bool game_wants_relative_mouse();  // true while Hytale is in mouse-look mode
+bool game_wants_relative_mouse();  // true while Hytale is in SDL's relative mouse mode
+// True while Hytale is steering its camera with the mouse: relative mode, or
+// the cursor hidden (SDL's or Windows').
+bool game_mouse_look();
 bool window_size(int& points_w, int& points_h, int& pixels_w, int& pixels_h);
 // Moves the OS cursor to a point in the window (applied on SDL's thread).
 void warp_mouse(float x, float y);

@@ -187,6 +187,11 @@ bool take_injected_motion(Event* e) {
     Window* w = window();
     e->motion.windowID = (w && fn_GetWindowID) ? fn_GetWindowID(w) : 0;
     e->motion.timestamp = fn_GetTicksNS ? fn_GetTicksNS() : 0;
+    // Absolute position too, for games that measure motion from the cursor.
+    float mx = 0, my = 0;
+    if (real_GetMouseState) real_GetMouseState(&mx, &my);
+    e->motion.x = mx + static_cast<float>(x);
+    e->motion.y = my + static_cast<float>(y);
     e->motion.xrel = static_cast<float>(x);
     e->motion.yrel = static_cast<float>(y);
     return true;
@@ -368,6 +373,17 @@ bool game_wants_relative_mouse() {
     if (g_capture_applied) return g_saved_relative;
     Window* w = window();
     return w && fn_GetWindowRelativeMouseMode && fn_GetWindowRelativeMouseMode(w);
+}
+
+bool game_mouse_look() {
+    if (game_wants_relative_mouse()) return true;
+    if (g_capture_applied) return g_saved_cursor_hidden;
+    if (fn_CursorVisible && !fn_CursorVisible()) return true;
+    CURSORINFO info{};
+    info.cbSize = sizeof(info);
+    if (GetCursorInfo(&info) && !(info.flags & CURSOR_SHOWING) && GetForegroundWindow() == static_cast<HWND>(g_hwnd.load()))
+        return true;
+    return false;
 }
 
 bool window_size(int& points_w, int& points_h, int& pixels_w, int& pixels_h) {

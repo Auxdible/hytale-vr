@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.2
+
+- Fixed 3D never starting in a world: Hytale doesn't use SDL's relative mouse
+  mode, so "playing" is now also detected from the hidden cursor. The same
+  check drives the head-follows-camera and room-scale walking.
+- Head-follow mouse motion also carries an absolute position.
+- World tab: a "Switch to 3D now" button, and the log notes mouse-look and 3D
+  changes.
+
 ## 2.1.1
 
 - Room-scale walking: when your head moves away from your character, it steps
