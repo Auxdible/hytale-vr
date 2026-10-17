@@ -13,10 +13,12 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cwchar>
 #include <cwctype>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "dashboard_key_bindings.h"
@@ -1373,6 +1375,41 @@ void populate_candidate_list() {
     }
 }
 
+// Writes %TEMP%\HytaleVR\player_scan.log: each coordinate copy found, its
+// allocation, and the gap to the previous copy, so a changed Hytale layout can
+// be read off without a debugger.
+void write_player_scan_log(HANDLE process, const Vec3& expected, float tolerance,
+                           std::vector<std::pair<uintptr_t, Vec3>> matches) {
+    wchar_t temp[MAX_PATH]{};
+    if (GetTempPathW(MAX_PATH, temp) == 0) return;
+    const std::wstring directory = std::wstring(temp) + L"HytaleVR";
+    CreateDirectoryW(directory.c_str(), nullptr);
+    FILE* log = nullptr;
+    if (_wfopen_s(&log, (directory + L"\\player_scan.log").c_str(), L"w") != 0 || !log) return;
+    std::sort(matches.begin(), matches.end(),
+              [](const auto& left, const auto& right) { return left.first < right.first; });
+    fprintf(log, "feet %.4f %.4f %.4f tolerance %.3f copies %zu\n",
+            expected.x, expected.y, expected.z, tolerance, matches.size());
+    uintptr_t previous = 0;
+    for (const auto& [match_address, value] : matches) {
+        MEMORY_BASIC_INFORMATION mbi{};
+        uintptr_t allocation = 0;
+        SIZE_T region_size = 0;
+        if (VirtualQueryEx(process, reinterpret_cast<const void*>(match_address), &mbi, sizeof(mbi))) {
+            allocation = reinterpret_cast<uintptr_t>(mbi.AllocationBase);
+            region_size = mbi.RegionSize;
+        }
+        fprintf(log, "%016llx alloc %016llx region %llu gap %lld value %.4f %.4f %.4f\n",
+                static_cast<unsigned long long>(match_address),
+                static_cast<unsigned long long>(allocation),
+                static_cast<unsigned long long>(region_size),
+                previous == 0 ? 0ll : static_cast<long long>(match_address - previous),
+                value.x, value.y, value.z);
+        previous = match_address;
+    }
+    fclose(log);
+}
+
 std::vector<Candidate> find_candidates(HANDLE process, const Vec3& expected, float tolerance,
                                        uintptr_t f7_allocation_base,
                                        const std::atomic_bool* cancel = nullptr) {
@@ -1383,6 +1420,9 @@ std::vector<Candidate> find_candidates(HANDLE process, const Vec3& expected, flo
     uintptr_t address = reinterpret_cast<uintptr_t>(info.lpMinimumApplicationAddress);
     const uintptr_t maximum = reinterpret_cast<uintptr_t>(info.lpMaximumApplicationAddress);
     std::vector<unsigned char> buffer;
+    // Every single coordinate copy seen, kept to diagnose layout changes when
+    // no block of consecutive copies matches.
+    std::vector<std::pair<uintptr_t, Vec3>> loose_matches;
 
     unsigned char signature[sizeof(Vec3)]{};
     unsigned char signature_mask[sizeof(Vec3)]{};
@@ -1471,6 +1511,9 @@ std::vector<Candidate> find_candidates(HANDLE process, const Vec3& expected, flo
                                 std::memcpy(&live, buffer.data() + vector_offset, sizeof(live));
                                 signature_matches = close_vec(live, expected, tolerance);
                             }
+                            if (signature_matches && pass == 1 && loose_matches.size() < 512) {
+                                loose_matches.emplace_back(vector_address, live);
+                            }
                             if (signature_matches && vector_address >= kCoordinateOffsets[2]) {
                                 const uintptr_t base = vector_address - kCoordinateOffsets[2];
                                 Vec3 values[4]{};
@@ -1496,6 +1539,7 @@ std::vector<Candidate> find_candidates(HANDLE process, const Vec3& expected, flo
         }
     }
 
+    if (candidates.empty()) write_player_scan_log(process, expected, tolerance, loose_matches);
     return candidates;
 }
 
@@ -1552,7 +1596,7 @@ DWORD WINAPI f7_scan_worker_impl(void* parameter) {
         }
         keep_latest_candidate(result->candidates);
         result->status = result->candidates.empty()
-            ? L"F7 feet were read, but no valid player block was found."
+            ? L"F7 feet were read, but no player block matched. Stand still and scan again; if it keeps failing, send %TEMP%\\HytaleVR\\player_scan.log."
             : L"Latest player block found. Click Center VR to start.";
     } else if (!g_scan_cancel.load(std::memory_order_relaxed)) {
         result->status = L"F7 feet text not found. Show F7 in game, then scan again.";
