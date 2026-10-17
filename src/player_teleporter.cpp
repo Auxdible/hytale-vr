@@ -333,6 +333,11 @@ void enable_mica_material(HWND hwnd) {
 
 #ifdef HYTALE_CAMERA_MODE
 std::atomic_bool g_f7_scan_busy = false;
+// Scan progress for the status line: 1 = looking for the F7 text,
+// 2 = looking for the player block.
+std::atomic<int> g_scan_phase{0};
+std::atomic<uint64_t> g_scan_bytes{0};
+ULONGLONG g_scan_started_ms = 0;
 std::atomic_bool g_scan_cancel = false;
 std::atomic<ScanResult*> g_pending_scan_result = nullptr;
 HANDLE g_scan_thread = nullptr;
@@ -1244,6 +1249,7 @@ bool read_f7_feet(HANDLE process, Vec3& result, uintptr_t& allocation_base,
                     std::min<uintptr_t>(payload + overlap, region_end - cursor));
                 buffer.resize(read_size);
                 SIZE_T bytes_read = 0;
+                g_scan_bytes.fetch_add(payload, std::memory_order_relaxed);
                 if (ReadProcessMemory(process, reinterpret_cast<const void*>(cursor),
                                       buffer.data(), read_size, &bytes_read)) {
                     const size_t usable = std::min<size_t>(bytes_read, read_size);
@@ -1480,6 +1486,7 @@ std::vector<Candidate> find_candidates(HANDLE process, const Vec3& expected, flo
                         payload + kCoordinateOffsets[3] + sizeof(Vec3), scan_end - cursor));
                     buffer.resize(read_size);
                     SIZE_T bytes_read = 0;
+                    g_scan_bytes.fetch_add(payload, std::memory_order_relaxed);
                     if (ReadProcessMemory(process, reinterpret_cast<const void*>(cursor), buffer.data(),
                                           read_size, &bytes_read)) {
                     const size_t usable = std::min<size_t>(bytes_read, read_size);
@@ -1566,6 +1573,7 @@ void scan_candidates() {
 DWORD WINAPI f7_scan_worker_impl(void* parameter) {
     auto* work = static_cast<ScanWork*>(parameter);
     auto* result = new ScanResult{};
+    g_scan_phase.store(1, std::memory_order_relaxed);
     if (!g_scan_cancel.load(std::memory_order_relaxed)) {
         result->f7_allocation_base = work->f7_allocation_base;
         result->feet_found = read_f7_feet(work->process, result->feet,
@@ -1591,6 +1599,7 @@ DWORD WINAPI f7_scan_worker_impl(void* parameter) {
             if (matches >= 3) add_candidate(result->candidates, known.base, values);
         }
         if (result->candidates.empty()) {
+            g_scan_phase.store(2, std::memory_order_relaxed);
             result->candidates = find_candidates(work->process, result->feet, work->tolerance,
                                                  result->f7_allocation_base, &g_scan_cancel);
         }
@@ -1643,6 +1652,9 @@ void start_f7_scan() {
     EnableWindow(control(IDC_ATTACH), FALSE);
     EnableWindow(control(IDC_SCAN), FALSE);
     set_status(L"Reading F7, then searching memory for the player block...");
+    g_scan_bytes.store(0, std::memory_order_relaxed);
+    g_scan_phase.store(1, std::memory_order_relaxed);
+    g_scan_started_ms = GetTickCount64();
     g_scan_thread = CreateThread(nullptr, 0, f7_scan_worker_impl, work, 0, nullptr);
     if (!g_scan_thread) {
         CloseHandle(process_copy);
@@ -3137,6 +3149,24 @@ void update_auto_start() {
     }
 }
 
+// Shows how far a running scan has got, so a slow search is not mistaken for a hang.
+void update_scan_progress_status() {
+    if (!g_f7_scan_busy.load(std::memory_order_acquire)) return;
+    const double gigabytes =
+        static_cast<double>(g_scan_bytes.load(std::memory_order_relaxed)) / (1024.0 * 1024.0 * 1024.0);
+    const ULONGLONG seconds = (GetTickCount64() - g_scan_started_ms) / 1000;
+    wchar_t text[256]{};
+    if (g_scan_phase.load(std::memory_order_relaxed) == 1) {
+        swprintf_s(text, L"Looking for the F7 coordinates in Hytale's memory... %.1f GB checked, %llus. "
+                         L"If this keeps climbing, F7 is not showing in game.",
+                   gigabytes, static_cast<unsigned long long>(seconds));
+    } else {
+        swprintf_s(text, L"F7 read. Searching for the player block... %.1f GB checked, %llus.",
+                   gigabytes, static_cast<unsigned long long>(seconds));
+    }
+    set_status(text);
+}
+
 // Holding both grips recenters, so the desktop window is never needed in VR.
 // The grips' hotbar scrolls go in opposite directions and cancel out.
 void update_controller_recenter() {
@@ -3745,6 +3775,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             return 0;
         }
         if (wparam == kAutoStartTimer) {
+            update_scan_progress_status();
             update_auto_start();
             return 0;
         }
