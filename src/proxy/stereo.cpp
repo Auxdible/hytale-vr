@@ -205,6 +205,14 @@ EyeTarget g_eye_targets[2];
 EyeTarget g_hud;
 std::string g_last_problem;
 
+// The virtual back buffer: while it's on, Hytale's window drawing (framebuffer
+// 0) goes here instead, at the headset's resolution, and we scale it down to
+// the real window at swap.
+EyeTarget g_vfb;
+bool g_vfb_on = false;
+
+GLuint real_fb(GLuint fb) { return fb == 0 && g_vfb_on ? g_vfb.fbo() : fb; }
+
 // The draw in flight.
 enum class Kind { Mono, Target, Composite, Hud };
 struct Pending {
@@ -509,7 +517,7 @@ FboInfo* classify(GLenum target, GLuint fb) {
         // Twins are built while the framebuffer is bound for drawing.
         glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, fb);
         info.stereo = build_twin_fbo(fb, info);
-        glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, t.draw_fb);
+        glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, real_fb(t.draw_fb));
     } else {
         info.stereo = build_twin_fbo(fb, info);
     }
@@ -612,7 +620,13 @@ void compute_eyes(const Mono& mono) {
     for (int e = 0; e < 2; ++e) {
         Eye& eye = g_eye[e];
         Mat4 pose = g_setup.head * g_setup.eye_to_head[e];
-        for (int r = 0; r < 3; ++r) pose.at(r, 3) *= s;
+        // Uses this frame's camera, so a world-locked view doesn't trail the character.
+        const Vec3 body = g_setup.world_locked
+                              ? Vec3{g_setup.anchor.x - mono.camera.x, 0, g_setup.anchor.z - mono.camera.z}
+                              : Vec3{g_setup.anchor.x, 0, g_setup.anchor.z};
+        pose.at(0, 3) = pose.at(0, 3) * s + body.x;
+        pose.at(1, 3) = pose.at(1, 3) * s;
+        pose.at(2, 3) = pose.at(2, 3) * s + body.z;
         eye.view = inverse_rigid(pose);
         eye.projection = eye_projection(g_setup.headset_projection[e], mono.projection);
         Mat4 eye_from_head = inverse_rigid(g_setup.eye_to_head[e]);
@@ -881,7 +895,7 @@ void clear_ours(GLuint fbo, bool color, bool depth_stencil) {
     const float zero[4] = {0, 0, 0, 0};
     if (color) glr.glClearBufferfv(gl::COLOR, 0, zero);
     if (depth_stencil) glr.glClearBufferfi(gl::DEPTH_STENCIL, 0, 1.0f, 0);
-    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, t.draw_fb);
+    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, real_fb(t.draw_fb));
     glr.glStencilMask(static_cast<GLuint>(stencil_mask));
     glr.glDepthMask(depth_mask);
     glr.glColorMask(color_mask[0], color_mask[1], color_mask[2], color_mask[3]);
@@ -907,11 +921,11 @@ void begin_composite() {
 void copy_left_eye() {
     const GLboolean scissor = glr.glIsEnabled(gl::SCISSOR_TEST);
     glr.glDisable(gl::SCISSOR_TEST);
-    glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, 0);
+    glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, real_fb(0));
     glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, g_eye_targets[0].fbo());
     glr.glBlitFramebuffer(0, 0, g_window_w, g_window_h, 0, 0, g_window_w, g_window_h, gl::COLOR_BUFFER_BIT, gl::NEAREST);
-    glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, t.read_fb);
-    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, t.draw_fb);
+    glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, real_fb(t.read_fb));
+    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, real_fb(t.draw_fb));
     if (scissor) glr.glEnable(gl::SCISSOR_TEST);
 }
 
@@ -1031,9 +1045,71 @@ void on_bind_image_texture(GLuint unit, GLuint texture, GLint level, GLboolean l
 }
 
 void on_bind_framebuffer(GLenum target, GLuint framebuffer) {
+    // Hytale may read back our buffer's name as the current binding and bind it again.
+    if (g_vfb_on && framebuffer != 0 && framebuffer == g_vfb.fbo()) framebuffer = 0;
     if (target == gl::FRAMEBUFFER || target == gl::DRAW_FRAMEBUFFER) t.draw_fb = framebuffer;
     if (target == gl::FRAMEBUFFER || target == gl::READ_FRAMEBUFFER) t.read_fb = framebuffer;
+    if (framebuffer == 0 && g_vfb_on && on_render_thread()) glr.glBindFramebuffer(target, g_vfb.fbo());
 }
+
+GLenum map_color_buffer(bool draw, GLenum mode) {
+    if (!g_vfb_on || !on_render_thread() || (draw ? t.draw_fb : t.read_fb) != 0) return mode;
+    switch (mode) {
+        case 0x0400: case 0x0401: case 0x0402: case 0x0403: case 0x0404: case 0x0405: case 0x0406: case 0x0407:
+        case 0x0408:  // FRONT_LEFT .. FRONT_AND_BACK
+            return gl::COLOR_ATTACHMENT0;
+        default:
+            return mode;
+    }
+}
+
+bool set_virtual_backbuffer(int width, int height) {
+    g_render_thread = GetCurrentThreadId();
+    const bool on = width > 0 && height > 0;
+    if (on && !g_vfb.resize(width, height)) {
+        problem("couldn't make the high-resolution window buffer");
+        return set_virtual_backbuffer(0, 0);
+    }
+    if (on != g_vfb_on) logf(on ? "Window buffer %dx%d for the headset" : "Window buffer back to the window%s", width, height);
+    g_vfb_on = on;
+    // Hytale's current binding of "the window" moves with it.
+    if (t.draw_fb == 0) glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, real_fb(0));
+    if (t.read_fb == 0) glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, real_fb(0));
+    if (!on) g_vfb.destroy();
+    return on;
+}
+
+void rebind_window() {
+    if (!on_render_thread()) return;
+    if (t.draw_fb == 0) glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, real_fb(0));
+    if (t.read_fb == 0) glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, real_fb(0));
+}
+
+GLuint virtual_backbuffer() { return g_vfb_on ? g_vfb.fbo() : 0; }
+
+void present_virtual_backbuffer(int window_w, int window_h) {
+    if (!g_vfb_on || window_w <= 0 || window_h <= 0) return;
+    const GLboolean scissor = glr.glIsEnabled(gl::SCISSOR_TEST);
+    glr.glDisable(gl::SCISSOR_TEST);
+    glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, g_vfb.fbo());
+    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
+    glr.glBlitFramebuffer(0, 0, g_vfb.width(), g_vfb.height(), 0, 0, window_w, window_h, gl::COLOR_BUFFER_BIT, gl::LINEAR);
+    glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, real_fb(t.read_fb));
+    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, real_fb(t.draw_fb));
+    if (scissor) glr.glEnable(gl::SCISSOR_TEST);
+}
+
+int render_width() { return g_main_w; }
+
+namespace {
+int g_window_viewport_w = 0;
+}
+
+void on_viewport(GLsizei width) {
+    if (on_render_thread() && t.draw_fb == 0) g_window_viewport_w = width;
+}
+
+int window_viewport_width() { return g_window_viewport_w; }
 
 void on_use_program(GLuint program) { t.program = program; }
 
@@ -1152,12 +1228,19 @@ void on_uniform(GLuint program, GLint location, GLsizei count, const GLfloat* va
 }
 
 void on_draw_buffers(GLsizei count, const GLenum* buffers) {
-    if (!on_render_thread() || t.draw_fb == 0) return;
+    if (!on_render_thread()) return;
+    if (t.draw_fb == 0) {
+        if (g_vfb_on && count > 0 && buffers) {
+            GLenum mapped = map_color_buffer(true, buffers[0]);
+            glr.glDrawBuffers(1, &mapped);
+        }
+        return;
+    }
     auto it = g_fbos.find(t.draw_fb);
     if (it == g_fbos.end() || !it->second.twin) return;
     glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, it->second.twin);
     glr.glDrawBuffers(count, buffers);
-    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, t.draw_fb);
+    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, real_fb(t.draw_fb));
 }
 
 void on_delete_framebuffers(GLsizei count, const GLuint* framebuffers) {
@@ -1265,7 +1348,7 @@ void draw_second() {
 
 void draw_finish() {
     Pending& p = g_pending;
-    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, t.draw_fb);
+    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, real_fb(t.draw_fb));
     restore_textures(p);
     if (p.blend_changed) glr.glBlendFuncSeparate(p.blend[0], p.blend[1], p.blend[2], p.blend[3]);
     if (p.ubo_index >= 0) restore_ubo(p);
@@ -1285,7 +1368,7 @@ void after_clear(GLbitfield mask) {
     if (!info) return;
     glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, info->twin);
     glr.glClear(mask);
-    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, t.draw_fb);
+    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, real_fb(t.draw_fb));
 }
 
 void after_clear_buffer(GLenum buffer, GLint drawbuffer, const void* value, int kind) {
@@ -1296,7 +1379,7 @@ void after_clear_buffer(GLenum buffer, GLint drawbuffer, const void* value, int 
     if (kind == 0) glr.glClearBufferfv(buffer, drawbuffer, static_cast<const GLfloat*>(value));
     else if (kind == 1) glr.glClearBufferiv(buffer, drawbuffer, static_cast<const GLint*>(value));
     else glr.glClearBufferuiv(buffer, drawbuffer, static_cast<const GLuint*>(value));
-    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, t.draw_fb);
+    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, real_fb(t.draw_fb));
 }
 
 void after_clear_buffer_fi(GLenum buffer, GLint drawbuffer, GLfloat depth, GLint stencil) {
@@ -1305,7 +1388,7 @@ void after_clear_buffer_fi(GLenum buffer, GLint drawbuffer, GLfloat depth, GLint
     if (!info) return;
     glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, info->twin);
     glr.glClearBufferfi(buffer, drawbuffer, depth, stencil);
-    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, t.draw_fb);
+    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, real_fb(t.draw_fb));
 }
 
 void after_blit(GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0, GLint dy0, GLint dx1, GLint dy1, GLbitfield mask,
@@ -1325,11 +1408,11 @@ void after_blit(GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0, GLint dy0
         draw_twin = g_eye_targets[1].fbo();
         mask = gl::COLOR_BUFFER_BIT;
     }
-    glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, read ? read->twin : t.read_fb);
+    glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, read ? read->twin : real_fb(t.read_fb));
     glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, draw_twin);
     glr.glBlitFramebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, mask, filter);
-    glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, t.read_fb);
-    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, t.draw_fb);
+    glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, real_fb(t.read_fb));
+    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, real_fb(t.draw_fb));
     if (composite) copy_left_eye();
 }
 

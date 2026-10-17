@@ -18,6 +18,7 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("hud_distance", s.hud_distance);
     visit("hud_width", s.hud_width);
     visit("world_scale", s.world_scale);
+    visit("render_scale", s.render_scale);
     visit("turn_mode", s.turn_mode);
     visit("snap_degrees", s.snap_degrees);
     visit("smooth_speed", s.smooth_speed);
@@ -79,6 +80,7 @@ void clamp(Settings& s) {
     s.hud_distance = std::clamp(s.hud_distance, 0.6f, 5.0f);
     s.hud_width = std::clamp(s.hud_width, 0.6f, 6.0f);
     s.world_scale = std::clamp(s.world_scale, 0.25f, 4.0f);
+    s.render_scale = std::clamp(s.render_scale, 1.0f, 2.5f);
     s.turn_mode = std::clamp(s.turn_mode, 0, 1);
     s.snap_degrees = std::clamp(s.snap_degrees, 10.0f, 90.0f);
     s.smooth_speed = std::clamp(s.smooth_speed, 30.0f, 360.0f);

@@ -47,6 +47,10 @@ bool window_size(int& points_w, int& points_h, int& pixels_w, int& pixels_h);
 // Moves the OS cursor to a point in the window (applied on SDL's thread).
 void warp_mouse(float x, float y);
 std::string scancode_name(int scancode);
+// Tells Hytale its window has scale times the pixels it really has (1 = the
+// truth), so it renders sharper; the extra pixels go to a buffer of that size.
+void set_render_scale(float scale);
+float render_scale();
 // Adds relative mouse motion for Hytale's camera, delivered as an SDL event.
 void inject_mouse_motion(int dx, int dy);
 

@@ -25,6 +25,11 @@ struct EyeSetup {
     Mat4 head;                   // headset pose in Hytale's axes, relative to where the camera sits
     float world_scale = 1;       // world units per meter
     bool no_occlusion = true;    // skip Hytale's occluder pass so nothing near the edges of the eyes gets culled
+    // Where the head's neutral spot sits, horizontally, in world units. When
+    // world_locked it's a fixed world position (x, z), so the view stays put
+    // while the character catches up; otherwise it's an offset from the camera.
+    Vec3 anchor;
+    bool world_locked = false;
 };
 
 // Turns stereo on for the coming frames, with this frame's poses.
@@ -95,5 +100,21 @@ void after_blit(GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0, GLint dy0
 void after_generate_mipmap(GLenum target);
 
 std::string summary();
+
+// Virtual back buffer: Hytale's window drawing goes to an offscreen buffer of
+// this size (0 turns it off). Returns whether it's on.
+bool set_virtual_backbuffer(int width, int height);
+GLuint virtual_backbuffer();  // 0 when off
+// Binds "the window" again for whatever Hytale has bound as it, after a change.
+void rebind_window();
+// Scales it into the real window. Call at swap, after everything is drawn.
+void present_virtual_backbuffer(int window_w, int window_h);
+// glDrawBuffer/glReadBuffer while "the window" is bound: BACK becomes the
+// buffer's color attachment.
+GLenum map_color_buffer(bool draw, GLenum mode);
+int render_width();  // Hytale's 3D resolution as last seen, 0 before
+// Hytale's viewport width when it last drew to "the window", 0 before.
+void on_viewport(GLsizei width);
+int window_viewport_width();
 
 }  // namespace hvr::stereo

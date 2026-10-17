@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.2.0
+
+- Sharpness: while VR runs, Hytale is told its window has more pixels and
+  draws at that size (1.5x by default, up to 2.5x), then it's scaled down for
+  the monitor. If Hytale keeps drawing at the window's size, it turns itself off
+  and says so in the World tab.
+- Head height follows your head 1:1 again (within half a meter of where it was
+  when 3D started or you last recentered).
+- Room-scale walking reworked: the view stays fixed in the world while your
+  character catches up, instead of moving with it, so it no longer wobbles.
+  Now off by default; turn it on in the World tab.
+
 ## 2.1.4
 
 - No more flicker between the big screen and the world while chunks load.

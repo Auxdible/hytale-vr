@@ -64,8 +64,11 @@ MouseFollower g_follower;
 RoomWalker g_walker;
 MoveKeys g_room_keys;
 bool g_stick_moving = false;
-Vec3 g_prev_body;
-bool g_have_prev_body = false;
+// Room-scale: where the view sits relative to the character (horizontal,
+// world units), and the world spot it's locked to while you walk in your room.
+Vec3 g_body_offset;
+Vec3 g_room_anchor;
+bool g_room_locked = false;
 bool g_world_latched = false;  // a world is loaded and playing (mouse look seen)
 std::atomic<bool> g_force_world{false};
 Vec3 g_jump_check;
@@ -489,7 +492,7 @@ void prepare_world(const Settings& s, bool showed_world) {
         stereo::disable();
         g_world_aligned = false;
         g_room_keys = {};
-        g_have_prev_body = false;
+        g_room_locked = false;
         return;
     }
     const Vec3 forward = transform_direction(g_hmd, {0, 0, -1});
@@ -498,6 +501,8 @@ void prepare_world(const Settings& s, bool showed_world) {
     const bool have_engine = stereo::engine_camera(engine_view, engine_forward, engine_position);
     if (!g_world_aligned || g_recenter.exchange(false)) {
         g_neutral = position_of(g_hmd);
+        g_body_offset = {};
+        g_room_locked = false;
         g_yaw_offset = have_engine ? MouseFollower::wrap(yaw_of(engine_forward) - yaw_of(forward)) : 0.0f;
         g_world_aligned = true;
         g_hud_placed = false;
@@ -515,37 +520,43 @@ void prepare_world(const Settings& s, bool showed_world) {
         g_follower.have_last = false;
     }
 
-    // Room-scale: keep the character under your head. Movement it made for
-    // that moves the neutral spot along, so the view doesn't jump.
+    // Room-scale: the view stays fixed in the world while you stand or walk
+    // in your room, and the character steps after your head. Stick movement,
+    // falling and the like carry the view along with the character.
     const bool walk = s.room_walk && s.controller_input && have_engine && showed_world && g_context.game_relative &&
                       !g_context.menu_open;
-    if (walk && g_have_prev_body) {
-        Vec3 moved = engine_position - g_prev_body;
-        moved.y = 0;
-        const bool room_driven = (g_room_keys.forward || g_room_keys.back || g_room_keys.left || g_room_keys.right) &&
-                                 !g_stick_moving;
-        if (room_driven && length(moved) < 1.5f) {
-            const Vec3 local = transform_direction(rotation_y(-g_yaw_offset), moved) * (1.0f / s.world_scale);
-            g_neutral.x += local.x;
-            g_neutral.z += local.z;
+    const bool lock = walk && !g_stick_moving;
+    if (lock && !g_room_locked) g_room_anchor = engine_position + g_body_offset;
+    if (!lock && g_room_locked) g_body_offset = g_room_anchor - engine_position;
+    g_room_locked = lock;
+    if (lock) {
+        g_body_offset = g_room_anchor - engine_position;
+        g_body_offset.y = 0;
+        // Pushed or stuck far from where you stand: catch the view up.
+        if (length(g_body_offset) > 2.0f) {
+            g_room_anchor = engine_position;
+            g_body_offset = {};
+            g_neutral.x = position_of(g_hmd).x;
+            g_neutral.z = position_of(g_hmd).z;
         }
+    } else if (!walk) {
+        // Ease back over the character so the offset doesn't linger.
+        g_body_offset = g_body_offset * (1.0f - std::fmin(1.0f, 2.0f * g_frame_dt));
     }
     if (walk) {
-        const Vec3 offset = transform_direction(rotation_y(g_yaw_offset), position_of(g_hmd) - g_neutral) * s.world_scale;
+        Vec3 offset = transform_direction(rotation_y(g_yaw_offset), position_of(g_hmd) - g_neutral) * s.world_scale;
+        offset = offset + g_body_offset;
         g_room_keys = g_walker.step(offset, yaw_of(engine_forward));
     } else {
         g_room_keys = {};
         g_walker.walking = false;
     }
-    g_prev_body = engine_position;
-    g_have_prev_body = have_engine;
 
-    // Height: your character's eyes stay at Hytale's eye height. Small dips and
-    // rises show; standing up or sitting down settles back over a second or two.
+    // Height follows your head 1:1 from where it was when 3D started or you
+    // last recentered, kept within half a meter so it can't leave the body.
     {
         const float head_y = position_of(g_hmd).y;
-        g_neutral.y += (head_y - g_neutral.y) * std::fmin(1.0f, 0.6f * g_frame_dt);
-        const float limit = 0.12f;
+        const float limit = 0.5f;
         if (head_y - g_neutral.y > limit) g_neutral.y = head_y - limit;
         if (head_y - g_neutral.y < -limit) g_neutral.y = head_y + limit;
     }
@@ -558,6 +569,8 @@ void prepare_world(const Settings& s, bool showed_world) {
     }
     setup.head = rotation_y(g_yaw_offset) * translation(Vec3{} - g_neutral) * g_hmd;
     setup.world_scale = s.world_scale;
+    setup.anchor = g_room_locked ? g_room_anchor : g_body_offset;
+    setup.world_locked = g_room_locked;
     setup.no_occlusion = s.no_occlusion;
     stereo::set_eyes(setup);
 }
@@ -602,7 +615,7 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
             set_status("Hytale is on the big screen. Point at it to use the mouse.");
         }
         g_world_frame = false;
-        g_scene.capture_window(pixels_w, pixels_h);
+        g_scene.capture_window(pixels_w, pixels_h, stereo::virtual_backbuffer());
         if (g_hmd_valid) {
             g_cinema_screen = place_screen(g_anchor_head, g_anchor_forward, settings.screen_distance, settings.screen_width,
                                            g_scene.screen_aspect(), settings.screen_height);

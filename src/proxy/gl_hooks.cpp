@@ -436,7 +436,8 @@ const Hook kHooks[] = {
 
 // GL 1.1 functions we already wrap as exports, in case Hytale also fetches
 // them through wglGetProcAddress.
-const char* const kExportWrapped[] = {"glClear", "glViewport", "glDrawArrays", "glDrawElements", "glBindTexture"};
+const char* const kExportWrapped[] = {"glClear", "glViewport", "glDrawArrays", "glDrawElements", "glBindTexture",
+                                     "glDrawBuffer", "glReadBuffer"};
 
 }  // namespace
 

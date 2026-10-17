@@ -9,10 +9,11 @@ shader mods do, and adds an in-game VR menu.
   Start and stop VR, place the screen, and change controls without leaving the game.
 - **Standing in the world (experimental).** In a world, Hytale's own renderer
   draws each frame once per eye, so you see real 3D around you. Your head aims,
-  the right stick turns you (snap or smooth), walking in your room walks your
-  character, and the HUD floats on a panel in front of you. Set Hytale's field
-  of view to its maximum. Each eye renders at Hytale's window size, so a higher
-  resolution (NVIDIA DSR or AMD VSR on a 1080p monitor) looks much sharper.
+  the right stick turns you (snap or smooth), and the HUD floats on a panel in
+  front of you. Optional room-scale: the view stays put while your character
+  steps after your head. Set Hytale's field of view to its maximum. While VR
+  runs, Hytale draws at 1.5x its window size for a sharper picture (the
+  Sharpness slider in the World tab; 1.75x matches a Quest 2's resolution).
 - **Hytale on a big screen in VR** for everything else (main menu, loading), in
   a dark room with a floor.
 - **Laser pointer.** Point at the screen and pull the trigger to click.

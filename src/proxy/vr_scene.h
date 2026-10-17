@@ -43,7 +43,7 @@ public:
     bool init();
     void destroy();
     // Copies the game window's finished frame into the screen texture.
-    void capture_window(int width, int height);
+    void capture_window(int width, int height, GLuint source_fbo);  // source 0 = the window
     float screen_aspect() const { return height_ > 0 ? static_cast<float>(width_) / height_ : 16.0f / 9.0f; }
     void render(const EyeTarget& target, const Mat4& projection, const Mat4& view, const SceneView& scene);
     // Over an eye image already drawn by Hytale: the HUD panel (premultiplied

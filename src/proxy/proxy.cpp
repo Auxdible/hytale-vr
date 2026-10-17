@@ -32,6 +32,7 @@ using PFN_glViewport = void(APIENTRY*)(GLint, GLint, GLsizei, GLsizei);
 using PFN_glDrawArrays = void(APIENTRY*)(GLenum, GLint, GLsizei);
 using PFN_glDrawElements = void(APIENTRY*)(GLenum, GLsizei, GLenum, const void*);
 using PFN_glBindTexture = void(APIENTRY*)(GLenum, GLuint);
+using PFN_glColorBuffer = void(APIENTRY*)(GLenum);
 
 PFN_wglGetProcAddress real_wglGetProcAddress = nullptr;
 PFN_wglSwapBuffers real_wglSwapBuffers = nullptr;
@@ -40,6 +41,8 @@ PFN_glViewport real_glViewport = nullptr;
 PFN_glDrawArrays real_glDrawArrays = nullptr;
 PFN_glDrawElements real_glDrawElements = nullptr;
 PFN_glBindTexture real_glBindTexture = nullptr;
+PFN_glColorBuffer real_glDrawBuffer = nullptr;
+PFN_glColorBuffer real_glReadBuffer = nullptr;
 
 // Stands in for an export the real library lacks, so a call returns 0
 // instead of jumping to nowhere.
@@ -68,9 +71,11 @@ bool load_real_library() {
     real_glDrawArrays = reinterpret_cast<PFN_glDrawArrays>(GetProcAddress(g_real, "glDrawArrays"));
     real_glDrawElements = reinterpret_cast<PFN_glDrawElements>(GetProcAddress(g_real, "glDrawElements"));
     real_glBindTexture = reinterpret_cast<PFN_glBindTexture>(GetProcAddress(g_real, "glBindTexture"));
+    real_glDrawBuffer = reinterpret_cast<PFN_glColorBuffer>(GetProcAddress(g_real, "glDrawBuffer"));
+    real_glReadBuffer = reinterpret_cast<PFN_glColorBuffer>(GetProcAddress(g_real, "glReadBuffer"));
     hvr::logf("Loaded %ls (%d of %d forwarded exports missing)", path, missing, kForwardedExportCount);
     return real_wglGetProcAddress && real_wglSwapBuffers && real_glClear && real_glViewport && real_glDrawArrays &&
-           real_glDrawElements && real_glBindTexture;
+           real_glDrawElements && real_glBindTexture && real_glDrawBuffer && real_glReadBuffer;
 }
 
 }  // namespace
@@ -116,7 +121,10 @@ void APIENTRY hvr_glClear(GLbitfield mask) {
 }
 
 void APIENTRY hvr_glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
-    if (!hvr::internal_call()) hvr::census::on_viewport(x, y, width, height);
+    if (!hvr::internal_call()) {
+        hvr::census::on_viewport(x, y, width, height);
+        hvr::stereo::on_viewport(width);
+    }
     real_glViewport(x, y, width, height);
 }
 
@@ -133,6 +141,16 @@ void APIENTRY hvr_glDrawElements(GLenum mode, GLsizei count, GLenum type, const 
 void APIENTRY hvr_glBindTexture(GLenum target, GLuint texture) {
     real_glBindTexture(target, texture);
     if (!hvr::internal_call()) hvr::stereo::on_bind_texture(target, texture);
+}
+
+// Choosing BACK while "the window" is our high-resolution buffer means its
+// color attachment instead.
+void APIENTRY hvr_glDrawBuffer(GLenum mode) {
+    real_glDrawBuffer(hvr::internal_call() ? mode : hvr::stereo::map_color_buffer(true, mode));
+}
+
+void APIENTRY hvr_glReadBuffer(GLenum mode) {
+    real_glReadBuffer(hvr::internal_call() ? mode : hvr::stereo::map_color_buffer(false, mode));
 }
 
 }  // extern "C"

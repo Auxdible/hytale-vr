@@ -219,7 +219,7 @@ void Scene::destroy() {
     program_ = vao_ = vbo_ = 0;  // freed with the context
 }
 
-void Scene::capture_window(int width, int height) {
+void Scene::capture_window(int width, int height, GLuint source_fbo) {
     if (width <= 0 || height <= 0) return;
     if (!screen_fbo_ || width != width_ || height != height_) {
         if (screen_fbo_) glr.glDeleteFramebuffers(1, &screen_fbo_);
@@ -244,7 +244,7 @@ void Scene::capture_window(int width, int height) {
         glr.glFramebufferTexture2D(gl::DRAW_FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, screen_texture_, 0);
         logf("Screen texture %dx%d", width, height);
     }
-    glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, 0);
+    glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, source_fbo);
     glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, screen_fbo_);
     glr.glDisable(gl::SCISSOR_TEST);
     glr.glDisable(gl::FRAMEBUFFER_SRGB);

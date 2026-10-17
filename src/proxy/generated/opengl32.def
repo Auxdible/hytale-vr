@@ -74,7 +74,7 @@ EXPORTS
     glDisable = hvr_x_glDisable
     glDisableClientState = hvr_x_glDisableClientState
     glDrawArrays = hvr_glDrawArrays
-    glDrawBuffer = hvr_x_glDrawBuffer
+    glDrawBuffer = hvr_glDrawBuffer
     glDrawElements = hvr_glDrawElements
     glDrawPixels = hvr_x_glDrawPixels
     glEdgeFlag = hvr_x_glEdgeFlag
@@ -244,7 +244,7 @@ EXPORTS
     glRasterPos4iv = hvr_x_glRasterPos4iv
     glRasterPos4s = hvr_x_glRasterPos4s
     glRasterPos4sv = hvr_x_glRasterPos4sv
-    glReadBuffer = hvr_x_glReadBuffer
+    glReadBuffer = hvr_glReadBuffer
     glReadPixels = hvr_x_glReadPixels
     glRectd = hvr_x_glRectd
     glRectdv = hvr_x_glRectdv

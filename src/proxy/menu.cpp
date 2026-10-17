@@ -220,9 +220,9 @@ void tab_world(Settings& s) {
     ImGui::SameLine();
     hint("if you're in a world and still see the big screen");
     changed |= ImGui::Checkbox("Walk when you move in your room", &s.room_walk);
+    hint("Your character steps to where your head is, so leaning and walking around work.");
     changed |= ImGui::Checkbox("Stop pop-in (turn off Hytale's occlusion culling)", &s.no_occlusion);
     hint("Hytale hides what its own camera can't see; your eyes see a little more. Costs some speed.");
-    hint("Your character steps to where your head is, so leaning and walking around work.");
     ImGui::Spacing();
     ImGui::TextUnformatted("Turning");
     ImGui::SameLine(150 * g_scale);
@@ -236,6 +236,8 @@ void tab_world(Settings& s) {
     changed |= slider("HUD distance", &s.hud_distance, 0.6f, 5.0f, "%.1f m");
     changed |= slider("HUD width", &s.hud_width, 0.6f, 6.0f, "%.1f m");
     changed |= slider("World scale", &s.world_scale, 0.25f, 4.0f, "%.2fx");
+    changed |= slider("Sharpness", &s.render_scale, 1.0f, 2.5f, "%.2fx window");
+    hint(app::render_status().c_str());
     if (changed) app::settings_changed();
     ImGui::Spacing();
     if (ImGui::Button("Recenter")) session::recenter();
@@ -420,12 +422,13 @@ void draw_window() {
 
 }  // namespace
 
-void render(int pixels_w, int pixels_h, float points_to_pixels, unsigned extra_fbo) {
+void render(int pixels_w, int pixels_h, float points_to_pixels, unsigned target_fbo, float framebuffer_scale,
+            unsigned extra_fbo) {
     if (pixels_w <= 0 || pixels_h <= 0) return;
     if (!g_ready) init(pixels_h);
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = {static_cast<float>(pixels_w), static_cast<float>(pixels_h)};
-    io.DisplayFramebufferScale = {1, 1};
+    io.DisplayFramebufferScale = {framebuffer_scale, framebuffer_scale};
     LARGE_INTEGER now, frequency;
     QueryPerformanceCounter(&now);
     QueryPerformanceFrequency(&frequency);
@@ -438,12 +441,11 @@ void render(int pixels_w, int pixels_h, float points_to_pixels, unsigned extra_f
     ImGui::NewFrame();
     draw_window();
     ImGui::Render();
-    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
-    glr.glViewport(0, 0, pixels_w, pixels_h);
+    // The backend sets the viewport from DisplaySize * DisplayFramebufferScale.
+    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, target_fbo);
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     if (extra_fbo) {
         glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, extra_fbo);
-        glr.glViewport(0, 0, pixels_w, pixels_h);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
 }
