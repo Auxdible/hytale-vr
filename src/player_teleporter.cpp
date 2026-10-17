@@ -2975,6 +2975,8 @@ bool g_auto_start_press_f7 = false;
 ULONGLONG g_auto_start_next_ms = 0;
 int g_auto_start_failed_attempts = 0;
 DWORD g_auto_start_suppressed_pid = 0;
+// F7 toggles the overlay, so auto-start presses it at most once per Hytale launch.
+DWORD g_auto_start_f7_pid = 0;
 ULONGLONG g_both_grips_since = 0;
 bool g_controller_recenter_fired = false;
 
@@ -3074,13 +3076,15 @@ void update_auto_start() {
         g_auto_start_next_ms = now + 1000;
         return;
     }
-    if (g_auto_start_press_f7) {
-        // The last scan found no coordinates: toggle the F7 overlay, let it render, then scan.
+    if (g_auto_start_press_f7 && g_auto_start_f7_pid != pid) {
+        // The last scan found no coordinates: show the F7 overlay once, let it render, then scan.
         g_auto_start_press_f7 = false;
+        g_auto_start_f7_pid = pid;
         send_key_tap_with_hold(VK_F7, 35);
         g_auto_start_next_ms = now + kAutoStartF7SettleMs;
         return;
     }
+    g_auto_start_press_f7 = false;
     g_auto_start_scan_requested = true;
     start_f7_scan();
     if (!g_f7_scan_busy.load(std::memory_order_acquire) && !g_scan_thread) {
@@ -3588,7 +3592,12 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             return 0;
 #endif
 #ifdef HYTALE_CAMERA_MODE
-        case IDC_SCAN: start_f7_scan(); return 0;
+        case IDC_SCAN:
+            // Manual control takes over from auto-start until Hytale restarts.
+            g_auto_start_suppressed_pid = g_pid != 0 ? g_pid : find_hytale();
+            g_auto_start_scan_requested = false;
+            start_f7_scan();
+            return 0;
 #else
         case IDC_ATTACH: attach(); return 0;
         case IDC_SCAN: scan_candidates(); return 0;
@@ -3653,7 +3662,11 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             }
             if (g_vr_tracking) publish_vr_controls(true, false);
             return 0;
-        case IDC_VR_CENTER: recenter_vr_tracking(); return 0;
+        case IDC_VR_CENTER:
+            g_auto_start_suppressed_pid = g_pid != 0 ? g_pid : find_hytale();
+            g_auto_start_scan_requested = false;
+            recenter_vr_tracking();
+            return 0;
         case IDC_VR_STOP:
             // A manual stop holds auto-start off until Hytale restarts.
             g_auto_start_suppressed_pid = g_pid;
