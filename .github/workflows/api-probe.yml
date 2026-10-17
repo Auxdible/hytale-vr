@@ -25,42 +25,14 @@ jobs:
         run: |
           cp server.jar /tmp/server.jar; jar tf server.jar | grep -E '\.class$' | sed 's/\.class$//; s:/:.:g' > classes.txt
           wc -l classes.txt
-          cat > picked.txt <<'LIST'
-com.hypixel.hytale.server.core.entity.AnimationUtils
-com.hypixel.hytale.server.core.asset.type.item.config.ItemWeapon
-com.hypixel.hytale.server.core.asset.type.item.config.ItemTool
-com.hypixel.hytale.server.core.universe.world.storage.ChunkGrid
-com.hypixel.hytale.math.shape.Box
-com.hypixel.hytale.math.vector.Rotation3f
-com.hypixel.hytale.function.predicate.BiIntPredicate
-com.hypixel.hytale.server.core.modules.entity.damage.Damage$EntitySource
-com.hypixel.hytale.server.core.modules.entity.damage.Damage$Source
-com.hypixel.hytale.server.core.inventory.InventoryComponent$Hotbar
-com.hypixel.hytale.protocol.BlockMaterial
-com.hypixel.hytale.assetstore.map.BlockTypeAssetMap
-com.hypixel.hytale.assetstore.map.IndexedLookupTableAssetMap
-com.hypixel.hytale.assetstore.map.DefaultAssetMap
-com.hypixel.hytale.assetstore.map.AssetMapWithIndexes
-com.hypixel.hytale.assetstore.AssetMap
-com.hypixel.hytale.server.core.entity.entities.Player
-com.hypixel.hytale.server.core.entity.LivingEntity
-com.hypixel.hytale.server.core.entity.Entity
-com.hypixel.hytale.server.core.Message
-com.hypixel.hytale.server.core.modules.entity.damage.DamageCause
-com.hypixel.hytale.server.core.plugin.JavaPluginInit
-com.hypixel.hytale.server.core.universe.world.World
-com.hypixel.hytale.component.ComponentAccessor
-com.hypixel.hytale.server.core.modules.entity.component.HeadRotation
-com.hypixel.hytale.server.core.modules.entity.component.ModelComponent
-com.hypixel.hytale.server.core.asset.type.model.config.Model
-com.hypixel.hytale.server.core.modules.entity.teleport.Teleport
-com.hypixel.hytale.protocol.AnimationSlot
-LIST
           mkdir -p out
-          while read c; do echo "===== $c"; javap -cp /tmp/server.jar -public "$c" 2>&1 | head -300; done < picked.txt > out/api2.txt
-          while read c; do echo "===== $c"; javap -cp /tmp/server.jar -protected "$c" 2>&1 | grep -E "protected" ; done <<'LIST' >> out/api2.txt
-com.hypixel.hytale.server.core.plugin.PluginBase
-LIST
+          while read c; do echo "===== $c"; javap -cp /tmp/server.jar -public "$c" 2>&1 | head -300; done < probe-list.txt > out/api2.txt
+          echo "===== PluginBase protected" >> out/api2.txt
+          javap -cp /tmp/server.jar -protected com.hypixel.hytale.server.core.plugin.PluginBase | grep protected >> out/api2.txt
+          for c in com.hypixel.hytale.server.core.modules.interaction.interaction.config.client.BreakBlockInteraction com.hypixel.hytale.server.core.modules.interaction.interaction.config.server.DamageEntityInteraction; do
+            echo "===== DISASM $c"; javap -cp /tmp/server.jar -c -p "$c" | grep -B40 -E "performBlockDamage|executeDamage|EntitySource.\"<init>\"" | head -400
+          done > out/disasm.txt
+          javap -cp /tmp/server.jar -public com.hypixel.hytale.server.core.modules.interaction.interaction.config.server.combat.DamageCalculator >> out/api2.txt
           wc -c out/*
           cp picked.txt out/
           wc -c out/*
