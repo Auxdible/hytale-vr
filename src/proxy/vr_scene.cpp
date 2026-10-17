@@ -141,7 +141,12 @@ Mat4 aim(Vec3 position, Vec3 forward) {
 
 bool EyeTarget::resize(int width, int height) {
     if (fbo_ && width == width_ && height == height_) return true;
+    // Keep the framebuffer's name: Hytale may hold on to it (the window
+    // buffer), so only its images are replaced.
+    GLuint keep = fbo_;
+    fbo_ = 0;
     destroy();
+    fbo_ = keep;
     width_ = width;
     height_ = height;
     glr.glGenTextures(1, &color_);
@@ -153,7 +158,7 @@ bool EyeTarget::resize(int width, int height) {
     glr.glGenRenderbuffers(1, &depth_);
     glr.glBindRenderbuffer(gl::RENDERBUFFER, depth_);
     glr.glRenderbufferStorage(gl::RENDERBUFFER, gl::DEPTH24_STENCIL8, width, height);
-    glr.glGenFramebuffers(1, &fbo_);
+    if (!fbo_) glr.glGenFramebuffers(1, &fbo_);
     glr.glBindFramebuffer(gl::FRAMEBUFFER, fbo_);
     glr.glFramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, color_, 0);
     glr.glFramebufferRenderbuffer(gl::FRAMEBUFFER, gl::DEPTH_STENCIL_ATTACHMENT, gl::RENDERBUFFER, depth_);

@@ -1076,10 +1076,12 @@ void on_bind_image_texture(GLuint unit, GLuint texture, GLint level, GLboolean l
 
 void on_bind_framebuffer(GLenum target, GLuint framebuffer) {
     // Hytale may read back our buffer's name as the current binding and bind it again.
-    if (g_vfb_on && framebuffer != 0 && framebuffer == g_vfb.fbo()) framebuffer = 0;
+    // (Kept even after it's turned off, so that name never means anything else.)
+    const bool ours = framebuffer != 0 && framebuffer == g_vfb.fbo();
+    if (ours) framebuffer = 0;
     if (target == gl::FRAMEBUFFER || target == gl::DRAW_FRAMEBUFFER) t.draw_fb = framebuffer;
     if (target == gl::FRAMEBUFFER || target == gl::READ_FRAMEBUFFER) t.read_fb = framebuffer;
-    if (framebuffer == 0 && g_vfb_on && on_render_thread()) glr.glBindFramebuffer(target, g_vfb.fbo());
+    if (framebuffer == 0 && on_render_thread() && (g_vfb_on || ours)) glr.glBindFramebuffer(target, real_fb(0));
 }
 
 GLenum map_color_buffer(bool draw, GLenum mode) {
@@ -1105,7 +1107,8 @@ bool set_virtual_backbuffer(int width, int height) {
     // Hytale's current binding of "the window" moves with it.
     if (t.draw_fb == 0) glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, real_fb(0));
     if (t.read_fb == 0) glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, real_fb(0));
-    if (!on) g_vfb.destroy();
+    // Shrink rather than delete, so the framebuffer's name stays ours.
+    if (!on && g_vfb.fbo()) g_vfb.resize(16, 16);
     return on;
 }
 

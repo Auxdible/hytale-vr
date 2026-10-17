@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.6
+
+- Changing Sharpness while playing no longer turns the screen black. Resizing
+  made a new window buffer under a new name, and Hytale kept drawing into the
+  old one; the buffer now keeps its name when it changes size or turns off.
+
 ## 2.2.5
 
 - Sharpness: checks whether Hytale picked up the bigger size from its 3D
