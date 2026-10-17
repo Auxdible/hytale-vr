@@ -34,7 +34,8 @@ jobs:
       - name: Report build errors
         if: failure()
         shell: bash
-        run: grep -E "error (A|C|LNK)[0-9]+|: error" build.log | sort -u | head -40 | sed 's/^/::error::/' || true
+        run: |
+          grep -E "error (A|C|LNK)[0-9]+|: error" build.log | sort -u | head -40 | sed 's/^/::error::/' || true
 
       - name: Test
         run: ctest --preset release
