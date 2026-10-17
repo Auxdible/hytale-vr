@@ -1416,6 +1416,36 @@ void write_player_scan_log(HANDLE process, const Vec3& expected, float tolerance
     fclose(log);
 }
 
+// Records where the player block was found, to tune the fast first pass
+// (large arena sharing the F7 text's allocation, first 2 MiB) for new Hytale builds.
+void write_player_found_log(HANDLE process, uintptr_t base, int pass, uintptr_t f7_allocation_base) {
+    wchar_t temp[MAX_PATH]{};
+    if (GetTempPathW(MAX_PATH, temp) == 0) return;
+    const std::wstring directory = std::wstring(temp) + L"HytaleVR";
+    CreateDirectoryW(directory.c_str(), nullptr);
+    FILE* log = nullptr;
+    if (_wfopen_s(&log, (directory + L"\\player_scan.log").c_str(), L"w") != 0 || !log) return;
+    MEMORY_BASIC_INFORMATION mbi{};
+    uintptr_t region = 0;
+    uintptr_t allocation = 0;
+    SIZE_T region_size = 0;
+    if (VirtualQueryEx(process, reinterpret_cast<const void*>(base), &mbi, sizeof(mbi))) {
+        region = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+        allocation = reinterpret_cast<uintptr_t>(mbi.AllocationBase);
+        region_size = mbi.RegionSize;
+    }
+    fprintf(log, "found base %016llx pass %d region %016llx size %llu offset %llu alloc %016llx "
+                 "f7_alloc %016llx same_alloc %d\n",
+            static_cast<unsigned long long>(base), pass,
+            static_cast<unsigned long long>(region),
+            static_cast<unsigned long long>(region_size),
+            static_cast<unsigned long long>(base - region),
+            static_cast<unsigned long long>(allocation),
+            static_cast<unsigned long long>(f7_allocation_base),
+            allocation == f7_allocation_base ? 1 : 0);
+    fclose(log);
+}
+
 std::vector<Candidate> find_candidates(HANDLE process, const Vec3& expected, float tolerance,
                                        uintptr_t f7_allocation_base,
                                        const std::atomic_bool* cancel = nullptr) {
@@ -1462,7 +1492,9 @@ std::vector<Candidate> find_candidates(HANDLE process, const Vec3& expected, flo
     // Hytale places the coordinate object near the start of a large committed
     // arena. Scan the first 2 MiB of large arenas first, then fall back to the
     // complete address space only if the fast pass found nothing.
+    int found_pass = -1;
     for (int pass = 0; pass < 2 && candidates.empty(); ++pass) {
+        found_pass = pass;
         address = reinterpret_cast<uintptr_t>(info.lpMinimumApplicationAddress);
         while (address < maximum && candidates.size() < 128) {
             if (cancel && cancel->load(std::memory_order_relaxed)) return {};
@@ -1546,7 +1578,11 @@ std::vector<Candidate> find_candidates(HANDLE process, const Vec3& expected, flo
         }
     }
 
-    if (candidates.empty()) write_player_scan_log(process, expected, tolerance, loose_matches);
+    if (candidates.empty()) {
+        write_player_scan_log(process, expected, tolerance, loose_matches);
+    } else {
+        write_player_found_log(process, candidates.back().base, found_pass, f7_allocation_base);
+    }
     return candidates;
 }
 
