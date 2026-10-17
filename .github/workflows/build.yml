@@ -53,7 +53,8 @@ jobs:
           Write-Host "opengl32.dll exports $($names.Count) functions"
           if ($missing) { Write-Host "::error::Missing exports: $($missing -join ', ')"; exit 1 }
           $imports = & $dumpbin.FullName /dependents build/Release/opengl32.dll
-          if ($imports -match 'opengl32\.dll') { Write-Host '::error::The proxy imports opengl32.dll'; exit 1 }
+          # dumpbin lists each dependency on its own indented line.
+          if ($imports | Where-Object { $_ -match '^\s+opengl32\.dll\s*$' }) { Write-Host '::error::The proxy imports opengl32.dll'; exit 1 }
 
       - name: Package
         run: cmake --install build --config Release --prefix dist/HytaleVR
