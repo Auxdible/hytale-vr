@@ -31,7 +31,7 @@ namespace {
 
 constexpr wchar_t kApiHost[] = L"api.github.com";
 constexpr wchar_t kLatestReleasePath[] =
-    L"/repos/heurazy/HytaleVRInjector-mod/releases/latest";
+    L"/repos/Auxdible/hytale-vr/releases/latest";
 constexpr wchar_t kUserAgent[] = L"HytaleVR-Dashboard-Updater";
 constexpr uint64_t kMaximumReleaseBytes = 512ull * 1024ull * 1024ull;
 

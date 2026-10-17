@@ -1,6 +1,8 @@
-# HytaleVRInjector-mod
+# hytale-vr
 
-Experimental Windows x64 VR injector/dashboard for Hytale.
+Experimental Windows x64 VR mod for Hytale: SteamVR head tracking, tracked hands, and motion-controller play.
+
+Based on [HytaleVRInjector-mod](https://github.com/heurazy/HytaleVRInjector-mod) by heurazy (Apache-2.0). See `NOTICE` for attribution.
 
 This repository contains the native dashboard, the injected VR camera hook, the UI scaling hook, SteamVR action manifests, tests, and the minimal third-party sources/binaries required to rebuild the project.
 

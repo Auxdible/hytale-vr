@@ -1,0 +1,46 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset vs2022-x64
+
+      - name: Build
+        run: cmake --build --preset release
+
+      - name: Test
+        run: ctest --preset release
+
+      - name: Package
+        run: cmake --install build --config Release --prefix dist
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: hytale-vr-windows-x64
+          path: dist/
+          if-no-files-found: error
+
+      - name: Zip release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: Compress-Archive -Path dist/* -DestinationPath hytale-vr-${{ github.ref_name }}-windows-x64.zip
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: hytale-vr-${{ github.ref_name }}-windows-x64.zip
