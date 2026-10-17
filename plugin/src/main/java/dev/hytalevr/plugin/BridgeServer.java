@@ -13,18 +13,21 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
- * Line-based TCP link to the hytale-vr dashboard, bound to 127.0.0.1 so only
- * programs on this PC can reach it. One dashboard is served at a time; a new
- * connection replaces the old one.
+ * Line-based TCP link to the hytale-vr dashboard and VR viewer, bound to
+ * 127.0.0.1 so only programs on this PC can reach it. Each connection says
+ * what it is in its HELLO line.
  */
 final class BridgeServer implements AutoCloseable {
     static final int PORT = 47823;
     private static final int MAX_LINE = 4096;
+    private static final int MAX_CLIENTS = 8;
 
-    /** The live connection to one dashboard. */
+    /** One live connection. */
     static final class Client {
         private final Socket socket;
         private final OutputStream out;
+        /** Set from the HELLO line: "hytale-vr" (dashboard) or "hytale-vr-viewer". */
+        volatile String role = "";
 
         Client(Socket socket) throws IOException {
             this.socket = socket;
@@ -73,7 +76,8 @@ final class BridgeServer implements AutoCloseable {
     private final Consumer<String> log;
     private final int port;
     private volatile ServerSocket listener;
-    private volatile Client current;
+    private final java.util.concurrent.CopyOnWriteArrayList<Client> clients =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
     private volatile boolean running = true;
 
     BridgeServer(int port, Consumer<Client> onConnect, BiConsumer<Client, String> onLine, Consumer<String> log) {
@@ -89,9 +93,13 @@ final class BridgeServer implements AutoCloseable {
         thread.start();
     }
 
-    Client current() {
-        final Client client = current;
-        return client != null && client.isOpen() ? client : null;
+    /** Open connections that introduced themselves with the given role. */
+    java.util.List<Client> clients(String role) {
+        final java.util.List<Client> result = new java.util.ArrayList<>();
+        for (Client client : clients) {
+            if (client.isOpen() && role.equals(client.role)) result.add(client);
+        }
+        return result;
     }
 
     private void acceptLoop() {
@@ -104,10 +112,12 @@ final class BridgeServer implements AutoCloseable {
                 while (running) {
                     final Socket socket = server.accept();
                     socket.setTcpNoDelay(true);
-                    final Client previous = current;
-                    if (previous != null) previous.closeQuietly();
+                    if (clients.size() >= MAX_CLIENTS) {
+                        socket.close();
+                        continue;
+                    }
                     final Client client = new Client(socket);
-                    current = client;
+                    clients.add(client);
                     final Thread reader = new Thread(() -> readLoop(client, socket), "HytaleVR bridge client");
                     reader.setDaemon(true);
                     reader.start();
@@ -138,14 +148,14 @@ final class BridgeServer implements AutoCloseable {
             // Dashboard went away.
         } finally {
             client.closeQuietly();
+            clients.remove(client);
         }
     }
 
     @Override
     public void close() {
         running = false;
-        final Client client = current;
-        if (client != null) client.closeQuietly();
+        for (Client client : clients) client.closeQuietly();
         final ServerSocket server = listener;
         if (server != null) {
             try {

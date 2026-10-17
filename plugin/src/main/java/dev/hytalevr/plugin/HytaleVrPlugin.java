@@ -8,6 +8,9 @@ import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
 import java.util.Collection;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
 /**
@@ -17,6 +20,8 @@ import java.util.logging.Level;
  */
 public final class HytaleVrPlugin extends JavaPlugin {
     private BridgeServer bridge;
+    private final WorldStreamer streamer = new WorldStreamer();
+    private ScheduledExecutorService ticker;
 
     public HytaleVrPlugin(JavaPluginInit init) {
         super(init);
@@ -26,10 +31,23 @@ public final class HytaleVrPlugin extends JavaPlugin {
     protected void setup() {
         bridge = new BridgeServer(BridgeServer.PORT, this::onConnect, this::onLine, this::info);
         bridge.start();
+        ticker = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            final Thread thread = new Thread(runnable, "HytaleVR streamer");
+            thread.setDaemon(true);
+            return thread;
+        });
+        ticker.scheduleAtFixedRate(() -> {
+            try {
+                streamer.tick();
+            } catch (RuntimeException e) {
+                getLogger().at(Level.WARNING).withCause(e).log("VR world stream failed");
+            }
+        }, 50, 50, TimeUnit.MILLISECONDS);
     }
 
     @Override
     protected void shutdown() {
+        if (ticker != null) ticker.shutdownNow();
         if (bridge != null) bridge.close();
     }
 
@@ -39,10 +57,17 @@ public final class HytaleVrPlugin extends JavaPlugin {
 
     private void onConnect(BridgeServer.Client client) {
         client.send("HELLO hytale-vr-plugin 1");
-        info("VR dashboard connected");
     }
 
     private void onLine(BridgeServer.Client client, String line) {
+        if (line.startsWith("HELLO ")) {
+            final String[] parts = line.split(" ");
+            if (parts.length < 2) return;
+            client.role = parts[1];
+            info("VR " + (WorldStreamer.VIEWER_ROLE.equals(client.role) ? "viewer" : "dashboard") + " connected");
+            if (WorldStreamer.VIEWER_ROLE.equals(client.role)) streamer.addViewer(client);
+            return;
+        }
         if (line.startsWith("SWING ")) {
             final SwingMessage swing = SwingMessage.parse(line);
             if (swing == null) return;
