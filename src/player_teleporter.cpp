@@ -114,6 +114,7 @@ enum ControlId {
     IDC_VR_KEY_SPRINT,
     IDC_VR_KEY_USE,
     IDC_VR_KEY_INVENTORY,
+    IDC_VR_SWING_TO_HIT,
     IDC_TAB_DASHBOARD = 301,
     IDC_TAB_SETTINGS,
     IDC_TAB_RENDERING,
@@ -356,6 +357,8 @@ ULONGLONG g_last_stick_turn_tick = 0;
 bool g_left_mouse_down = false;
 bool g_right_mouse_down = false;
 bool g_prev_right_trigger = false;
+uint32_t g_last_swing_attack_sequence = 0;
+ULONGLONG g_swing_click_release_at = 0;
 bool g_prev_left_trigger = false;
 float g_turn_mouse_remainder = 0.0f;
 ULONGLONG g_last_turn_tick = 0;
@@ -908,7 +911,7 @@ void update_tab_visibility() {
     int showTab4 = ((g_current_tab == 0 && advanced) || g_current_tab == 4) ? SW_SHOW : SW_HIDE;
     int col4_ids[] = {
         IDC_VR_HAND_POINTER, IDC_VR_HIDE_RETICLE, IDC_VR_MENU_MOUSE, IDC_VR_NO_UBO_UI,
-        IDC_VR_QUEST_DEADZONE, IDC_VR_TURN_SPEED, IDC_VR_POINTER_DISTANCE,
+        IDC_VR_SWING_TO_HIT, IDC_VR_QUEST_DEADZONE, IDC_VR_TURN_SPEED, IDC_VR_POINTER_DISTANCE,
         IDC_VR_MENU_DISTANCE, IDC_VR_MENU_WIDTH, IDC_VR_UI_SCALE,
         IDC_VR_UI_EYE_OFFSET, IDC_VR_UI_Y_OFFSET, IDC_VR_MENU_IGNORE_DRAW,
         IDC_VR_HAND_DEPTH_TOLERANCE
@@ -993,7 +996,8 @@ void layout_controls_for_current_tab() {
         setPos(IDC_VR_HAND_POINTER, 815, 304, 220, 24);
         setPos(IDC_VR_HIDE_RETICLE, 815, 330, 220, 24);
         setPos(IDC_VR_MENU_MOUSE, 815, 356, 220, 24);
-        setPos(IDC_VR_NO_UBO_UI, 815, 382, 220, 24);
+        setPos(IDC_VR_NO_UBO_UI, 815, 382, 100, 24);
+        setPos(IDC_VR_SWING_TO_HIT, 925, 382, 110, 24);
         
         setPos(IDC_VR_QUEST_DEADZONE, 815, 424, 95, 24);
         setPos(IDC_VR_TURN_SPEED, 925, 424, 95, 24);
@@ -1059,6 +1063,7 @@ void layout_controls_for_current_tab() {
         setPos(IDC_VR_HIDE_RETICLE, 250, 210, 220, 20);
         setPos(IDC_VR_MENU_MOUSE, 250, 240, 220, 20);
         setPos(IDC_VR_NO_UBO_UI, 250, 270, 220, 20);
+        setPos(IDC_VR_SWING_TO_HIT, 250, 300, 220, 20);
         
         setPos(IDC_VR_QUEST_DEADZONE, 380, 372, 50, 24);
         setPos(IDC_VR_TURN_SPEED, 440, 372, 55, 24);
@@ -2024,8 +2029,34 @@ void update_right_hand_attack() {
                                           MOUSEEVENTF_RIGHTUP);
             }
         }
-    } else {
-        set_injected_left_mouse(trigger_can_click && right_trigger);
+    }
+
+    // The hook bumps physical_attack_ray_sequence once the game's interaction
+    // ray follows the swinging hand, so the hit lands where the swing points.
+    // Hold the button briefly: a same-batch down/up can fall between game ticks.
+    constexpr ULONGLONG kSwingClickHoldMs = 90;
+    const ULONGLONG now = GetTickCount64();
+    const bool swing_enabled =
+        IsDlgButtonChecked(g_window, IDC_VR_SWING_TO_HIT) == BST_CHECKED;
+    const uint32_t swing_sequence = g_vr_camera_shared
+        ? g_vr_camera_shared->physical_attack_ray_sequence
+        : 0u;
+    if (swing_sequence != 0 && swing_sequence != g_last_swing_attack_sequence) {
+        g_last_swing_attack_sequence = swing_sequence;
+        if (swing_enabled && focused && !menu_click_mode) {
+            g_swing_click_release_at = now + kSwingClickHoldMs;
+        }
+    }
+    if (g_swing_click_release_at != 0 &&
+        (now >= g_swing_click_release_at || !swing_enabled || !focused ||
+         menu_click_mode)) {
+        g_swing_click_release_at = 0;
+    }
+    const bool swing_click_held = g_swing_click_release_at != 0;
+
+    if (!menu_click_mode) {
+        set_injected_left_mouse((trigger_can_click && right_trigger) ||
+                                swing_click_held);
         set_injected_right_mouse(trigger_can_click && left_trigger);
     }
     g_prev_right_trigger = right_trigger;
@@ -2596,6 +2627,8 @@ void publish_vr_controls(bool enabled, bool shutdown_requested, bool unload_requ
         IsDlgButtonChecked(g_window, IDC_VR_INVERT_Z) == BST_CHECKED ? 1u : 0u;
     g_vr_camera_shared->hand_pointer_enabled =
         IsDlgButtonChecked(g_window, IDC_VR_HAND_POINTER) == BST_CHECKED ? 1u : 0u;
+    g_vr_camera_shared->physical_swing_enabled =
+        IsDlgButtonChecked(g_window, IDC_VR_SWING_TO_HIT) == BST_CHECKED ? 1u : 0u;
     g_vr_camera_shared->hide_center_reticle =
         IsDlgButtonChecked(g_window, IDC_VR_HIDE_RETICLE) == BST_CHECKED ? 1u : 0u;
     g_vr_camera_shared->ui_overlay_enabled =
@@ -2709,6 +2742,7 @@ void shutdown_vr() {
     g_menu_mouse_filter_valid = false;
     g_menu_mouse_active = false;
     g_menu_mouse_virtual_input = false;
+    g_swing_click_release_at = 0;
     g_prev_right_trigger = false;
     g_prev_left_trigger = false;
     g_prev_button_x = false;
@@ -3017,7 +3051,8 @@ void create_ui(HWND window) {
     add(L"BUTTON", L"Right-hand pointer", BS_AUTOCHECKBOX, 815, 304, 220, 24, IDC_VR_HAND_POINTER);
     add(L"BUTTON", L"Hide center reticle", BS_AUTOCHECKBOX, 815, 330, 220, 24, IDC_VR_HIDE_RETICLE);
     add(L"BUTTON", L"Menu mouse", BS_AUTOCHECKBOX, 815, 356, 220, 24, IDC_VR_MENU_MOUSE);
-    add(L"BUTTON", L"No UBO", BS_AUTOCHECKBOX, 815, 382, 220, 24, IDC_VR_NO_UBO_UI);
+    add(L"BUTTON", L"No UBO", BS_AUTOCHECKBOX, 815, 382, 100, 24, IDC_VR_NO_UBO_UI);
+    add(L"BUTTON", L"Swing to hit", BS_AUTOCHECKBOX, 925, 382, 110, 24, IDC_VR_SWING_TO_HIT);
     
     add(L"EDIT", L"0.35", WS_BORDER | ES_AUTOHSCROLL, 815, 424, 95, 24, IDC_VR_QUEST_DEADZONE);
     add(L"EDIT", L"450", WS_BORDER | ES_AUTOHSCROLL, 925, 424, 95, 24, IDC_VR_TURN_SPEED);
@@ -3100,6 +3135,7 @@ void create_ui(HWND window) {
     CheckDlgButton(g_window, IDC_VR_COMPOSITOR_DEPTH, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_MENU_MOUSE, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_NO_UBO_UI, BST_CHECKED);
+    CheckDlgButton(g_window, IDC_VR_SWING_TO_HIT, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_HIDE_FIRST_PERSON_HAND, BST_CHECKED);
     update_advanced_visibility();
 #endif

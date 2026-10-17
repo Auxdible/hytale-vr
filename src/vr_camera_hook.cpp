@@ -357,7 +357,9 @@ float g_controller_ray_offset[3]{};
 float g_controller_ray_direction[3]{};
 bool g_controller_game_ray_valid = false;
 bool g_controller_game_ray_physical_active = false;
-constexpr bool kPhysicalAttacksEnabled = false;
+bool physical_attacks_enabled() {
+    return g_shared && g_shared->physical_swing_enabled != 0;
+}
 
 constexpr GLenum GL_READ_FRAMEBUFFER_VALUE = 0x8CA8;
 constexpr GLenum GL_DRAW_FRAMEBUFFER_VALUE = 0x8CA9;
@@ -5154,7 +5156,7 @@ void apply_vr_camera(void* object) {
     bool physical_ray_active = false;
     Matrix4 gameplay_view_delta = identity_matrix();
     AcquireSRWLockShared(&g_pose_lock);
-    physical_ray_active = kPhysicalAttacksEnabled &&
+    physical_ray_active = physical_attacks_enabled() &&
                           GetTickCount64() < g_physical_attack_ray_until;
     int gameplay_hand = physical_ray_active ? g_physical_attack_ray_hand : 1;
     bool selected_pose_valid = gameplay_hand == 0
@@ -5766,7 +5768,7 @@ void update_vr_actions() {
             }
         }
     }
-    if constexpr (kPhysicalAttacksEnabled) {
+    if (physical_attacks_enabled()) {
         const ULONGLONG physical_now = GetTickCount64();
         update_physical_controller_locked(0, left_pose.pose, left_pose_active, physical_now);
         update_physical_controller_locked(1, right_pose.pose, pose_active, physical_now);

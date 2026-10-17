@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 - Swing to hit
+
+- Physical swings now attack: a fast swing of either controller aims the game's interaction ray along that hand and sends one primary attack, so swinging a pickaxe breaks blocks and swinging a sword hits.
+- Added a `Swing to hit` toggle (on by default) next to the pointer options.
+- Bumped the shared dashboard/hook layout version to 123; replace the dashboard and hook DLL together.
+
 ## [1.0.4] - 2026-08-24
 
 ### SteamVR depth and render reliability

@@ -484,6 +484,9 @@ int main() {
     success &= check(std::fabs(motion_history.net_vertical_movement(200, 250) -
                                0.12f) < 0.0001f,
                      "physical jump history must preserve vertical displacement");
+    success &= check(physical_swing_requested(3.0f) &&
+                         !physical_swing_requested(2.0f),
+                     "physical swing must hit only above the 2.5 m/s tip speed");
     success &= check(physical_jump_requested(1.62f, 1.50f, 0.12f) &&
                          !physical_jump_requested(1.54f, 1.50f, 0.12f),
                      "physical jump must use the configured height and movement thresholds");

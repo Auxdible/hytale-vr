@@ -4,7 +4,7 @@
 
 constexpr wchar_t kVrCameraMappingName[] = L"Local\\HytaleVrCamera_v122FloorAligned";
 constexpr uint32_t kVrCameraMagic = 0x48595652; // HYVR
-constexpr uint32_t kVrCameraVersion = 122;
+constexpr uint32_t kVrCameraVersion = 123;
 
 constexpr uint32_t kVrEffectShadows = 1u << 0;
 constexpr uint32_t kVrEffectParticles = 1u << 1;
@@ -217,4 +217,6 @@ struct VrCameraShared {
     volatile float physical_hmd_vertical_movement = 0.0f;
     volatile float physical_left_swing_speed = 0.0f;
     volatile float physical_right_swing_speed = 0.0f;
+    // Written by the dashboard: a fast controller swing triggers a primary attack.
+    volatile uint32_t physical_swing_enabled = 1;
 };
