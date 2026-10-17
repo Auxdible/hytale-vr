@@ -4,7 +4,7 @@
 
 constexpr wchar_t kVrCameraMappingName[] = L"Local\\HytaleVrCamera_v122FloorAligned";
 constexpr uint32_t kVrCameraMagic = 0x48595652; // HYVR
-constexpr uint32_t kVrCameraVersion = 123;
+constexpr uint32_t kVrCameraVersion = 124;
 
 constexpr uint32_t kVrEffectShadows = 1u << 0;
 constexpr uint32_t kVrEffectParticles = 1u << 1;
@@ -219,4 +219,13 @@ struct VrCameraShared {
     volatile float physical_right_swing_speed = 0.0f;
     // Written by the dashboard: a fast controller swing triggers a primary attack.
     volatile uint32_t physical_swing_enabled = 1;
+    // Written by the hook every frame: each hand's pointing ray in Hytale's
+    // world axes, with the origin relative to the player's native eye.
+    // [0..2] origin, [3..5] unit direction. Index 0 is left, 1 is right.
+    volatile uint32_t hand_ray_valid[2] = {0, 0};
+    volatile float hand_ray[2][6] = {};
+    volatile uint32_t hand_ray_frame = 0;
+    // Hytale's own look direction in the same axes, so the plugin can check
+    // the render axes against the server's before trusting a hand ray.
+    volatile float native_look[3] = {};
 };

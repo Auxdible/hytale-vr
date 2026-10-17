@@ -31,13 +31,23 @@ This is an experimental mod. It is not affiliated with or endorsed by Hytale, Hy
 ### Playing
 
 1. Start SteamVR, then Hytale.
-2. Enter a world or join a server, and click into the Hytale window.
+2. Click into the Hytale window.
 
-That's it: with `Auto-start VR` on (the default), the dashboard shows the F7 coordinates itself, finds your player, and starts VR. It retries while you are in menus, and re-arms when Hytale restarts. Hold both grips for 1.5 seconds to recenter. `Stop VR` pauses auto-start until Hytale restarts.
-
-To do it by hand instead, turn off `Auto-start VR`, press `F7` in game, click `Scan player block`, select the block, and click `Center VR`.
+That's it: with `Auto-start VR` on (the default), the dashboard starts VR as soon as Hytale is focused, with no F7 overlay or memory scan. Hold both grips for 1.5 seconds to recenter. `Stop VR` pauses auto-start until Hytale restarts.
 
 Keep SteamVR running while using the mod. Hytale must stay focused for the mod controls to work correctly.
+
+### Turning
+
+`Snap turning` (on by default) turns 30 degrees per flick of the right stick. Turn it off for smooth turning at `Turn speed` degrees per second. The dashboard measures how far Hytale turns per mouse movement while you play, so turning stays accurate whatever your in-game mouse sensitivity is.
+
+### Server plugin: hits where your hand points
+
+Without help, a swing can only hit what you are looking at, because that is all Hytale's client aims at. The package includes `HytaleVR.jar`, a Hytale server plugin that resolves each swing along your hand's own ray instead, using Hytale's block-breaking and damage rules.
+
+The dashboard copies it into `%APPDATA%\Hytale\UserData\Mods` on start. Enable `HytaleVR` in your world's mods list if Hytale asks. The dashboard status line says when the plugin is connected. It only listens on `127.0.0.1`, and works in singleplayer worlds or on a server running on the same PC.
+
+Swinging at a mob deals a flat amount of damage by what you hold (5 with a weapon, 3 with a tool, 1 otherwise), because Hytale's own weapon damage lives in its attack animations, which the plugin cannot replay yet.
 
 ### VR Hands and Held Items
 

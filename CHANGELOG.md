@@ -4,12 +4,15 @@
 
 - Physical swings now attack: a fast swing of either controller aims the game's interaction ray along that hand and sends one primary attack, so swinging a pickaxe breaks blocks and swinging a sword hits.
 - Added a `Swing to hit` toggle (on by default) next to the pointer options.
-- Added `Auto-start VR` (on by default): once SteamVR and Hytale run and Hytale is focused in a world, the dashboard shows F7, finds the player block and starts VR by itself, retrying from menus and re-arming when Hytale restarts. It never steals focus.
+- Added `Auto-start VR` (on by default): once SteamVR and Hytale run and Hytale is focused, the dashboard starts VR by itself and re-arms when Hytale restarts. It never steals focus.
+- VR no longer needs the F7 overlay or the player-block memory scan; the scan only fills the coordinate readout.
+- Added `Snap turning` (on by default, 30 degrees per flick). Smooth turning now uses `Turn speed` in degrees per second (default 120), and the dashboard measures Hytale's mouse sensitivity while playing instead of assuming it, which keeps head-follow and turns on target.
+- Added the `HytaleVR.jar` server plugin and a local link from the dashboard: with it, swings hit the block or mob along the swinging hand instead of what the head looks at. The dashboard installs it into Hytale's mods folder.
 - The dashboard registers with SteamVR and is launched in the background (minimized) whenever SteamVR starts; only one dashboard runs at a time.
 - Holding both grips for 1.5 seconds recenters VR.
 - Controller haptics: the swinging hand buzzes on a physical hit, the clicking hand ticks on menu clicks, and both hands pulse when VR starts or recenters.
 - Hytale's character textures and catalogs are no longer shipped with the mod; they are read from your Hytale `Assets.zip` and cached next to the hook on first use.
-- Bumped the shared dashboard/hook layout version to 123; replace the dashboard and hook DLL together.
+- Bumped the shared dashboard/hook layout version to 124; replace the dashboard and hook DLL together.
 
 ## [1.0.4] - 2026-08-24
 

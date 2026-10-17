@@ -4667,6 +4667,50 @@ Matrix4 horizontal_view_with_yaw(const Matrix4& position_source, float yaw) {
     return result;
 }
 
+// Publishes both hands' rays for the server plugin, which aims hits from the
+// hand instead of the head. Origins are relative to Hytale's native eye.
+void publish_hand_rays(const Matrix4& floor_aligned_view, const Matrix4& native_view,
+                       const VrCameraControls& controls, float world_scale) {
+    if (!g_shared) return;
+    float native_eye[3]{};
+    float native_forward[3]{};
+    hytalevr::view_pose(native_view, native_eye, native_forward);
+    for (int axis = 0; axis < 3; ++axis) g_shared->native_look[axis] = native_forward[axis];
+    float poses[2][12]{};
+    bool valid[2]{};
+    float origin_pose[12]{};
+    bool origin_valid = false;
+    AcquireSRWLockShared(&g_pose_lock);
+    origin_valid = g_hmd_origin_valid;
+    std::copy(std::begin(g_hmd_origin_pose), std::end(g_hmd_origin_pose), std::begin(origin_pose));
+    valid[0] = g_left_controller_valid;
+    valid[1] = g_right_controller_valid;
+    std::copy(std::begin(g_left_controller_pose), std::end(g_left_controller_pose), std::begin(poses[0]));
+    std::copy(std::begin(g_right_controller_pose), std::end(g_right_controller_pose), std::begin(poses[1]));
+    ReleaseSRWLockShared(&g_pose_lock);
+    for (int hand = 0; hand < 2; ++hand) {
+        if (!origin_valid || !valid[hand]) {
+            g_shared->hand_ray_valid[hand] = 0;
+            continue;
+        }
+        const Matrix4 delta = hytalevr::relative_view_pose(
+            origin_pose, poses[hand],
+            std::clamp(controls.translation_scale, 0.0f, 10.0f) * world_scale,
+            std::clamp(controls.translation_y_scale, 0.0f, 10.0f) * world_scale,
+            controls.invert_translation_xz != 0);
+        float origin[3]{};
+        float direction[3]{};
+        hytalevr::view_pose(multiply(delta, floor_aligned_view), origin, direction);
+        g_shared->hand_ray_valid[hand] = 0;
+        for (int axis = 0; axis < 3; ++axis) {
+            g_shared->hand_ray[hand][axis] = origin[axis] - native_eye[axis];
+            g_shared->hand_ray[hand][3 + axis] = direction[axis];
+        }
+        g_shared->hand_ray_valid[hand] = 1;
+    }
+    InterlockedIncrement(reinterpret_cast<volatile LONG*>(&g_shared->hand_ray_frame));
+}
+
 Matrix4 aggressive_game_view(const Matrix4& native_view,
                              const VrCameraControls& controls,
                              float& native_delta,
@@ -5240,6 +5284,8 @@ void apply_vr_camera(void* object) {
     g_controller_game_ray_valid = ray_valid;
     g_controller_game_ray_physical_active = ray_valid && physical_ray_active;
     ReleaseSRWLockExclusive(&g_game_ray_lock);
+
+    publish_hand_rays(floor_aligned_view, view, controls, world_scale);
 
     g_shared->controller_ray_origin_x = ray_offset[0];
     g_shared->controller_ray_origin_y = ray_offset[1];

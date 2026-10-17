@@ -89,6 +89,7 @@ target_link_libraries(hytale_vr_camera_hook PRIVATE
 add_executable(hytale_camera_dashboard WIN32
     src/player_teleporter.cpp
     src/dashboard_updater.cpp
+    src/plugin_bridge.cpp
 )
 add_dependencies(hytale_camera_dashboard HytaleUIScaleHook)
 
@@ -160,6 +161,7 @@ target_compile_definitions(hytale_player_teleporter PRIVATE
 )
 
 target_link_libraries(hytale_camera_dashboard PRIVATE
+    ws2_32
     bcrypt
     comctl32
     shell32
@@ -231,6 +233,15 @@ if(BUILD_TESTING)
     )
     hytale_target_defaults(hytale_dashboard_update_tests)
     add_test(NAME dashboard_update COMMAND hytale_dashboard_update_tests)
+
+    add_executable(hytale_plugin_bridge_tests
+        tests/plugin_bridge_tests.cpp
+        src/plugin_bridge.cpp
+    )
+    target_include_directories(hytale_plugin_bridge_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(hytale_plugin_bridge_tests PRIVATE ws2_32)
+    hytale_target_defaults(hytale_plugin_bridge_tests)
+    add_test(NAME plugin_bridge COMMAND hytale_plugin_bridge_tests)
 
     add_executable(hytale_vr_math_tests tests/vr_math_tests.cpp)
     target_include_directories(hytale_vr_math_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")

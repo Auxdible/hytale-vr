@@ -28,6 +28,20 @@ jobs:
       - name: Package
         run: cmake --install build --config Release --prefix dist
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.1.0'
+
+      - name: Build server plugin
+        run: |
+          gradle -p plugin build --no-daemon
+          Copy-Item plugin/build/libs/HytaleVR.jar dist/
+
       - name: Upload zip
         uses: actions/upload-artifact@v4
         with:

@@ -23,6 +23,7 @@
 
 #include "dashboard_key_bindings.h"
 #include "dashboard_updater.h"
+#include "plugin_bridge.h"
 
 #ifdef HYTALE_CAMERA_MODE
 #include <openvr.h>
@@ -119,6 +120,7 @@ enum ControlId {
     IDC_VR_KEY_INVENTORY,
     IDC_VR_SWING_TO_HIT,
     IDC_VR_AUTO_START,
+    IDC_VR_SNAP_TURN,
     IDC_TAB_DASHBOARD = 301,
     IDC_TAB_SETTINGS,
     IDC_TAB_RENDERING,
@@ -367,10 +369,19 @@ bool g_left_mouse_down = false;
 bool g_right_mouse_down = false;
 bool g_prev_right_trigger = false;
 uint32_t g_last_swing_attack_sequence = 0;
+uint32_t g_last_plugin_attack_sequence = 0;
 ULONGLONG g_swing_click_release_at = 0;
 bool g_prev_left_trigger = false;
 float g_turn_mouse_remainder = 0.0f;
 ULONGLONG g_last_turn_tick = 0;
+// Mouse pixels Hytale turns per radian. It depends on the player's in-game
+// sensitivity, so it is measured while VR runs instead of assumed.
+float g_mouse_pixels_per_radian = 650.0f;
+bool g_turn_calibration_open = false;
+float g_turn_calibration_pixels = 0.0f;
+float g_turn_calibration_start_yaw = 0.0f;
+ULONGLONG g_turn_calibration_last_send = 0;
+bool g_snap_turn_armed = true;
 bool g_menu_mouse_active = false;
 bool g_menu_mouse_virtual_input = false;
 POINT g_menu_mouse_client{};
@@ -669,7 +680,8 @@ LRESULT CALLBACK ToggleSubclassProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM 
             g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
             const int id = GetDlgCtrlID(hwnd);
             const bool isSidebarToggle =
-                (id == IDC_VR_ADVANCED_OPTIONS || id == IDC_VR_AUTO_START);
+                (id == IDC_VR_ADVANCED_OPTIONS || id == IDC_VR_AUTO_START ||
+                 id == IDC_VR_SNAP_TURN);
             const bool isHovered = (s_hoveredToggle == hwnd);
             g.Clear(isSidebarToggle ? gdip_rgb(12, 12, 16) : gdip_rgb(13, 13, 17));
             
@@ -936,6 +948,7 @@ void update_tab_visibility() {
     ShowWindow(control(IDC_STATUS), SW_SHOW);
     ShowWindow(control(IDC_VR_ADVANCED_OPTIONS), SW_SHOW);
     ShowWindow(control(IDC_VR_AUTO_START), SW_SHOW);
+    ShowWindow(control(IDC_VR_SNAP_TURN), SW_SHOW);
     
     // Force repaint of the main window to update panels
     InvalidateRect(g_window, nullptr, TRUE);
@@ -2087,6 +2100,39 @@ void send_middle_click() {
     SendInput(static_cast<UINT>(std::size(inputs)), inputs, sizeof(INPUT));
 }
 
+hytalevr::PluginBridge& plugin_bridge() {
+    static hytalevr::PluginBridge bridge;
+    return bridge;
+}
+
+void send_plugin_swing() {
+    if (!g_vr_camera_shared) return;
+    const int hand = g_vr_camera_shared->physical_attack_hand == 0 ? 0 : 1;
+    if (g_vr_camera_shared->hand_ray_valid[hand] == 0) return;
+    hytalevr::HandRay ray{};
+    for (int axis = 0; axis < 3; ++axis) {
+        ray.origin[axis] = g_vr_camera_shared->hand_ray[hand][axis];
+        ray.direction[axis] = g_vr_camera_shared->hand_ray[hand][3 + axis];
+    }
+    const float speed = hand == 0 ? g_vr_camera_shared->physical_left_swing_speed
+                                  : g_vr_camera_shared->physical_right_swing_speed;
+    const float look[3]{g_vr_camera_shared->native_look[0], g_vr_camera_shared->native_look[1],
+                        g_vr_camera_shared->native_look[2]};
+    plugin_bridge().send_line(hytalevr::format_swing_message(hand, ray, speed, look));
+}
+
+// Keeps the plugin link alive and reports it in the pose label.
+void update_plugin_bridge() {
+    const bool was_connected = plugin_bridge().connected();
+    plugin_bridge().poll(GetTickCount64());
+    const bool connected = plugin_bridge().connected();
+    if (connected != was_connected && g_vr_tracking) {
+        set_status(connected
+            ? L"VR active. Server plugin connected: swings hit where your hand points."
+            : L"VR active. Server plugin not connected: swings hit where you look.");
+    }
+}
+
 void update_right_hand_attack() {
     const bool pointer_enabled =
         IsDlgButtonChecked(g_window, IDC_VR_HAND_POINTER) == BST_CHECKED;
@@ -2137,9 +2183,22 @@ void update_right_hand_attack() {
     const uint32_t swing_sequence = g_vr_camera_shared
         ? g_vr_camera_shared->physical_attack_ray_sequence
         : 0u;
+    // With the server plugin connected, the swing is resolved on the server
+    // along the hand's own ray, so no click is sent (a click hits whatever the
+    // head looks at).
+    const bool plugin_hits = plugin_bridge().connected();
+    const uint32_t attack_sequence = g_vr_camera_shared
+        ? g_vr_camera_shared->physical_attack_sequence
+        : 0u;
+    if (attack_sequence != g_last_plugin_attack_sequence) {
+        g_last_plugin_attack_sequence = attack_sequence;
+        if (plugin_hits && swing_enabled && !menu_click_mode) {
+            send_plugin_swing();
+        }
+    }
     if (swing_sequence != 0 && swing_sequence != g_last_swing_attack_sequence) {
         g_last_swing_attack_sequence = swing_sequence;
-        if (swing_enabled && focused && !menu_click_mode) {
+        if (swing_enabled && focused && !menu_click_mode && !plugin_hits) {
             g_swing_click_release_at = now + kSwingClickHoldMs;
         }
     }
@@ -2320,6 +2379,39 @@ float apply_stick_deadzone(float value, float deadzone) {
     return std::copysign(std::clamp(normalized, 0.0f, 1.0f), value);
 }
 
+// Compares the mouse movement the dashboard sent with how far Hytale's camera
+// actually turned, once the camera has settled, and refines pixels-per-radian.
+void update_turn_calibration(ULONGLONG now) {
+    if (!g_turn_calibration_open || now - g_turn_calibration_last_send < 150) return;
+    g_turn_calibration_open = false;
+    if (!g_vr_camera_shared || g_vr_camera_shared->camera_yaw_valid == 0) return;
+    const float turned = std::fabs(normalize_angle(
+        g_vr_camera_shared->native_camera_yaw - g_turn_calibration_start_yaw));
+    const float pixels = std::fabs(g_turn_calibration_pixels);
+    if (pixels < 120.0f || pixels > 1600.0f || turned < 0.08f) return;
+    const float measured = pixels / turned;
+    if (measured < 80.0f || measured > 8000.0f) return;
+    g_mouse_pixels_per_radian += (measured - g_mouse_pixels_per_radian) * 0.35f;
+}
+
+void send_turn_mouse(LONG mouse_x, ULONGLONG now) {
+    if (!g_turn_calibration_open && g_vr_camera_shared &&
+        g_vr_camera_shared->camera_yaw_valid != 0) {
+        g_turn_calibration_open = true;
+        g_turn_calibration_pixels = 0.0f;
+        g_turn_calibration_start_yaw = g_vr_camera_shared->native_camera_yaw;
+    }
+    INPUT input{};
+    input.type = INPUT_MOUSE;
+    input.mi.dx = mouse_x;
+    input.mi.dwFlags = MOUSEEVENTF_MOVE;
+    if (SendInput(1, &input, sizeof(input)) == 1) {
+        g_turn_mouse_remainder -= static_cast<float>(mouse_x);
+        g_turn_calibration_pixels += static_cast<float>(mouse_x);
+        g_turn_calibration_last_send = now;
+    }
+}
+
 void update_quest_turning() {
     const ULONGLONG now = GetTickCount64();
     const float elapsed = g_last_turn_tick == 0
@@ -2331,19 +2423,37 @@ void update_quest_turning() {
         !g_vr_camera_shared || !g_vr_camera_shared->controller_active ||
         !hytale_has_input_focus()) {
         g_turn_mouse_remainder = 0.0f;
+        g_turn_calibration_open = false;
         if (g_vr_camera_shared) g_vr_camera_shared->native_head_sync_active = 0;
         return;
     }
+    update_turn_calibration(now);
 
     const float deadzone = std::clamp(get_float(IDC_VR_QUEST_DEADZONE, 0.35f),
                                       0.10f, 0.90f);
-    const float axis = apply_stick_deadzone(
-        g_vr_camera_shared->controller_turn_x, deadzone);
-    const float speed = std::clamp(get_float(IDC_VR_TURN_SPEED, 450.0f),
-                                   50.0f, 2000.0f);
-    g_turn_mouse_remainder += axis * speed * elapsed;
+    const float raw_turn = g_vr_camera_shared->controller_turn_x;
+    bool stick_turning = false;
+    if (IsDlgButtonChecked(g_window, IDC_VR_SNAP_TURN) == BST_CHECKED) {
+        // One fixed turn per flick; the stick must return to center to turn again.
+        constexpr float kSnapRadians = 30.0f * 3.14159265f / 180.0f;
+        if (std::fabs(raw_turn) < 0.35f) {
+            g_snap_turn_armed = true;
+        } else if (g_snap_turn_armed && std::fabs(raw_turn) > 0.75f) {
+            g_snap_turn_armed = false;
+            g_turn_mouse_remainder +=
+                std::copysign(kSnapRadians * g_mouse_pixels_per_radian, raw_turn);
+            stick_turning = true;
+        }
+        if (!g_snap_turn_armed) stick_turning = true;
+    } else {
+        const float axis = apply_stick_deadzone(raw_turn, deadzone);
+        const float degrees_per_second =
+            std::clamp(get_float(IDC_VR_TURN_SPEED, 120.0f), 20.0f, 360.0f);
+        g_turn_mouse_remainder += axis * degrees_per_second * (3.14159265f / 180.0f) *
+                                  g_mouse_pixels_per_radian * elapsed;
+        stick_turning = std::fabs(axis) > 0.001f;
+    }
 
-    const bool stick_turning = std::fabs(axis) > 0.001f;
     if (stick_turning) {
         g_last_stick_turn_tick = now;
     }
@@ -2364,10 +2474,10 @@ void update_quest_turning() {
         const float yaw_error = normalize_angle(
             target_native_yaw - g_vr_camera_shared->native_camera_yaw);
         if (std::fabs(yaw_error) > 0.003f) {
-            constexpr float kHeadYawMousePixelsPerRadian = 650.0f;
-            const float max_pixels = std::clamp(2600.0f * elapsed, 4.0f, 28.0f);
+            const float max_pixels = std::clamp(
+                4.0f * g_mouse_pixels_per_radian * elapsed, 4.0f, 0.045f * g_mouse_pixels_per_radian);
             const float pixels = std::clamp(
-                yaw_error * kHeadYawMousePixelsPerRadian, -max_pixels, max_pixels);
+                yaw_error * g_mouse_pixels_per_radian, -max_pixels, max_pixels);
             g_head_turn_mouse_remainder += pixels;
             head_sync_active = true;
         }
@@ -2378,14 +2488,7 @@ void update_quest_turning() {
     g_head_turn_mouse_remainder = 0.0f;
     const LONG mouse_x = static_cast<LONG>(std::lround(g_turn_mouse_remainder));
     if (mouse_x == 0) return;
-
-    INPUT input{};
-    input.type = INPUT_MOUSE;
-    input.mi.dx = mouse_x;
-    input.mi.dwFlags = MOUSEEVENTF_MOVE;
-    if (SendInput(1, &input, sizeof(input)) == 1) {
-        g_turn_mouse_remainder -= static_cast<float>(mouse_x);
-    }
+    send_turn_mouse(mouse_x, now);
 }
 
 bool read_quest_controls(float& x, float& y, bool& jump, bool& sprint) {
@@ -2778,7 +2881,7 @@ void publish_vr_controls(bool enabled, bool shutdown_requested, bool unload_requ
     g_vr_camera_shared->hand_pointer_distance =
         std::clamp(get_float(IDC_VR_POINTER_DISTANCE, 4.0f), 0.5f, 10.0f);
     g_vr_camera_shared->turn_speed =
-        std::clamp(get_float(IDC_VR_TURN_SPEED, 450.0f), 50.0f, 2000.0f);
+        std::clamp(get_float(IDC_VR_TURN_SPEED, 120.0f), 20.0f, 360.0f);
     g_vr_camera_shared->vr_resolution_scale =
         std::clamp(get_float(IDC_VR_RESOLUTION_SCALE, 125.0f), 100.0f, 200.0f) * 0.01f;
     g_vr_camera_shared->first_person_hand_hidden =
@@ -2887,12 +2990,6 @@ void start_vr_tracking() {
         set_status(L"Non-VR mode active. Only render filters are applied.");
         return;
     }
-    const int selected = selected_candidate();
-    if (selected < 0 || static_cast<size_t>(selected) >= g_candidates.size()) {
-        set_status(L"Scan the player block first.");
-        return;
-    }
-
     if (!g_vr_system) {
         vr::EVRInitError error = vr::VRInitError_None;
         g_vr_system = vr::VR_Init(&error, vr::VRApplication_Background);
@@ -2918,15 +3015,17 @@ void start_vr_tracking() {
     if (!inject_vr_camera_hook()) {
         return;
     }
-    const uintptr_t player_base = g_candidates[selected].base;
-    if (!read_exact(player_base + kCoordinateOffsets[2], &player, sizeof(player))) {
-        set_status(L"The player block is no longer valid. Scan again.");
-        return;
+    // The player block only feeds the coordinate readout; VR itself runs from
+    // Hytale's camera, so a missing or stale scan never blocks starting.
+    const int selected = selected_candidate();
+    g_active_player_base = 0;
+    g_player_position_available = false;
+    if (selected >= 0 && static_cast<size_t>(selected) < g_candidates.size() &&
+        read_exact(g_candidates[selected].base + kCoordinateOffsets[2], &player, sizeof(player))) {
+        g_target = player;
+        g_active_player_base = g_candidates[selected].base;
+        g_player_position_available = true;
     }
-
-    g_target = player;
-    g_active_player_base = player_base;
-    g_player_position_available = true;
     g_vr_tracking = true;
     ++g_vr_recenter_sequence;
     SetTimer(g_window, kVrTimer, 8, nullptr);
@@ -2946,6 +3045,7 @@ void update_vr_tracking() {
         SetWindowTextW(control(IDC_VR_POSE), L"Non-VR: active");
         return;
     }
+    update_plugin_bridge();
     update_quest_turning();
     update_quest_locomotion();
     update_vr_menu_mouse();
@@ -2954,18 +3054,11 @@ void update_vr_tracking() {
     publish_vr_controls(true, false);
 
     Vec3 player{};
-    if (!read_player_position(player)) {
-        if (g_player_position_available) {
-            g_player_position_available = false;
-            set_status(L"VR remains active, but player coordinates are temporarily unavailable. Scan again to refresh them.");
-        }
+    if (g_active_player_base == 0 || !read_player_position(player)) {
+        g_player_position_available = false;
         return;
     }
-
-    if (!g_player_position_available) {
-        g_player_position_available = true;
-        set_status(L"VR active. Player-coordinate reading recovered.");
-    }
+    g_player_position_available = true;
     g_target = player;
 
     set_float(IDC_TARGET_X, g_target.x);
@@ -3058,22 +3151,17 @@ HWND add_control(const wchar_t* klass, const wchar_t* text, DWORD style,
 
 #ifdef HYTALE_CAMERA_MODE
 // Auto-start: once SteamVR and Hytale both run and the player is in Hytale,
-// replay the manual flow (show F7, scan the player block, Center VR) so the
-// dashboard never has to be touched. It never steals focus from other apps.
+// start VR so the dashboard never has to be touched. It never steals focus
+// from other apps.
 constexpr char kDashboardAppKey[] = "com.hytalevr.dashboard";
 constexpr ULONGLONG kAutoStartRetryMs = 4000;
 constexpr ULONGLONG kAutoStartSlowRetryMs = 15000;
-constexpr ULONGLONG kAutoStartF7SettleMs = 600;
 constexpr int kAutoStartFastAttempts = 6;
 constexpr ULONGLONG kControllerRecenterHoldMs = 1500;
 
-bool g_auto_start_scan_requested = false;
-bool g_auto_start_press_f7 = false;
 ULONGLONG g_auto_start_next_ms = 0;
 int g_auto_start_failed_attempts = 0;
 DWORD g_auto_start_suppressed_pid = 0;
-// F7 toggles the overlay, so auto-start presses it at most once per Hytale launch.
-DWORD g_auto_start_f7_pid = 0;
 ULONGLONG g_both_grips_since = 0;
 bool g_controller_recenter_fired = false;
 
@@ -3119,29 +3207,34 @@ void update_steamvr_auto_launch() {
     if (own_context) vr::VR_Shutdown();
 }
 
+// Keeps the server plugin in Hytale's mods folder up to date, so singleplayer
+// worlds load it without a manual copy. Skipped when Hytale is not installed.
+void install_server_plugin() {
+    const std::wstring source = executable_directory() + L"\\HytaleVR.jar";
+    WIN32_FILE_ATTRIBUTE_DATA source_info{};
+    if (!GetFileAttributesExW(source.c_str(), GetFileExInfoStandard, &source_info)) return;
+    wchar_t app_data[MAX_PATH]{};
+    if (GetEnvironmentVariableW(L"APPDATA", app_data, MAX_PATH) == 0) return;
+    const std::wstring user_data = std::wstring(app_data) + L"\\Hytale\\UserData";
+    if (GetFileAttributesW(user_data.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+    const std::wstring mods = user_data + L"\\Mods";
+    CreateDirectoryW(mods.c_str(), nullptr);
+    const std::wstring target = mods + L"\\HytaleVR.jar";
+    WIN32_FILE_ATTRIBUTE_DATA target_info{};
+    if (GetFileAttributesExW(target.c_str(), GetFileExInfoStandard, &target_info) &&
+        target_info.nFileSizeLow == source_info.nFileSizeLow &&
+        target_info.nFileSizeHigh == source_info.nFileSizeHigh &&
+        CompareFileTime(&target_info.ftLastWriteTime, &source_info.ftLastWriteTime) == 0) {
+        return;
+    }
+    CopyFileW(source.c_str(), target.c_str(), FALSE);
+}
+
 void schedule_auto_start_retry() {
     ++g_auto_start_failed_attempts;
-    g_auto_start_press_f7 = true;
     g_auto_start_next_ms = GetTickCount64() +
         (g_auto_start_failed_attempts < kAutoStartFastAttempts ? kAutoStartRetryMs
                                                                : kAutoStartSlowRetryMs);
-}
-
-void on_scan_complete_for_auto_start() {
-    if (!g_auto_start_scan_requested) return;
-    g_auto_start_scan_requested = false;
-    if (g_vr_tracking) return;
-    if (g_candidates.empty()) {
-        // Usually the F7 overlay is hidden or the player is still in a menu.
-        schedule_auto_start_retry();
-        return;
-    }
-    start_vr_tracking();
-    if (g_vr_tracking) {
-        g_auto_start_failed_attempts = 0;
-    } else {
-        schedule_auto_start_retry();
-    }
 }
 
 void update_auto_start() {
@@ -3152,13 +3245,11 @@ void update_auto_start() {
             shutdown_vr();
             detach();
             g_auto_start_failed_attempts = 0;
-            g_auto_start_press_f7 = false;
             set_status(L"Hytale closed. Auto-start is waiting for it to come back.");
         }
         return;
     }
     if (!auto_start_enabled() || pid == 0 || pid == g_auto_start_suppressed_pid) return;
-    if (g_auto_start_scan_requested || g_f7_scan_busy.load(std::memory_order_acquire)) return;
     const ULONGLONG now = GetTickCount64();
     if (now < g_auto_start_next_ms) return;
     if (!process_running(L"vrserver.exe")) {
@@ -3173,19 +3264,10 @@ void update_auto_start() {
         g_auto_start_next_ms = now + 1000;
         return;
     }
-    if (g_auto_start_press_f7 && g_auto_start_f7_pid != pid) {
-        // The last scan found no coordinates: show the F7 overlay once, let it render, then scan.
-        g_auto_start_press_f7 = false;
-        g_auto_start_f7_pid = pid;
-        send_key_tap_with_hold(VK_F7, 35);
-        g_auto_start_next_ms = now + kAutoStartF7SettleMs;
-        return;
-    }
-    g_auto_start_press_f7 = false;
-    g_auto_start_scan_requested = true;
-    start_f7_scan();
-    if (!g_f7_scan_busy.load(std::memory_order_acquire) && !g_scan_thread) {
-        g_auto_start_scan_requested = false;
+    start_vr_tracking();
+    if (g_vr_tracking) {
+        g_auto_start_failed_attempts = 0;
+    } else {
         schedule_auto_start_retry();
     }
 }
@@ -3258,6 +3340,7 @@ void create_ui(HWND window) {
 
     add(L"BUTTON", L"Advanced options", BS_AUTOCHECKBOX, 20, 92, 145, 24, IDC_VR_ADVANCED_OPTIONS);
     add(L"BUTTON", L"Auto-start VR", BS_AUTOCHECKBOX, 20, 122, 145, 24, IDC_VR_AUTO_START);
+    add(L"BUTTON", L"Snap turning", BS_AUTOCHECKBOX, 20, 152, 145, 24, IDC_VR_SNAP_TURN);
 
     // Main functional controls
     add(L"BUTTON", L"Scan player block", BS_DEFPUSHBUTTON, 215, 50, 160, 40, IDC_SCAN);
@@ -3330,7 +3413,7 @@ void create_ui(HWND window) {
     add(L"BUTTON", L"Swing to hit", BS_AUTOCHECKBOX, 925, 382, 110, 24, IDC_VR_SWING_TO_HIT);
     
     add(L"EDIT", L"0.35", WS_BORDER | ES_AUTOHSCROLL, 815, 424, 95, 24, IDC_VR_QUEST_DEADZONE);
-    add(L"EDIT", L"450", WS_BORDER | ES_AUTOHSCROLL, 925, 424, 95, 24, IDC_VR_TURN_SPEED);
+    add(L"EDIT", L"120", WS_BORDER | ES_AUTOHSCROLL, 925, 424, 95, 24, IDC_VR_TURN_SPEED);
     add(L"EDIT", L"4.0", WS_BORDER | ES_AUTOHSCROLL, 815, 476, 95, 24, IDC_VR_POINTER_DISTANCE);
     
     add(L"EDIT", L"1.65", WS_BORDER | ES_AUTOHSCROLL, 925, 476, 95, 24, IDC_VR_MENU_DISTANCE);
@@ -3412,6 +3495,7 @@ void create_ui(HWND window) {
     CheckDlgButton(g_window, IDC_VR_NO_UBO_UI, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_SWING_TO_HIT, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_AUTO_START, BST_CHECKED);
+    CheckDlgButton(g_window, IDC_VR_SNAP_TURN, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_HIDE_FIRST_PERSON_HAND, BST_CHECKED);
     update_advanced_visibility();
 #endif
@@ -3448,7 +3532,6 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         }
         set_status(result->status);
         delete result;
-        on_scan_complete_for_auto_start();
         return 0;
     }
 #endif
@@ -3462,6 +3545,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         layout_controls_for_current_tab();
         update_tab_visibility();
         update_steamvr_auto_launch();
+        install_server_plugin();
         SetTimer(window, kAutoStartTimer, 500, nullptr);
 #endif
         return 0;
@@ -3600,7 +3684,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                     g.DrawString(L"Use", -1, &labelFont, Gdiplus::PointF(605.0f, 488.0f), &labelBrush);
                     g.DrawString(L"Inventory", -1, &labelFont, Gdiplus::PointF(605.0f, 514.0f), &labelBrush);
                     g.DrawString(L"Deadzone", -1, &labelFont, Gdiplus::PointF(815.0f, 408.0f), &labelBrush);
-                    g.DrawString(L"Turn speed", -1, &labelFont, Gdiplus::PointF(925.0f, 408.0f), &labelBrush);
+                    g.DrawString(L"Turn speed \u00B0/s", -1, &labelFont, Gdiplus::PointF(925.0f, 408.0f), &labelBrush);
                     g.DrawString(L"Pointer m", -1, &labelFont, Gdiplus::PointF(815.0f, 460.0f), &labelBrush);
                     g.DrawString(L"Menu m", -1, &labelFont, Gdiplus::PointF(925.0f, 460.0f), &labelBrush);
                     g.DrawString(L"Width", -1, &labelFont, Gdiplus::PointF(815.0f, 512.0f), &labelBrush);
@@ -3651,7 +3735,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                 Gdiplus::SolidBrush labelBrush(gdip_rgb(156, 163, 175));
                 
                 g.DrawString(L"Deadzone", -1, &labelFont, Gdiplus::PointF(220.0f, 376.0f), &labelBrush);
-                g.DrawString(L"Turn speed", -1, &labelFont, Gdiplus::PointF(280.0f, 376.0f), &labelBrush);
+                g.DrawString(L"Turn speed \u00B0/s", -1, &labelFont, Gdiplus::PointF(280.0f, 376.0f), &labelBrush);
                 g.DrawString(L"Pointer m", -1, &labelFont, Gdiplus::PointF(345.0f, 376.0f), &labelBrush);
                 
                 g.DrawString(L"Menu m", -1, &labelFont, Gdiplus::PointF(220.0f, 424.0f), &labelBrush);
@@ -3708,9 +3792,6 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
 #endif
 #ifdef HYTALE_CAMERA_MODE
         case IDC_SCAN:
-            // Manual control takes over from auto-start until Hytale restarts.
-            g_auto_start_suppressed_pid = g_pid != 0 ? g_pid : find_hytale();
-            g_auto_start_scan_requested = false;
             start_f7_scan();
             return 0;
 #else
@@ -3779,7 +3860,6 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             return 0;
         case IDC_VR_CENTER:
             g_auto_start_suppressed_pid = g_pid != 0 ? g_pid : find_hytale();
-            g_auto_start_scan_requested = false;
             recenter_vr_tracking();
             return 0;
         case IDC_VR_STOP:
