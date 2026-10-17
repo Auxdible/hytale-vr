@@ -24,6 +24,7 @@ struct EyeSetup {
     Mat4 eye_to_head[2];         // GetEyeToHeadTransform
     Mat4 head;                   // headset pose in Hytale's axes, relative to where the camera sits
     float world_scale = 1;       // world units per meter
+    bool no_occlusion = true;    // skip Hytale's occluder pass so nothing near the edges of the eyes gets culled
 };
 
 // Turns stereo on for the coming frames, with this frame's poses.
@@ -80,6 +81,8 @@ void on_delete_framebuffers(GLsizei count, const GLuint* framebuffers);
 // draw, second(), draw again, then finish(). When it returns false nothing
 // was changed.
 bool draw_begin(GLenum mode, GLsizei count);
+// True for draws that should not run at all in VR (Hytale's occluders).
+bool skip_draw(GLenum mode);
 void draw_second();
 void draw_finish();
 

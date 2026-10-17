@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.3
+
+- Stops pop-in: Hytale's occluder pass is skipped in 3D, so chunks aren't
+  hidden because Hytale's own camera thought something blocked them.
+  Switchable in the World tab.
+- Height: standing up or sitting down no longer puts your eyes through
+  ceilings or floors; small head dips still show.
+- Leaving a world for the main menu returns to the big screen.
+
 ## 2.1.2
 
 - Fixed 3D never starting in a world: Hytale doesn't use SDL's relative mouse

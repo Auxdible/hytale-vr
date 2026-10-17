@@ -21,6 +21,7 @@ struct Settings {
     // World view: Hytale's own 3D, drawn once per eye
     bool world_view = true;
     bool room_walk = true;          // walking in your room walks your character
+    bool no_occlusion = true;       // turn off Hytale's occlusion culling in 3D (stops pop-in)
     float hud_distance = 1.6f;      // meters
     float hud_width = 1.9f;         // meters
     float world_scale = 1.0f;       // Hytale blocks per meter of head movement

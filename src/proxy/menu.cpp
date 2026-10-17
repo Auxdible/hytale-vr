@@ -220,6 +220,8 @@ void tab_world(Settings& s) {
     ImGui::SameLine();
     hint("if you're in a world and still see the big screen");
     changed |= ImGui::Checkbox("Walk when you move in your room", &s.room_walk);
+    changed |= ImGui::Checkbox("Stop pop-in (turn off Hytale's occlusion culling)", &s.no_occlusion);
+    hint("Hytale hides what its own camera can't see; your eyes see a little more. Costs some speed.");
     hint("Your character steps to where your head is, so leaning and walking around work.");
     ImGui::Spacing();
     ImGui::TextUnformatted("Turning");

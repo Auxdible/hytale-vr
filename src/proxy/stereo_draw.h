@@ -8,7 +8,12 @@ namespace hvr {
 
 template <typename Draw>
 inline void stereo_draw(GLenum mode, GLsizei count, Draw&& draw) {
-    if (!internal_call() && stereo::draw_begin(mode, count)) {
+    if (internal_call()) {
+        draw();
+        return;
+    }
+    if (stereo::skip_draw(mode)) return;
+    if (stereo::draw_begin(mode, count)) {
         draw();
         stereo::draw_second();
         draw();

@@ -113,6 +113,7 @@ struct Attachment {
 struct FboInfo {
     int frame_checked = -1;
     bool stereo = false;
+    bool occluder = false;  // Hytale's small depth-only target for occlusion culling
     GLuint twin = 0;
     std::vector<Attachment> attachments;
     std::vector<GLuint> twin_renderbuffers;
@@ -490,6 +491,8 @@ FboInfo* classify(GLenum target, GLuint fb) {
         g_main_h = now[0].height;
         logf("Stereo: Hytale renders at %dx%d", g_main_w, g_main_h);
     }
+    info.occluder = now.size() == 1 && now[0].point == gl::DEPTH_ATTACHMENT &&
+                    now[0].type == static_cast<GLint>(gl::TEXTURE) && now[0].width <= 1024 && now[0].height <= 512;
     for (const Attachment& a : now)
         if (!main_size_match(a.width, a.height)) usable = false;
     if (!usable) {
@@ -1168,6 +1171,17 @@ void on_delete_framebuffers(GLsizei count, const GLuint* framebuffers) {
 }
 
 // --- Draws ---
+
+bool skip_draw(GLenum mode) {
+    // Only occluder geometry; points there may be Hytale's own visibility tests.
+    if (mode != gl::TRIANGLES || !g_setup.no_occlusion || !active() || t.draw_fb == 0 || !t.program) return false;
+    FboInfo& info = g_fbos[t.draw_fb];
+    if (info.frame_checked != g_frame) classify(gl::DRAW_FRAMEBUFFER, t.draw_fb);
+    if (!info.occluder) return false;
+    // Occluders are drawn with the camera block; the depth pyramid built from
+    // them afterwards isn't, and runs on the cleared depth.
+    return program_info(t.program).scene_binding >= 0;
+}
 
 bool draw_begin(GLenum mode, GLsizei count) {
     g_pending = Pending{};

@@ -61,8 +61,11 @@ MoveKeys g_room_keys;
 bool g_stick_moving = false;
 Vec3 g_prev_body;
 bool g_have_prev_body = false;
-bool g_world_latched = false;
-std::atomic<bool> g_force_world{false};   // a world is loaded and playing (mouse look seen)
+bool g_world_latched = false;  // a world is loaded and playing (mouse look seen)
+std::atomic<bool> g_force_world{false};
+Vec3 g_jump_check;
+bool g_have_jump_check = false;
+float g_frame_dt = 0.011f;
 int g_non_world_frames = 0;
 bool g_snap_armed = true;
 int g_world_frames = 0;
@@ -458,6 +461,19 @@ void prepare_world(const Settings& s, bool showed_world) {
     if ((g_context.game_relative && !g_context.menu_open) || g_force_world.exchange(false)) g_world_latched = true;
     g_non_world_frames = showed_world || !stereo::wanted() ? 0 : g_non_world_frames + 1;
     if (g_non_world_frames > 45) g_world_latched = false;  // a loading screen: the world is gone
+    {
+        // Leaving a world for the main menu moves the camera far away at once.
+        Mat4 v;
+        Vec3 f, position;
+        if (stereo::wanted() && stereo::engine_camera(v, f, position)) {
+            if (g_have_jump_check && !g_context.game_relative && length(position - g_jump_check) > 40.0f)
+                g_world_latched = false;
+            g_jump_check = position;
+            g_have_jump_check = true;
+        } else {
+            g_have_jump_check = false;
+        }
+    }
     if (was_latched != g_world_latched)
         logf(g_world_latched ? "Playing in a world: 3D on" : "No world showing for a while: back to the big screen");
     if (!s.world_view || !g_hmd_valid || !g_world_latched) {
@@ -515,6 +531,16 @@ void prepare_world(const Settings& s, bool showed_world) {
     g_prev_body = engine_position;
     g_have_prev_body = have_engine;
 
+    // Height: your character's eyes stay at Hytale's eye height. Small dips and
+    // rises show; standing up or sitting down settles back over a second or two.
+    {
+        const float head_y = position_of(g_hmd).y;
+        g_neutral.y += (head_y - g_neutral.y) * std::fmin(1.0f, 0.6f * g_frame_dt);
+        const float limit = 0.12f;
+        if (head_y - g_neutral.y > limit) g_neutral.y = head_y - limit;
+        if (head_y - g_neutral.y < -limit) g_neutral.y = head_y + limit;
+    }
+
     stereo::EyeSetup setup;
     for (int e = 0; e < 2; ++e) {
         setup.headset_projection[e] = eye_projection_near(e);
@@ -523,6 +549,7 @@ void prepare_world(const Settings& s, bool showed_world) {
     }
     setup.head = rotation_y(g_yaw_offset) * translation(Vec3{} - g_neutral) * g_hmd;
     setup.world_scale = s.world_scale;
+    setup.no_occlusion = s.no_occlusion;
     stereo::set_eyes(setup);
 }
 
@@ -587,6 +614,7 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
     float dt = static_cast<float>(now.QuadPart - g_last_frame.QuadPart) / static_cast<float>(frequency.QuadPart);
     g_last_frame = now;
     if (dt > 0.1f) dt = 0.1f;
+    g_frame_dt = dt;
 
     if (g_hmd_valid && !g_world_frame && (!g_screen_placed || g_recenter.exchange(false))) place_screen_now(settings);
     // The laser aims at whatever is showing: the HUD panel or the big screen.
