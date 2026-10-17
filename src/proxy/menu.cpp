@@ -213,8 +213,11 @@ bool slider(const char* label, float* value, float min, float max, const char* f
 void tab_world(Settings& s) {
     bool changed = false;
     changed |= ImGui::Checkbox("See the world in 3D", &s.world_view);
-    hint("Hytale draws every frame once per eye, so you stand in the world. Menus and the main screen still use "
-         "the big screen. Turn this off to always use the big screen.");
+    hint("In a world, Hytale draws every frame once per eye so you stand in it. The main menu and loading "
+         "screens use the big screen. Set Hytale's field of view to its maximum so nothing at the edge of your "
+         "view gets left out.");
+    changed |= ImGui::Checkbox("Walk when you move in your room", &s.room_walk);
+    hint("Your character steps to where your head is, so leaning and walking around work.");
     ImGui::Spacing();
     ImGui::TextUnformatted("Turning");
     ImGui::SameLine(150 * g_scale);

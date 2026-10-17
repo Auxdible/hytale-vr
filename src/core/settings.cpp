@@ -13,6 +13,7 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("vr_enabled", s.vr_enabled);
     visit("vsync_off_in_vr", s.vsync_off_in_vr);
     visit("world_view", s.world_view);
+    visit("room_walk", s.room_walk);
     visit("hud_distance", s.hud_distance);
     visit("hud_width", s.hud_width);
     visit("world_scale", s.world_scale);

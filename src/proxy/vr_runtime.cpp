@@ -56,6 +56,13 @@ bool g_world_aligned = false;   // yaw offset and neutral spot are set
 float g_yaw_offset = 0;         // Hytale yaw = headset yaw + this
 Vec3 g_neutral;                 // headset spot that maps to Hytale's camera
 MouseFollower g_follower;
+RoomWalker g_walker;
+MoveKeys g_room_keys;
+bool g_stick_moving = false;
+Vec3 g_prev_body;
+bool g_have_prev_body = false;
+bool g_world_latched = false;   // a world is loaded and playing (mouse look seen)
+int g_non_world_frames = 0;
 bool g_snap_armed = true;
 int g_world_frames = 0;
 
@@ -291,7 +298,9 @@ void controls(const FrameContext& context, float dt) {
     const bool play = !context.menu_open;
     float mx, my;
     stick(g_actions.move, mx, my);
-    const MoveKeys move = play ? stick_to_keys(mx, my, s.deadzone) : MoveKeys{};
+    MoveKeys move = play ? stick_to_keys(mx, my, s.deadzone) : MoveKeys{};
+    g_stick_moving = move.forward || move.back || move.left || move.right;
+    if (play && !g_stick_moving) move = g_room_keys;
     input::key(s.key_forward, move.forward);
     input::key(s.key_back, move.back);
     input::key(s.key_left, move.left);
@@ -440,16 +449,23 @@ void place_hud(const Settings& s, bool force) {
 }
 
 // After the poses for the next frame arrive: where each eye goes in Hytale.
-void prepare_world(const Settings& s) {
-    if (!s.world_view || !g_hmd_valid) {
+void prepare_world(const Settings& s, bool showed_world) {
+    // 3D only once you're playing in a world: Hytale's main menu draws a 3D
+    // scene too, from a fixed camera, and that belongs on the big screen.
+    if (g_context.game_relative && !g_context.menu_open) g_world_latched = true;
+    g_non_world_frames = showed_world || !stereo::wanted() ? 0 : g_non_world_frames + 1;
+    if (g_non_world_frames > 45) g_world_latched = false;  // a loading screen: the world is gone
+    if (!s.world_view || !g_hmd_valid || !g_world_latched) {
         stereo::disable();
         g_world_aligned = false;
+        g_room_keys = {};
+        g_have_prev_body = false;
         return;
     }
     const Vec3 forward = transform_direction(g_hmd, {0, 0, -1});
     Mat4 engine_view;
-    Vec3 engine_forward;
-    const bool have_engine = stereo::engine_camera(engine_view, engine_forward);
+    Vec3 engine_forward, engine_position;
+    const bool have_engine = stereo::engine_camera(engine_view, engine_forward, engine_position);
     if (!g_world_aligned || g_recenter.exchange(false)) {
         g_neutral = position_of(g_hmd);
         g_yaw_offset = have_engine ? MouseFollower::wrap(yaw_of(engine_forward) - yaw_of(forward)) : 0.0f;
@@ -468,6 +484,31 @@ void prepare_world(const Settings& s) {
     } else {
         g_follower.have_last = false;
     }
+
+    // Room-scale: keep the character under your head. Movement it made for
+    // that moves the neutral spot along, so the view doesn't jump.
+    const bool walk = s.room_walk && s.controller_input && have_engine && showed_world && g_context.game_relative &&
+                      !g_context.menu_open;
+    if (walk && g_have_prev_body) {
+        Vec3 moved = engine_position - g_prev_body;
+        moved.y = 0;
+        const bool room_driven = (g_room_keys.forward || g_room_keys.back || g_room_keys.left || g_room_keys.right) &&
+                                 !g_stick_moving;
+        if (room_driven && length(moved) < 1.5f) {
+            const Vec3 local = transform_direction(rotation_y(-g_yaw_offset), moved) * (1.0f / s.world_scale);
+            g_neutral.x += local.x;
+            g_neutral.z += local.z;
+        }
+    }
+    if (walk) {
+        const Vec3 offset = transform_direction(rotation_y(g_yaw_offset), position_of(g_hmd) - g_neutral) * s.world_scale;
+        g_room_keys = g_walker.step(offset, yaw_of(engine_forward));
+    } else {
+        g_room_keys = {};
+        g_walker.walking = false;
+    }
+    g_prev_body = engine_position;
+    g_have_prev_body = have_engine;
 
     stereo::EyeSetup setup;
     for (int e = 0; e < 2; ++e) {
@@ -546,7 +587,7 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
     // The laser aims at whatever is showing: the HUD panel or the big screen.
     g_view.screen = g_world_frame ? g_hud_panel : g_cinema_screen;
     controls(g_context, dt);
-    prepare_world(settings);
+    prepare_world(settings, world.stereo);
 }
 
 }  // namespace hvr::session

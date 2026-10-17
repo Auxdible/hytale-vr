@@ -4,6 +4,7 @@
 
 #include <cmath>
 
+#include "controls.h"
 #include "vrmath.h"
 
 namespace hvr {
@@ -177,6 +178,34 @@ struct MouseFollower {
         out_y = static_cast<int>(std::lround(y));
         sent_x = out_x;
         sent_y = out_y;
+    }
+};
+
+// Room-scale walking: when your head moves away from where your character
+// stands, hold movement keys toward it until the character catches up.
+struct RoomWalker {
+    float start = 0.22f;  // world units of drift before walking
+    float stop = 0.07f;   // close enough
+    bool walking = false;
+
+    // offset: head minus character, horizontal, in world units.
+    // body_yaw: which way the character faces.
+    MoveKeys step(Vec3 offset, float body_yaw) {
+        offset.y = 0;
+        const float distance = length(offset);
+        if (!walking && distance > start) walking = true;
+        if (walking && distance < stop) walking = false;
+        MoveKeys keys;
+        if (!walking) return keys;
+        const Vec3 forward{-std::sin(body_yaw), 0, -std::cos(body_yaw)};
+        const Vec3 right{std::cos(body_yaw), 0, -std::sin(body_yaw)};
+        const float f = dot(offset, forward), r = dot(offset, right);
+        const float threshold = 0.38f * distance;
+        keys.forward = f > threshold;
+        keys.back = f < -threshold;
+        keys.right = r > threshold;
+        keys.left = r < -threshold;
+        return keys;
     }
 };
 

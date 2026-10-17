@@ -47,7 +47,7 @@ GLuint hud_fbo_this_frame();
 
 // Hytale's own camera this frame, read from SceneData: rotation-only view
 // (camera-relative), forward direction. Valid once a stereo frame ran.
-bool engine_camera(Mat4& view, Vec3& forward);
+bool engine_camera(Mat4& view, Vec3& forward, Vec3& position);
 
 // --- Hooks ---
 

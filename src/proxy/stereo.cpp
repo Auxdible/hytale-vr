@@ -934,8 +934,9 @@ bool active() {
 
 GLuint hud_fbo_this_frame() { return g_composited ? g_hud.fbo() : 0; }
 
-bool engine_camera(Mat4& view, Vec3& forward) {
+bool engine_camera(Mat4& view, Vec3& forward, Vec3& position) {
     if (!g_mono.valid) return false;
+    position = g_mono.camera;
     view = g_mono.view;
     forward = {-view.at(2, 0), -view.at(2, 1), -view.at(2, 2)};
     return true;

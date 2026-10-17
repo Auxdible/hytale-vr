@@ -142,6 +142,17 @@ void test_stereo_math() {
         engine_yaw += static_cast<float>(cx) * true_gain;
     }
     check(std::fabs(MouseFollower::wrap(engine_yaw - 1.0f)) < 0.02f, "mouse follower converges with unknown gain and sign");
+    {
+        RoomWalker walker;
+        const MoveKeys idle = walker.step({0.1f, 0, 0}, 0);
+        const MoveKeys ahead = walker.step({0, 0, -0.5f}, 0);         // head went forward
+        const MoveKeys turned = walker.step({-0.5f, 0, 0}, 1.5708f);  // facing -X, head went -X
+        const MoveKeys right = walker.step({0.5f, 0, 0}, 0);
+        const MoveKeys settled = walker.step({0.05f, 0, 0}, 0);
+        check(!idle.forward && !idle.right && ahead.forward && !ahead.left && turned.forward && right.right &&
+                  !settled.right && !walker.walking,
+              "room walker heads toward the headset");
+    }
     check(near(yaw_of({0, 0, -1}), 0) && near(yaw_of({-1, 0, 0}), 1.5708f) && near(pitch_of({0, 1, 0}), 1.5708f),
           "yaw and pitch conventions");
 }

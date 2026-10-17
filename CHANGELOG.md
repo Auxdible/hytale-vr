@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.1
+
+- Room-scale walking: when your head moves away from your character, it steps
+  after you, so leaning and walking around no longer show things Hytale culled.
+- The main menu's 3D background stays on the big screen. 3D starts once you're
+  playing in a world and ends at the next loading screen.
+- World tab: the room-walk switch and a note to raise Hytale's field of view.
+
 ## 2.1.0
 
 Real 3D in the world, drawn by Hytale's own renderer once per eye.
