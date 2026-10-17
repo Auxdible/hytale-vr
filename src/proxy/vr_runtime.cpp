@@ -48,7 +48,12 @@ float g_last_warp_x = -1, g_last_warp_y = -1;
 FrameContext g_context;  // from begin_frame, used at the end of the frame
 
 // World view
-bool g_world_frame = false;     // the frame being shown was drawn per eye
+bool g_world_frame = false;     // the headset is showing the world (not the big screen)
+// The world view switches only after this many frames in a row of the other
+// kind, so frames that come and go while chunks load don't flicker.
+constexpr int kWorldOnFrames = 20, kWorldOffFrames = 30;
+int g_stereo_run = 0, g_mono_run = 0;
+GLuint g_last_world_texture[2] = {};
 Screen g_cinema_screen;
 Screen g_hud_panel;
 bool g_hud_placed = false;
@@ -172,6 +177,8 @@ void shutdown_now() {
     input::release_all();
     stereo::disable();
     g_world_frame = false;
+    g_stereo_run = g_mono_run = 0;
+    g_last_world_texture[0] = g_last_world_texture[1] = 0;
     g_world_aligned = false;
     g_hud_placed = false;
     for (EyeTarget& eye : g_eyes) eye.destroy();
@@ -460,7 +467,9 @@ void prepare_world(const Settings& s, bool showed_world) {
     const bool was_latched = g_world_latched;
     if ((g_context.game_relative && !g_context.menu_open) || g_force_world.exchange(false)) g_world_latched = true;
     g_non_world_frames = showed_world || !stereo::wanted() ? 0 : g_non_world_frames + 1;
-    if (g_non_world_frames > 45) g_world_latched = false;  // a loading screen: the world is gone
+    // A loading screen with the cursor back: the world is gone. While mouse look
+    // stays on (waiting for chunks) the world is still coming, so stay put.
+    if (g_non_world_frames > 45 && !g_context.game_relative) g_world_latched = false;
     {
         // Leaving a world for the main menu moves the camera far away at once.
         Mat4 v;
@@ -560,12 +569,22 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
     if (g_state != State::Running || !g_gl_ready) return;
 
     // 1. Show the frame that was just drawn, with the poses it was drawn for.
-    if (world.stereo && g_hmd_valid) {
-        if (!g_world_frame) {
+    const bool drawn = world.stereo && g_hmd_valid;
+    g_stereo_run = drawn ? g_stereo_run + 1 : 0;
+    g_mono_run = drawn ? 0 : g_mono_run + 1;
+    const bool was_world = g_world_frame;
+    if (g_world_frame && (g_mono_run >= kWorldOffFrames || !stereo::wanted())) g_world_frame = false;
+    if (g_world_frame && !drawn && g_last_world_texture[0]) {
+        // A frame without the world in the middle of playing (chunks loading):
+        // keep showing the last world frame rather than flicking to the screen.
+        if (g_hmd_valid)
+            for (int eye = 0; eye < 2; ++eye) submit(eye, g_last_world_texture[eye]);
+    } else if (drawn && (g_world_frame || g_stereo_run >= kWorldOnFrames)) {
+        g_world_frame = true;
+        if (!was_world) {
             logf("Showing Hytale's world in 3D");
             set_status("You're in the world. Look around; the stick turns you.");
         }
-        g_world_frame = true;
         ++g_world_frames;
         place_hud(settings, false);
         g_view.screen = g_hud_panel;
@@ -575,9 +594,10 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
             g_scene.render_overlay(world.eye_fbo[eye], world.width, world.height, eye_projection_near(eye), eye_view(eye),
                                    g_view, world.hud_texture);
             submit(eye, world.eye_texture[eye]);
+            g_last_world_texture[eye] = world.eye_texture[eye];
         }
     } else {
-        if (g_world_frame) {
+        if (was_world) {
             logf("Back to the big screen");
             set_status("Hytale is on the big screen. Point at it to use the mouse.");
         }

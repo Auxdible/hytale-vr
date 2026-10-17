@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.4
+
+- No more flicker between the big screen and the world while chunks load.
+  The headset switches to the world only after it has been drawn for a moment,
+  and holds the last world frame through short gaps.
+- 3D stays on while you're waiting for chunks with mouse look still on.
+
 ## 2.1.3
 
 - Stops pop-in: Hytale's occluder pass is skipped in 3D, so chunks aren't
