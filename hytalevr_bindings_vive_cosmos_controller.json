@@ -3,7 +3,16 @@
   "bindings": {
     "/actions/hytale": {
       "chords": [],
-      "haptics": [],
+      "haptics": [
+        {
+          "output": "/actions/hytale/out/haptic_left",
+          "path": "/user/hand/left/output/haptic"
+        },
+        {
+          "output": "/actions/hytale/out/haptic_right",
+          "path": "/user/hand/right/output/haptic"
+        }
+      ],
       "poses": [
         { "output": "/actions/hytale/in/left_pose", "path": "/user/hand/left/pose/raw" },
         { "output": "/actions/hytale/in/right_pose", "path": "/user/hand/right/pose/raw" }

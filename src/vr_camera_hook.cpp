@@ -333,6 +333,19 @@ vr::VRActionHandle_t g_action_button_b = vr::k_ulInvalidActionHandle;
 vr::VRActionHandle_t g_action_left_grip = vr::k_ulInvalidActionHandle;
 vr::VRActionHandle_t g_action_right_grip = vr::k_ulInvalidActionHandle;
 vr::VRActionHandle_t g_action_right_stick_click = vr::k_ulInvalidActionHandle;
+vr::VRActionHandle_t g_action_haptic_left = vr::k_ulInvalidActionHandle;
+vr::VRActionHandle_t g_action_haptic_right = vr::k_ulInvalidActionHandle;
+
+// hand: 0 = left, 1 = right. Haptics are optional; older cached action
+// manifests without the output actions simply stay silent.
+void pulse_controller(int hand, float seconds, float frequency, float amplitude) {
+    vr::IVRInput* input = vr::VRInput();
+    const vr::VRActionHandle_t action =
+        hand == 0 ? g_action_haptic_left : g_action_haptic_right;
+    if (!input || action == vr::k_ulInvalidActionHandle) return;
+    input->TriggerHapticVibrationAction(action, 0.0f, seconds, frequency, amplitude,
+                                        vr::k_ulInvalidInputValueHandle);
+}
 bool g_actions_ready = false;
 bool g_right_trigger_pressed = false;
 bool g_left_trigger_pressed = false;
@@ -5340,6 +5353,7 @@ void update_physical_controller_locked(int hand, const vr::TrackedDevicePose_t& 
             g_physical_swing_cooldown_until[hand] = now + 350;
             g_physical_attack_ray_hand = hand;
             g_physical_attack_ray_until = now + 350;
+            pulse_controller(hand, 0.06f, 160.0f, 0.8f);
             if (g_shared) {
                 g_shared->physical_attack_hand = static_cast<uint32_t>(hand);
                 MemoryBarrier();
@@ -5381,6 +5395,11 @@ void update_hmd_pose(const vr::TrackedDevicePose_t& pose,
         out << "hmd recenter: standing yaw-only origin seq=" << controls.recenter_sequence
             << " poseY=" << std::fixed << std::setprecision(3) << current[7];
         render_log(out.str());
+    }
+    if (recentered) {
+        // Confirms VR start and every recenter in both hands.
+        pulse_controller(0, 0.10f, 120.0f, 0.5f);
+        pulse_controller(1, 0.10f, 120.0f, 0.5f);
     }
     update_physical_hmd_locked(current, now, recentered);
     const float world_scale = validated_world_scale(controls);
@@ -5475,6 +5494,16 @@ bool initialize_vr_actions() {
     }
     if (error == vr::VRInputError_None) {
         error = input->GetActionHandle("/actions/hytale/in/right_stick_click", &g_action_right_stick_click);
+    }
+    if (error == vr::VRInputError_None) {
+        if (input->GetActionHandle("/actions/hytale/out/haptic_left",
+                                   &g_action_haptic_left) != vr::VRInputError_None) {
+            g_action_haptic_left = vr::k_ulInvalidActionHandle;
+        }
+        if (input->GetActionHandle("/actions/hytale/out/haptic_right",
+                                   &g_action_haptic_right) != vr::VRInputError_None) {
+            g_action_haptic_right = vr::k_ulInvalidActionHandle;
+        }
     }
     g_actions_ready = error == vr::VRInputError_None;
     if (g_shared) g_shared->controller_input_error = static_cast<int32_t>(error);
@@ -5645,10 +5674,21 @@ void update_vr_actions() {
     } else if (trigger_value > 0.65f) {
         g_right_trigger_pressed = true;
     }
+    const bool pointing_at_menu =
+        g_shared->pointer_visible != 0 && g_shared->pointer_menu_mode != 0;
     if (g_left_trigger_pressed) {
         if (left_trigger_value < 0.45f) g_left_trigger_pressed = false;
     } else if (left_trigger_value > 0.65f) {
         g_left_trigger_pressed = true;
+    }
+    if (pointing_at_menu) {
+        // A light tick for each menu click, like a physical button.
+        if (g_right_trigger_pressed && !right_trigger_was_pressed) {
+            pulse_controller(1, 0.02f, 200.0f, 0.35f);
+        }
+        if (g_left_trigger_pressed && !left_trigger_was_pressed) {
+            pulse_controller(0, 0.02f, 200.0f, 0.35f);
+        }
     }
     constexpr ULONGLONG kHeldItemActionHoldMs = 1000;
     const ULONGLONG held_item_hold_until =
