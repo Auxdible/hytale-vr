@@ -107,6 +107,14 @@ bool load_vr_item_render_asset(const VrItemAssetCatalog& catalog,
                                VrItemRenderAsset& asset,
                                std::string& error);
 
+// Reads one stored file from Hytale's Assets.zip whose path equals relative_path
+// or ends with "/" + relative_path (e.g. "CharacterCreator/GradientSets.json"),
+// preferring the shortest match. The ZIP index is cached per archive path.
+bool read_vr_asset_by_suffix(const std::wstring& assets_zip,
+                             const std::string& relative_path,
+                             std::vector<uint8_t>& bytes,
+                             std::string& error);
+
 bool load_vr_asset_texture(const VrItemAssetCatalog& catalog,
                            const std::string& asset_path,
                            uint32_t& width,

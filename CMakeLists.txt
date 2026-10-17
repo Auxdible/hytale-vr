@@ -252,6 +252,23 @@ if(BUILD_TESTING)
     target_link_libraries(hytale_vr_item_assets_smoketest PRIVATE gdiplus ole32)
     hytale_target_defaults(hytale_vr_item_assets_smoketest)
 
+    add_executable(hytale_vr_asset_zip_tests
+        tests/vr_asset_zip_tests.cpp
+        src/vr_item_assets.cpp
+    )
+    target_include_directories(hytale_vr_asset_zip_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    )
+    target_compile_definitions(hytale_vr_asset_zip_tests PRIVATE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+    )
+    target_link_libraries(hytale_vr_asset_zip_tests PRIVATE gdiplus ole32)
+    hytale_target_defaults(hytale_vr_asset_zip_tests)
+    add_test(NAME vr_asset_zip
+        COMMAND hytale_vr_asset_zip_tests
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/suffix_assets.zip")
+
     add_executable(hytale_vr_item_live_diagnostic
         tests/vr_item_live_diagnostic.cpp
     )

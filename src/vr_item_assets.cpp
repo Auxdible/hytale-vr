@@ -1043,6 +1043,42 @@ bool load_vr_item_render_asset(const VrItemAssetCatalog& catalog,
         &asset.flame_anchor, &asset.needs_flame_effect, error);
 }
 
+bool read_vr_asset_by_suffix(const std::wstring& assets_zip,
+                             const std::string& relative_path,
+                             std::vector<uint8_t>& bytes,
+                             std::string& error) {
+    static std::mutex index_mutex;
+    static std::wstring indexed_zip;
+    static std::unordered_map<std::string, VrZipEntry> index;
+
+    std::lock_guard<std::mutex> lock(index_mutex);
+    if (indexed_zip != assets_zip) {
+        std::unordered_map<std::string, VrZipEntry> entries;
+        if (!index_zip(assets_zip, entries, error)) return false;
+        index = std::move(entries);
+        indexed_zip = assets_zip;
+    }
+    const std::string wanted = normalize_zip_path(relative_path);
+    if (wanted.empty()) {
+        error = "empty asset path";
+        return false;
+    }
+    const std::string suffix = "/" + wanted;
+    std::string match;
+    for (auto it = index.begin(); it != index.end(); ++it) {
+        const std::string& name = it->first;
+        if ((name == wanted || ends_with(name, suffix)) &&
+            (match.empty() || name.size() < match.size())) {
+            match = name;
+        }
+    }
+    if (match.empty()) {
+        error = "no Assets.zip entry ends with " + wanted;
+        return false;
+    }
+    return read_zip_entry(assets_zip, index, match, bytes, error);
+}
+
 bool load_vr_asset_texture(const VrItemAssetCatalog& catalog,
                            const std::string& asset_path,
                            uint32_t& width,

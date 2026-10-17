@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -779,8 +780,38 @@ std::wstring widen_asset_path(std::string path) {
     return std::wstring(path.begin(), path.end());
 }
 
+// Hytale's own character textures and catalogs are not shipped with the mod.
+// They are copied out of the player's Assets.zip next to the hook on first use.
+bool cache_hytale_asset(const std::string& relative_path, const std::wstring& destination) {
+    static const std::wstring assets_zip = find_hytale_assets_zip();
+    if (assets_zip.empty()) {
+        render_log("character assets: Hytale Assets.zip was not found");
+        return false;
+    }
+    std::vector<uint8_t> bytes;
+    std::string error;
+    if (!hytalevr::read_vr_asset_by_suffix(assets_zip, relative_path, bytes, error)) {
+        render_log("character assets: " + error);
+        return false;
+    }
+    std::error_code directory_error;
+    std::filesystem::create_directories(
+        std::filesystem::path(destination).parent_path(), directory_error);
+    std::ofstream out(destination, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        render_log("character assets: could not write the asset cache next to the hook");
+        return false;
+    }
+    out.write(reinterpret_cast<const char*>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+    return out.good();
+}
+
 std::wstring character_creator_asset_path(const std::string& relative_path) {
-    return module_directory() + L"assets\\character_creator\\" + widen_asset_path(relative_path);
+    const std::wstring path =
+        module_directory() + L"assets\\character_creator\\" + widen_asset_path(relative_path);
+    if (!file_exists(path)) cache_hytale_asset(relative_path, path);
+    return path;
 }
 
 bool read_text_file(const std::wstring& path, std::string& out) {
@@ -1186,7 +1217,8 @@ bool load_hand_texture() {
 
     PngImage texture{};
     if (!build_user_avatar_hand_texture(texture)) {
-        const std::wstring path = module_directory() + L"assets\\vr_hands\\Player_Greyscale.png";
+        const std::wstring path =
+            character_creator_asset_path("Characters\\Player_Textures\\Player_Greyscale.png");
         if (!load_png_image(path, texture)) {
             render_log("hand texture: Player_Greyscale.png not found or invalid");
             return false;

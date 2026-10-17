@@ -7,6 +7,8 @@
 - Added `Auto-start VR` (on by default): once SteamVR and Hytale run and Hytale is focused in a world, the dashboard shows F7, finds the player block and starts VR by itself, retrying from menus and re-arming when Hytale restarts. It never steals focus.
 - The dashboard registers with SteamVR and is launched in the background (minimized) whenever SteamVR starts; only one dashboard runs at a time.
 - Holding both grips for 1.5 seconds recenters VR.
+- Controller haptics: the swinging hand buzzes on a physical hit, the clicking hand ticks on menu clicks, and both hands pulse when VR starts or recenters.
+- Hytale's character textures and catalogs are no longer shipped with the mod; they are read from your Hytale `Assets.zip` and cached next to the hook on first use.
 - Bumped the shared dashboard/hook layout version to 123; replace the dashboard and hook DLL together.
 
 ## [1.0.4] - 2026-08-24
