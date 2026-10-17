@@ -238,6 +238,27 @@ void tab_world(Settings& s) {
     changed |= slider("World scale", &s.world_scale, 0.25f, 4.0f, "%.2fx");
     changed |= slider("Sharpness", &s.render_scale, 1.0f, 2.5f, "%.2fx window");
     hint(app::render_status().c_str());
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Hands");
+    changed |= ImGui::Checkbox("Held item in your hand", &s.item_in_hand);
+    if (s.item_in_hand) {
+        hint("Move these until the item sits in your grip.");
+        changed |= slider("Item tilt", &s.item_pitch, -90.0f, 90.0f, "%.0f deg");
+        changed |= slider("Item left/right", &s.item_x, -1.0f, 1.0f, "%.2f");
+        changed |= slider("Item up/down", &s.item_y, -1.0f, 1.0f, "%.2f");
+        changed |= slider("Item near/far", &s.item_z, -1.5f, 0.5f, "%.2f");
+    }
+    changed |= ImGui::Checkbox("Hotbar on your other hand", &s.hotbar_on_hand);
+    if (s.hotbar_on_hand) {
+        changed |= slider("Hotbar size", &s.hotbar_width, 0.08f, 0.6f, "%.2f m");
+        hint("Where the hotbar is on your monitor, to cut it out of the HUD:");
+        changed |= slider("Hotbar left edge", &s.hotbar_left, 0.0f, 0.95f, "%.2f");
+        changed |= slider("Hotbar right edge", &s.hotbar_right, 0.05f, 1.0f, "%.2f");
+        changed |= slider("Hotbar top edge", &s.hotbar_top, 0.0f, 0.95f, "%.2f");
+        changed |= slider("Hotbar bottom edge", &s.hotbar_bottom, 0.02f, 1.0f, "%.2f");
+    }
+    changed |= ImGui::Checkbox("Swing to hit", &s.swing_to_hit);
+    if (s.swing_to_hit) changed |= slider("Swing speed", &s.swing_speed, 0.8f, 6.0f, "%.1f m/s");
     if (changed) app::settings_changed();
     ImGui::Spacing();
     if (ImGui::Button("Recenter")) session::recenter();

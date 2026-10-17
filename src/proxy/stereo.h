@@ -30,6 +30,10 @@ struct EyeSetup {
     // while the character catches up; otherwise it's an offset from the camera.
     Vec3 anchor;
     bool world_locked = false;
+    // Hytale's first-person item and arm: from its first-person view space to
+    // the same space as head (meters, before world_scale).
+    bool item_in_hand = false;
+    Mat4 item;
 };
 
 // Turns stereo on for the coming frames, with this frame's poses.

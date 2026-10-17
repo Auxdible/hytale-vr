@@ -30,6 +30,21 @@ struct Settings {
     float snap_degrees = 30.0f;
     float smooth_speed = 120.0f;    // degrees per second at full stick
 
+    // Hands
+    bool item_in_hand = true;       // Hytale's held item and arm follow the right controller
+    float item_pitch = -15.0f;      // degrees the item tilts relative to the controller
+    float item_x = 0.30f;           // where the item's grip sits in Hytale's first-person view (meters)
+    float item_y = -0.32f;
+    float item_z = -0.48f;
+    bool hotbar_on_hand = true;     // the hotbar floats over the left controller
+    float hotbar_width = 0.22f;     // meters
+    float hotbar_left = 0.31f;      // where the hotbar is in Hytale's HUD, as fractions of the window
+    float hotbar_right = 0.69f;
+    float hotbar_top = 0.88f;
+    float hotbar_bottom = 0.995f;
+    bool swing_to_hit = true;       // a quick swing of the right controller attacks
+    float swing_speed = 2.2f;       // meters per second
+
     // Screen
     float screen_distance = 2.6f;   // meters
     float screen_width = 3.4f;      // meters

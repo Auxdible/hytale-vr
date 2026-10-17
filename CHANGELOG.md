@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.3.0
+
+- Hands, first pass. In the world:
+  - Your held item and arm follow the right controller (left if left-handed),
+    pointing where it points. Sliders in the World tab line the item up with
+    your grip.
+  - The hotbar is cut out of the HUD and floats above your other hand, facing
+    you. Its size and where it's cut from are adjustable.
+  - Swing to hit: a quick flick of the attack hand clicks once, with a buzz.
+    The trigger still works too.
+
 ## 2.2.6
 
 - Changing Sharpness while playing no longer turns the screen black. Resizing

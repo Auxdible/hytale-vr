@@ -633,25 +633,39 @@ bool read_mono(const float* f, Mono& mono) {
     return true;
 }
 
+// From the session's head space (meters, Hytale's axes, relative to where the
+// camera sits) to Hytale's camera-relative world: scaled, then moved by the
+// body offset.
+Mat4 to_camera(Mat4 m, Vec3 body) {
+    const float s = g_setup.world_scale;
+    m.at(0, 3) = m.at(0, 3) * s + body.x;
+    m.at(1, 3) = m.at(1, 3) * s;
+    m.at(2, 3) = m.at(2, 3) * s + body.z;
+    return m;
+}
+
 void compute_eyes(const Mono& mono) {
     const float s = g_setup.world_scale;
+    // Uses this frame's camera, so a world-locked view doesn't trail the character.
+    const Vec3 body = g_setup.world_locked
+                          ? Vec3{g_setup.anchor.x - mono.camera.x, 0, g_setup.anchor.z - mono.camera.z}
+                          : Vec3{g_setup.anchor.x, 0, g_setup.anchor.z};
     const Mat4 mono_vp_inverse = inverse(mono.projection * mono.view);
     const Mat4 mono_view_inverse = inverse_rigid(mono.view);
     for (int e = 0; e < 2; ++e) {
         Eye& eye = g_eye[e];
-        Mat4 pose = g_setup.head * g_setup.eye_to_head[e];
-        // Uses this frame's camera, so a world-locked view doesn't trail the character.
-        const Vec3 body = g_setup.world_locked
-                              ? Vec3{g_setup.anchor.x - mono.camera.x, 0, g_setup.anchor.z - mono.camera.z}
-                              : Vec3{g_setup.anchor.x, 0, g_setup.anchor.z};
-        pose.at(0, 3) = pose.at(0, 3) * s + body.x;
-        pose.at(1, 3) = pose.at(1, 3) * s;
-        pose.at(2, 3) = pose.at(2, 3) * s + body.z;
-        eye.view = inverse_rigid(pose);
+        eye.view = inverse_rigid(to_camera(g_setup.head * g_setup.eye_to_head[e], body));
         eye.projection = eye_projection(g_setup.headset_projection[e], mono.projection);
-        Mat4 eye_from_head = inverse_rigid(g_setup.eye_to_head[e]);
-        for (int r = 0; r < 3; ++r) eye_from_head.at(r, 3) *= s;
-        eye.fp_projection = eye_projection(g_setup.headset_projection[e], mono.fp_projection) * eye_from_head;
+        const Mat4 fp_projection = eye_projection(g_setup.headset_projection[e], mono.fp_projection);
+        if (g_setup.item_in_hand) {
+            // The first-person item is drawn in Hytale's view space with this
+            // matrix alone, so the controller's placement goes in here too.
+            eye.fp_projection = fp_projection * eye.view * to_camera(g_setup.item, body);
+        } else {
+            Mat4 eye_from_head = inverse_rigid(g_setup.eye_to_head[e]);
+            for (int r = 0; r < 3; ++r) eye_from_head.at(r, 3) *= s;
+            eye.fp_projection = fp_projection * eye_from_head;
+        }
         eye.view_projection = eye.projection * eye.view;
         eye.camera = mono.camera;
         const Previous& prev = g_previous[e];

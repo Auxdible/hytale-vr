@@ -218,7 +218,10 @@ void stick(::vr::VRActionHandle_t action, float& x, float& y) {
     }
 }
 
+float g_hand_speed[2] = {};  // meters per second, this frame
+
 bool hand_pose(int hand, Mat4& pose) {
+    g_hand_speed[hand] = 0;
     ::vr::InputPoseActionData_t data{};
     if (!g_actions.hand[hand] ||
         ::vr::VRInput()->GetPoseActionDataForNextFrame(g_actions.hand[hand], ::vr::TrackingUniverseStanding, &data,
@@ -226,8 +229,17 @@ bool hand_pose(int hand, Mat4& pose) {
         !data.bActive || !data.pose.bPoseIsValid)
         return false;
     pose = from_rows34(data.pose.mDeviceToAbsoluteTracking.m);
+    const float* v = data.pose.vVelocity.v;
+    g_hand_speed[hand] = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
     return true;
 }
+
+// Swing to hit: a fast flick of the attack hand clicks once.
+struct Swing {
+    bool armed = true;
+    float cooldown = 0;
+    int click_frames = 0;
+} g_swing;
 
 Vec3 g_anchor_head{0, 1.6f, 0};
 Vec3 g_anchor_forward{0, 0, -1};
@@ -307,7 +319,24 @@ void controls(const FrameContext& context, float dt) {
     // Triggers are the mouse buttons: the laser hand's trigger is the left click.
     const Pressed right_trigger = boolean(g_actions.primary);
     const Pressed left_trigger = boolean(g_actions.secondary);
-    input::mouse_button(1, s.left_handed ? left_trigger.down : right_trigger.down);
+    const int attack_hand = s.left_handed ? 0 : 1;
+    g_swing.cooldown = std::fmax(0.0f, g_swing.cooldown - dt);
+    if (g_swing.click_frames > 0) --g_swing.click_frames;
+    if (s.swing_to_hit && g_world_frame && context.game_relative && !context.menu_open) {
+        const float speed = g_hand_speed[attack_hand];
+        if (g_swing.armed && speed > s.swing_speed && g_swing.cooldown <= 0) {
+            g_swing.armed = false;
+            g_swing.cooldown = 0.3f;
+            g_swing.click_frames = 3;  // long enough for Hytale to see the press
+            if (g_actions.haptic[attack_hand])
+                ::vr::VRInput()->TriggerHapticVibrationAction(g_actions.haptic[attack_hand], 0, 0.04f, 120.0f, 0.6f,
+                                                            ::vr::k_ulInvalidInputValueHandle);
+        }
+        if (speed < s.swing_speed * 0.5f) g_swing.armed = true;
+    } else {
+        g_swing.click_frames = 0;
+    }
+    input::mouse_button(1, (s.left_handed ? left_trigger.down : right_trigger.down) || g_swing.click_frames > 0);
     input::mouse_button(3, s.left_handed ? right_trigger.down : left_trigger.down);
 
     const bool play = !context.menu_open;
@@ -459,6 +488,37 @@ void submit_world(int eye, GLuint fbo, int width, int height) {
     submit(eye, target.texture());
 }
 
+// The hotbar, cut from the HUD, floats just above the hand that doesn't attack
+// and turns to face you.
+void place_hotbar(const Settings& s) {
+    const HandView& hand = g_view.hands[s.left_handed ? 1 : 0];
+    g_view.hotbar = s.hotbar_on_hand && hand.valid;
+    if (!g_view.hotbar) return;
+    const float u0 = s.hotbar_left, u1 = s.hotbar_right;
+    const float v0 = 1.0f - s.hotbar_bottom, v1 = 1.0f - s.hotbar_top;  // the HUD texture's origin is its bottom
+    g_view.hotbar_uv[0] = u0;
+    g_view.hotbar_uv[1] = v0;
+    g_view.hotbar_uv[2] = u1 - u0;
+    g_view.hotbar_uv[3] = v1 - v0;
+    const float window_aspect = g_context.window_points_h > 0
+                                    ? static_cast<float>(g_context.window_points_w) / g_context.window_points_h
+                                    : 16.0f / 9.0f;
+    const float aspect = (u1 - u0) * window_aspect / (v1 - v0);
+    const Vec3 at = position_of(hand.pose) + Vec3{0, 0.075f, 0};
+    // Face the eye: the quad's +Z points from the panel to your head.
+    const Vec3 back = normalize(g_view.eye - at);
+    Vec3 up{0, 1, 0};
+    if (std::fabs(dot(up, back)) > 0.98f) up = {0, 0, 1};
+    const Vec3 right = normalize(cross(up, back));
+    const Vec3 true_up = cross(back, right);
+    Mat4 m;
+    m.at(0, 0) = right.x, m.at(1, 0) = right.y, m.at(2, 0) = right.z;
+    m.at(0, 1) = true_up.x, m.at(1, 1) = true_up.y, m.at(2, 1) = true_up.z;
+    m.at(0, 2) = back.x, m.at(1, 2) = back.y, m.at(2, 2) = back.z;
+    m.at(0, 3) = at.x, m.at(1, 3) = at.y, m.at(2, 3) = at.z;
+    g_view.hotbar_model = m * hvr::scale({s.hotbar_width, s.hotbar_width / aspect, 1});
+}
+
 // The HUD floats ahead of you and catches up when you look well away.
 void place_hud(const Settings& s, bool force) {
     const Vec3 head = position_of(g_hmd);
@@ -590,6 +650,16 @@ void prepare_world(const Settings& s, bool showed_world) {
     setup.anchor = g_room_locked ? g_room_anchor : g_body_offset;
     setup.world_locked = g_room_locked;
     setup.no_occlusion = s.no_occlusion;
+    // The held item: Hytale's first-person view, moved so its grip point sits
+    // in the attack hand and points where the controller points.
+    const HandView& item_hand = g_view.hands[s.left_handed ? 0 : 1];
+    setup.item_in_hand = s.item_in_hand && item_hand.valid;
+    if (setup.item_in_hand) {
+        const float pi = 3.14159265f;
+        const Mat4 palm = translation({0, -0.025f, 0.07f});  // from the controller's tip pose back to the palm
+        const Mat4 grip = rotation_x(s.item_pitch * pi / 180.0f) * translation(Vec3{} - Vec3{s.item_x, s.item_y, s.item_z});
+        setup.item = rotation_y(g_yaw_offset) * translation(Vec3{} - g_neutral) * item_hand.pose * palm * grip;
+    }
     stereo::set_eyes(setup);
 }
 
@@ -637,6 +707,7 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
         g_view.screen = g_hud_panel;
         g_view.floor = false;
         g_view.eye = position_of(g_hmd);
+        place_hotbar(settings);
         for (int eye = 0; eye < 2; ++eye) {
             g_scene.render_overlay(world.eye_fbo[eye], world.width, world.height, eye_projection_near(eye), eye_view(eye),
                                    g_view, world.hud_texture);

@@ -10,7 +10,8 @@ shader mods do, and adds an in-game VR menu.
 - **Standing in the world (experimental).** In a world, Hytale's own renderer
   draws each frame once per eye, so you see real 3D around you. Your head aims,
   the right stick turns you (snap or smooth), and the HUD floats on a panel in
-  front of you. Optional room-scale: the view stays put while your character
+  front of you. Your held item follows your right controller, the hotbar sits
+  over your left hand, and swinging the controller hits. Optional room-scale: the view stays put while your character
   steps after your head. Set Hytale's field of view to its maximum. The
   Sharpness slider in the World tab (experimental) has Hytale draw at more than
   its window size for a sharper picture.

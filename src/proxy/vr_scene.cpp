@@ -13,10 +13,11 @@ layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec2 aUv;
 uniform mat4 uMvp;
 uniform mat4 uModel;
+uniform vec4 uUvRect;
 out vec2 vUv;
 out vec3 vWorld;
 void main() {
-    vUv = aUv;
+    vUv = uUvRect.xy + aUv * uUvRect.zw;
     vWorld = (uModel * vec4(aPos, 1.0)).xyz;
     gl_Position = uMvp * vec4(aPos, 1.0);
 }
@@ -200,6 +201,7 @@ bool Scene::init() {
     u_eye_ = glr.glGetUniformLocation(program_, "uEye");
     u_tex_ = glr.glGetUniformLocation(program_, "uTex");
     u_size_ = glr.glGetUniformLocation(program_, "uSize");
+    u_uv_ = glr.glGetUniformLocation(program_, "uUvRect");
 
     const std::vector<Vertex> vertices = build_geometry();
     glr.glGenVertexArrays(1, &vao_);
@@ -313,6 +315,7 @@ void Scene::render_overlay(GLuint fbo, int width, int height, const Mat4& projec
     glr.glActiveTexture(gl::TEXTURE0);
     glr.glBindSampler(0, 0);
     glr.glUniform1i(u_tex_, 0);
+    glr.glUniform4f(u_uv_, 0, 0, 1, 1);
     glr.glUniform4f(u_color_, 1, 1, 1, 1);
     glr.glUniform3f(u_eye_, scene.eye.x, scene.eye.y, scene.eye.z);
     glr.glBlendEquation(gl::FUNC_ADD);
@@ -324,6 +327,12 @@ void Scene::render_overlay(GLuint fbo, int width, int height, const Mat4& projec
         glr.glEnable(gl::BLEND);
         glr.glBlendFuncSeparate(gl::ONE, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
         draw(kQuadFirst, kQuadCount, vp, scene.screen.model(), 6, nullptr);
+        if (scene.hotbar) {
+            const float* r = scene.hotbar_uv;
+            glr.glUniform4f(u_uv_, r[0], r[1], r[2], r[3]);
+            draw(kQuadFirst, kQuadCount, vp, scene.hotbar_model, 6, nullptr);
+            glr.glUniform4f(u_uv_, 0, 0, 1, 1);
+        }
     }
     draw_hands(vp, scene);
     glr.glBindVertexArray(0);
@@ -347,6 +356,7 @@ void Scene::render(const EyeTarget& target, const Mat4& projection, const Mat4& 
     glr.glBindSampler(0, 0);
     glr.glBindTexture(gl::TEXTURE_2D, screen_texture_);
     glr.glUniform1i(u_tex_, 0);
+    glr.glUniform4f(u_uv_, 0, 0, 1, 1);
     glr.glUniform4f(u_color_, 1, 1, 1, 1);
     glr.glBlendEquation(gl::FUNC_ADD);
     glr.glBlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
