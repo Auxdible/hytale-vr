@@ -20,7 +20,15 @@ jobs:
         run: cmake --preset vs2022-x64
 
       - name: Build
-        run: cmake --build --preset release
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --build --preset release 2>&1 | tee build.log
+
+      - name: Report build errors
+        if: failure()
+        shell: bash
+        run: grep -E "error (C|LNK)[0-9]+" build.log | sort -u | head -40 | sed 's/^/::error::/' || true
 
       - name: Test
         run: ctest --preset release
