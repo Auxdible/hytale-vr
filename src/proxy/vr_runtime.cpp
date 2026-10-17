@@ -5,6 +5,7 @@
 #include <openvr.h>
 
 #include <atomic>
+#include <bit>
 #include <cmath>
 #include <mutex>
 
@@ -49,10 +50,10 @@ FrameContext g_context;  // from begin_frame, used at the end of the frame
 
 // World view
 bool g_world_frame = false;     // the headset is showing the world (not the big screen)
-// The world view switches only after this many frames in a row of the other
-// kind, so frames that come and go while chunks load don't flicker.
-constexpr int kWorldOnFrames = 20, kWorldOffFrames = 30;
-int g_stereo_run = 0, g_mono_run = 0;
+// Which of the last 32 frames drew the world. The headset shows the world once
+// a third of them did and goes back to the big screen once none did, so
+// frames that come and go while chunks load don't flicker.
+uint32_t g_world_history = 0;
 GLuint g_last_world_texture[2] = {};
 Screen g_cinema_screen;
 Screen g_hud_panel;
@@ -180,7 +181,7 @@ void shutdown_now() {
     input::release_all();
     stereo::disable();
     g_world_frame = false;
-    g_stereo_run = g_mono_run = 0;
+    g_world_history = 0;
     g_last_world_texture[0] = g_last_world_texture[1] = 0;
     g_world_aligned = false;
     g_hud_placed = false;
@@ -583,16 +584,16 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
 
     // 1. Show the frame that was just drawn, with the poses it was drawn for.
     const bool drawn = world.stereo && g_hmd_valid;
-    g_stereo_run = drawn ? g_stereo_run + 1 : 0;
-    g_mono_run = drawn ? 0 : g_mono_run + 1;
+    g_world_history = (g_world_history << 1) | (drawn ? 1u : 0u);
+    const int recent = std::popcount(g_world_history);
     const bool was_world = g_world_frame;
-    if (g_world_frame && (g_mono_run >= kWorldOffFrames || !stereo::wanted())) g_world_frame = false;
+    if (g_world_frame && (recent == 0 || !stereo::wanted())) g_world_frame = false;
     if (g_world_frame && !drawn && g_last_world_texture[0]) {
         // A frame without the world in the middle of playing (chunks loading):
         // keep showing the last world frame rather than flicking to the screen.
         if (g_hmd_valid)
             for (int eye = 0; eye < 2; ++eye) submit(eye, g_last_world_texture[eye]);
-    } else if (drawn && (g_world_frame || g_stereo_run >= kWorldOnFrames)) {
+    } else if (drawn && (g_world_frame || recent >= 11)) {
         g_world_frame = true;
         if (!was_world) {
             logf("Showing Hytale's world in 3D");

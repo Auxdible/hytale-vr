@@ -18,7 +18,7 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("hud_distance", s.hud_distance);
     visit("hud_width", s.hud_width);
     visit("world_scale", s.world_scale);
-    visit("render_scale", s.render_scale);
+    visit("sharpness", s.render_scale);
     visit("turn_mode", s.turn_mode);
     visit("snap_degrees", s.snap_degrees);
     visit("smooth_speed", s.smooth_speed);

@@ -1,9 +1,17 @@
 # Changelog
 
+## 2.2.1
+
+- Sharpness is off by default (it broke 3D in 2.2.0); the slider is still in
+  the World tab to try.
+- The switch between the big screen and the world looks at the last 32 frames:
+  the world shows once about a third of them drew it, so a world drawn only
+  every other frame no longer leaves you on a flashing big screen.
+
 ## 2.2.0
 
 - Sharpness: while VR runs, Hytale is told its window has more pixels and
-  draws at that size (1.5x by default, up to 2.5x), then it's scaled down for
+  draws at that size (up to 2.5x), then it's scaled down for
   the monitor. If Hytale keeps drawing at the window's size, it turns itself off
   and says so in the World tab.
 - Head height follows your head 1:1 again (within half a meter of where it was
