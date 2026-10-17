@@ -22,15 +22,16 @@ jobs:
           curl -fsSL -o server.jar "https://maven.hytale.com/release/com/hypixel/hytale/Server/$V/Server-$V.jar"
           ls -la server.jar
       - name: Dump API
+        shell: bash {0}
         run: |
           cp server.jar /tmp/server.jar; jar tf server.jar | grep -E '\.class$' | sed 's/\.class$//; s:/:.:g' > classes.txt
           wc -l classes.txt
           mkdir -p out
           while read c; do echo "===== $c"; javap -cp /tmp/server.jar -public "$c" 2>&1 | head -300; done < probe-list.txt > out/api2.txt
           echo "===== PluginBase protected" >> out/api2.txt
-          javap -cp /tmp/server.jar -protected com.hypixel.hytale.server.core.plugin.PluginBase | grep protected >> out/api2.txt
+          javap -cp /tmp/server.jar -protected com.hypixel.hytale.server.core.plugin.PluginBase | grep protected >> out/api2.txt || true
           for c in com.hypixel.hytale.server.core.modules.interaction.interaction.config.client.BreakBlockInteraction com.hypixel.hytale.server.core.modules.interaction.interaction.config.server.DamageEntityInteraction; do
-            echo "===== DISASM $c"; javap -cp /tmp/server.jar -c -p "$c" | grep -B40 -E "performBlockDamage|executeDamage|EntitySource.\"<init>\"" | head -400
+            echo "===== DISASM $c"; javap -cp /tmp/server.jar -c -p "$c" | grep -B40 -E "performBlockDamage|executeDamage|EntitySource.\"<init>\"" | head -400 || true
           done > out/disasm.txt
           javap -cp /tmp/server.jar -public com.hypixel.hytale.server.core.modules.interaction.interaction.config.server.combat.DamageCalculator >> out/api2.txt
           wc -c out/*
