@@ -33,6 +33,7 @@ struct Sharpness {
     int frames = 0;         // since the last change
     bool checked = false;   // Hytale was seen drawing at the new size
     bool gave_up = false;   // Hytale kept drawing at the window's size
+    float gave_up_at = 0;   // the setting then; moving the slider tries again
     std::string status = "Off until VR starts.";
 } g_sharp;
 
@@ -53,6 +54,7 @@ void apply_sharpness(float scale, int pixels_w, int pixels_h) {
 // Called after the frame is shown: picks the size for the next one.
 void update_sharpness(bool vr_active, int pixels_w, int pixels_h) {
     float want = 1.0f;
+    if (g_sharp.gave_up && g_settings.render_scale != g_sharp.gave_up_at && !g_dirty) g_sharp.gave_up = false;
     if (vr_active && !g_sharp.gave_up && sdl::installed()) want = g_settings.render_scale;
     if (want < 1.05f) want = 1.0f;
     // Wait for the slider to settle before resizing everything.
@@ -66,14 +68,18 @@ void update_sharpness(bool vr_active, int pixels_w, int pixels_h) {
     }
     ++g_sharp.frames;
     const int seen = stereo::window_viewport_width();
-    if (!g_sharp.checked && seen == g_sharp.width) {
+    // Either Hytale's last full-window viewport or its 3D render size shows it.
+    const int rendered = stereo::render_width();
+    if (!g_sharp.checked && (seen == g_sharp.width || rendered == g_sharp.width)) {
         g_sharp.checked = true;
         logf("Hytale draws at %dx%d (%.2fx the window)", g_sharp.width, g_sharp.height, g_sharp.scale);
     }
-    if (!g_sharp.checked && g_sharp.frames > 300 && seen > 0) {
+    // Give up only when Hytale is clearly still drawing at the window's own size.
+    if (!g_sharp.checked && g_sharp.frames > 300 && (seen == pixels_w || rendered == pixels_w)) {
         logf("Hytale didn't pick up the bigger size (still drawing %d wide, wanted %d); Sharpness is off. %s", seen,
              g_sharp.width, sdl::usage_summary().c_str());
         g_sharp.gave_up = true;
+        g_sharp.gave_up_at = g_settings.render_scale;
         apply_sharpness(1.0f, pixels_w, pixels_h);
         g_sharp.status = "Off: Hytale kept drawing at the window's size.";
         return;

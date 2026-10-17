@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.5
+
+- Sharpness: checks whether Hytale picked up the bigger size from its 3D
+  render size too, gives up only when Hytale is clearly still at the window's
+  size, and tries again when you move the slider after it gave up.
+
 ## 2.2.4
 
 - The headset stayed frozen on the last big-screen frame in 3D. World frames are
