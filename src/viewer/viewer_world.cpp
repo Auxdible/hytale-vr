@@ -1,5 +1,6 @@
 #include "viewer/viewer_world.h"
 
+#include <algorithm>
 #include <charconv>
 #include <cstdlib>
 

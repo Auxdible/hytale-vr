@@ -5,6 +5,7 @@
 // shared memory the old render hook used.
 
 #include <windows.h>
+#include <shellapi.h>
 #include <GL/gl.h>
 #include <openvr.h>
 
@@ -37,6 +38,8 @@
 
 using namespace hytalevr::viewer;
 using hytalevr::Matrix4;
+using hytalevr::identity_matrix;
+using hytalevr::multiply;
 namespace glx = hytalevr::viewer::gl;
 
 namespace {
@@ -1536,7 +1539,7 @@ void update_controls(Viewer& viewer, FrameState& frame) {
         std::lock_guard<std::mutex> lock(g_state_mutex);
         g_reach_valid = false;
     }
-    ++shared.hand_ray_frame;
+    shared.hand_ray_frame = shared.hand_ray_frame + 1;
     for (int axis = 0; axis < 3; ++axis) shared.native_look[axis] = static_cast<float>(frame.latest.look[axis]);
 
     // Controller state for the dashboard, as the render hook wrote it.
