@@ -3,8 +3,12 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <initializer_list>
+#include <vector>
 #include <string>
 
+#include "../core/hytale_settings.h"
 #include "census.h"
 #include "gl_api.h"
 #include "gl_state.h"
@@ -139,17 +143,85 @@ void save_settings() {
     MoveFileExW(temp.c_str(), settings_path().c_str(), MOVEFILE_REPLACE_EXISTING);
 }
 
+// Hytale's settings file, read and written with plain Win32 calls so this is
+// safe while the DLL loads and unloads.
+bool read_file(const std::wstring& path, std::string& out) {
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER size{};
+    bool ok = GetFileSizeEx(file, &size) && size.QuadPart > 0 && size.QuadPart < (16 << 20);
+    if (ok) {
+        out.resize(static_cast<size_t>(size.QuadPart));
+        DWORD got = 0;
+        ok = ReadFile(file, out.data(), static_cast<DWORD>(out.size()), &got, nullptr) && got == out.size();
+    }
+    CloseHandle(file);
+    return ok;
+}
+
+bool write_file(const std::wstring& path, const std::string& text) {
+    const std::wstring temp = path + L".hytalevr.tmp";
+    HANDLE file = CreateFileW(temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    DWORD wrote = 0;
+    const bool ok = WriteFile(file, text.data(), static_cast<DWORD>(text.size()), &wrote, nullptr) && wrote == text.size();
+    CloseHandle(file);
+    if (!ok) {
+        DeleteFileW(temp.c_str());
+        return false;
+    }
+    return MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+}
+
+void tune_hytale(const char* when) {
+    if (!g_settings.tune_hytale) return;
+    wchar_t appdata[MAX_PATH] = {};
+    const DWORD n = GetEnvironmentVariableW(L"APPDATA", appdata, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return;
+    const std::wstring base = std::wstring(appdata) + L"\\Hytale";
+    for (const wchar_t* name : {L"\\UserData\\Settings.json", L"\\Settings.json"}) {
+        const std::wstring path = base + name;
+        std::string json;
+        if (!read_file(path, json)) continue;
+        const std::vector<std::string> changed = tune_hytale_settings(json);
+        if (changed.empty()) {
+            if (std::strcmp(when, "start") == 0) logf("Hytale's view bobbing and camera shake are already off (%ls)", path.c_str());
+            return;
+        }
+        // Keep the player's original once, before the first change.
+        const std::wstring backup = data_dir() + L"\\hytale_settings_before_vr.json";
+        if (GetFileAttributesW(backup.c_str()) == INVALID_FILE_ATTRIBUTES) {
+            std::string original;
+            if (read_file(path, original)) write_file(backup, original);
+        }
+        std::string list;
+        for (const std::string& key : changed) list += (list.empty() ? "" : ", ") + key;
+        if (write_file(path, json))
+            logf("Turned off in Hytale's settings at %s (takes effect when Hytale next starts): %s", when, list.c_str());
+        else
+            logf("Couldn't write Hytale's settings at %ls", path.c_str());
+        return;
+    }
+    if (std::strcmp(when, "start") == 0) logf("Didn't find Hytale's settings file under %ls", base.c_str());
+}
+
 void start() {
     g_started = true;
     load_settings();
     sdl::set_menu_key(g_settings.menu_key);
     logf("Menu key: scancode %d. Start in VR: %s", g_settings.menu_key, g_settings.vr_enabled ? "yes" : "no");
     if (g_settings.vr_enabled) session::request_start();
+    tune_hytale("start");
 }
 
 }  // namespace
 
 Settings& settings() { return g_settings; }
+
+void on_unload() {
+    if (g_started) tune_hytale("exit");
+}
 
 std::string render_status() { return g_sharp.status; }
 

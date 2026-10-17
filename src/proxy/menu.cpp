@@ -238,8 +238,9 @@ void tab_world(Settings& s) {
     changed |= slider("Comfort vignette", &s.vignette, 0.0f, 1.0f, "%.2f");
     hint("Darkens the edges while the stick moves or turns you. 0 turns it off.");
     changed |= ImGui::Checkbox("Steady view", &s.steady_view);
-    hint("Smooths Hytale's camera sway out of the view while you walk. Also turn off View Bobbing and Camera "
-         "Shake in Hytale's Gameplay settings.");
+    hint("Smooths Hytale's camera sway out of the view while you walk.");
+    changed |= ImGui::Checkbox("Turn off Hytale's view bobbing and camera shake", &s.tune_hytale);
+    hint("Set in Hytale's own settings file when it starts and closes; takes effect from the next start.");
     ImGui::TextUnformatted("The stick walks where");
     ImGui::SameLine();
     changed |= ImGui::RadioButton("you look", &s.move_with, 0);

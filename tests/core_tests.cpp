@@ -1,5 +1,6 @@
 // Tests for the platform-free parts of the VR runtime.
 #include "../src/core/controls.h"
+#include "../src/core/hytale_settings.h"
 #include "../src/core/settings.h"
 #include "../src/core/stereo_math.h"
 #include "../src/core/vrmath.h"
@@ -59,6 +60,16 @@ void test_stick() {
         float x = 0, y = 0;
         rotate_stick(0, 1, 1.5707963f, x, y);
         check(near(x, -1) && near(y, 0), "stick forward turns into the camera's left");
+    }
+    {
+        std::string json = "{\"Gameplay\": {\"ViewBobbingEffect\": true, \"ViewBobbingIntensity\":0.75,\n"
+                           "\"CameraShakeEffect\" : false, \"FirstPersonCameraShakeIntensity\": 1}, \"Other\": true}";
+        const std::vector<std::string> changed = tune_hytale_settings(json);
+        check(changed.size() == 3, "three comfort settings changed");
+        check(json == "{\"Gameplay\": {\"ViewBobbingEffect\": false, \"ViewBobbingIntensity\":0,\n"
+                      "\"CameraShakeEffect\" : false, \"FirstPersonCameraShakeIntensity\": 0}, \"Other\": true}",
+              "comfort settings rewritten in place");
+        check(tune_hytale_settings(json).empty(), "already tuned settings stay as they are");
     }
     MoveKeys idle = stick_to_keys(0.05f, 0.1f, 0.18f);
     check(!idle.forward && !idle.back && !idle.left && !idle.right, "deadzone holds nothing");

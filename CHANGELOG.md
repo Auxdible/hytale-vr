@@ -10,8 +10,11 @@
 - The stick walks exactly where you look, or where your other hand points
   (World tab), even while Hytale's camera is still catching up.
 - Steady view (World tab, on): smooths Hytale's camera sway out of the view
-  while following walking, jumping and falling. Turning off View Bobbing and
-  Camera Shake in Hytale's Gameplay settings helps too.
+  while following walking, jumping and falling.
+- Hytale's own view bobbing and camera shake are turned off for you (World
+  tab, on): set in Hytale's settings file when it starts and again as it
+  closes, so they're off from the next start. The original file is kept once
+  as HytaleVR\hytale_settings_before_vr.json.
 - Crouch for real (World tab, on): crouching in your room holds Hytale's
   crouch key, and the view is lifted by however far Hytale lowers its camera
   so it doesn't drop twice.

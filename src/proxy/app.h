@@ -13,6 +13,9 @@ void before_swap(HDC dc);
 void after_swap();
 
 Settings& settings();
+// As the DLL unloads: puts Hytale's comfort settings back to their VR values,
+// in case Hytale saved over them while running.
+void on_unload();
 void settings_changed();
 
 // What the Sharpness setting is doing right now, for the menu.

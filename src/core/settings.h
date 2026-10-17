@@ -30,6 +30,7 @@ struct Settings {
     int turn_mode = 0;              // 0 snap, 1 smooth
     float snap_degrees = 30.0f;
     float smooth_speed = 120.0f;    // degrees per second at full stick
+    bool tune_hytale = true;        // turn off view bobbing and camera shake in Hytale's own settings
     bool steady_view = true;        // smooths Hytale's camera sway out of the view while you walk
     int move_with = 0;              // the stick walks where 0 your head or 1 your other hand points
     bool real_crouch = true;        // crouching in your room crouches your character

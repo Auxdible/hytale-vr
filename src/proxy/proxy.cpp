@@ -210,6 +210,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
         }
     } else if (reason == DLL_PROCESS_DETACH) {
         hvr::logf("HytaleVR unloading");
+        hvr::app::on_unload();
     }
     return TRUE;
 }
