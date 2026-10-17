@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.2.2
+
+- Fixes chunks missing in the middle distance: besides its occluders, Hytale
+  copies the last frame's depth into its occlusion map, and that depth came
+  from the eyes, so it hid chunks that were in view. That copy is skipped too
+  when "Stop pop-in" is on.
+- The log notes every 5 seconds how many frames were drawn per eye and why
+  not, to track down 3D dropping out.
+
 ## 2.2.1
 
 - Sharpness is off by default (it broke 3D in 2.2.0); the slider is still in

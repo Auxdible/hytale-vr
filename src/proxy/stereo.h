@@ -100,6 +100,8 @@ void after_blit(GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0, GLint dy0
 void after_generate_mipmap(GLenum target);
 
 std::string summary();
+// Why recent frames were or weren't drawn per eye; resets the counts.
+std::string take_frame_stats();
 
 // Virtual back buffer: Hytale's window drawing goes to an offscreen buffer of
 // this size (0 turns it off). Returns whether it's on.

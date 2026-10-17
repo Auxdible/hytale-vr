@@ -228,6 +228,10 @@ struct Pending {
     bool blend_changed = false;
 } g_pending;
 
+struct Stats {
+    int frames = 0, wanted = 0, stale_setup = 0, failed = 0, no_targets = 0, composited = 0, stereo = 0, no_draws = 0;
+} g_stats;
+
 void problem(const char* text) {
     if (g_last_problem == text) return;
     g_last_problem = text;
@@ -989,6 +993,16 @@ FrameResult end_frame(int window_w, int window_h) {
         logf("Stereo: first frame in the world (%d doubled draws, %d composites)", g_stereo_draws, g_composites);
     }
 
+    // Counts for the periodic log line, to see why frames weren't per eye.
+    ++g_stats.frames;
+    if (g_wanted) ++g_stats.wanted;
+    if (g_wanted && g_setup_frame < g_frame - 1) ++g_stats.stale_setup;
+    if (g_failed_frame) ++g_stats.failed;
+    if (g_wanted && !targets_ready()) ++g_stats.no_targets;
+    if (g_composited) ++g_stats.composited;
+    if (result.stereo) ++g_stats.stereo;
+    if (g_stereo_draws == 0 && g_wanted) ++g_stats.no_draws;
+
     ++g_frame;
     g_failed_frame = false;
     g_composited = false;
@@ -1256,14 +1270,32 @@ void on_delete_framebuffers(GLsizei count, const GLuint* framebuffers) {
 // --- Draws ---
 
 bool skip_draw(GLenum mode) {
-    // Only occluder geometry; points there may be Hytale's own visibility tests.
-    if (mode != gl::TRIANGLES || !g_setup.no_occlusion || !active() || t.draw_fb == 0 || !t.program) return false;
+    if ((mode != gl::TRIANGLES && mode != gl::POINTS) || !g_setup.no_occlusion || !active() || t.draw_fb == 0 ||
+        !t.program)
+        return false;
     FboInfo& info = g_fbos[t.draw_fb];
     if (info.frame_checked != g_frame) classify(gl::DRAW_FRAMEBUFFER, t.draw_fb);
     if (!info.occluder) return false;
+    static bool logged[2] = {};
+    if (mode == gl::POINTS) {
+        // Last frame's depth, reprojected into the occlusion map one point per
+        // texel. That depth came from the eyes, not Hytale's camera, so it hides
+        // chunks that are really in view.
+        if (glr.glIsEnabled(0x8C89 /* RASTERIZER_DISCARD */)) return false;
+        if (!logged[1]) {
+            logged[1] = true;
+            logf("Stereo: skipping Hytale's reprojected occlusion depth");
+        }
+        return true;
+    }
     // Occluders are drawn with the camera block; the depth pyramid built from
     // them afterwards isn't, and runs on the cleared depth.
-    return program_info(t.program).scene_binding >= 0;
+    if (program_info(t.program).scene_binding < 0) return false;
+    if (!logged[0]) {
+        logged[0] = true;
+        logf("Stereo: skipping Hytale's occluders");
+    }
+    return true;
 }
 
 bool draw_begin(GLenum mode, GLsizei count) {
@@ -1423,6 +1455,17 @@ void after_generate_mipmap(GLenum target) {
     glr.glBindTexture(gl::TEXTURE_2D, twin);
     glr.glGenerateMipmap(gl::TEXTURE_2D);
     glr.glBindTexture(gl::TEXTURE_2D, t.tex2d[t.active_unit]);
+}
+
+std::string take_frame_stats() {
+    char text[256];
+    std::snprintf(text, sizeof(text),
+                  "%d frames: %d wanted 3D, %d per eye, %d composited, %d no doubled draws, %d late setup, %d camera "
+                  "failed, %d no targets",
+                  g_stats.frames, g_stats.wanted, g_stats.stereo, g_stats.composited, g_stats.no_draws,
+                  g_stats.stale_setup, g_stats.failed, g_stats.no_targets);
+    g_stats = Stats{};
+    return text;
 }
 
 std::string summary() {

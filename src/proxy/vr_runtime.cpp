@@ -588,6 +588,23 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
     const int recent = std::popcount(g_world_history);
     const bool was_world = g_world_frame;
     if (g_world_frame && (recent == 0 || !stereo::wanted())) g_world_frame = false;
+    {
+        // Every 5 seconds: how the frames went, for diagnosing 3D dropping out.
+        static ULONGLONG last = 0;
+        static int shown = 0, held = 0;
+        if (g_world_frame) ++(drawn ? shown : held);
+        const ULONGLONG now = GetTickCount64();
+        if (now - last > 5000) {
+            if (last && (stereo::wanted() || shown || held))
+                logf("Frames: %s; headset showed the world %d, held the last world frame %d, latched %s, mouse look %s",
+                     stereo::take_frame_stats().c_str(), shown, held, g_world_latched ? "yes" : "no",
+                     g_context.game_relative ? "on" : "off");
+            else
+                stereo::take_frame_stats();
+            last = now;
+            shown = held = 0;
+        }
+    }
     if (g_world_frame && !drawn && g_last_world_texture[0]) {
         // A frame without the world in the middle of playing (chunks loading):
         // keep showing the last world frame rather than flicking to the screen.
