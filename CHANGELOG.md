@@ -7,7 +7,7 @@
   few hundred answers are checked against the driver, and any mismatch goes
   back to asking.
 - Comfort vignette: the edges of your view darken while the stick moves or
-  smoothly turns you. Strength in the World tab (0 turns it off).
+  smoothly turns you, and briefly on a snap turn. Strength in the World tab (0 turns it off).
 
 ## 2.3.0
 
