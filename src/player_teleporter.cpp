@@ -121,6 +121,7 @@ enum ControlId {
     IDC_VR_SWING_TO_HIT,
     IDC_VR_AUTO_START,
     IDC_VR_SNAP_TURN,
+    IDC_VR_VIEWER_MODE,
     IDC_TAB_DASHBOARD = 301,
     IDC_TAB_SETTINGS,
     IDC_TAB_RENDERING,
@@ -681,7 +682,7 @@ LRESULT CALLBACK ToggleSubclassProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM 
             const int id = GetDlgCtrlID(hwnd);
             const bool isSidebarToggle =
                 (id == IDC_VR_ADVANCED_OPTIONS || id == IDC_VR_AUTO_START ||
-                 id == IDC_VR_SNAP_TURN);
+                 id == IDC_VR_SNAP_TURN || id == IDC_VR_VIEWER_MODE);
             const bool isHovered = (s_hoveredToggle == hwnd);
             g.Clear(isSidebarToggle ? gdip_rgb(12, 12, 16) : gdip_rgb(13, 13, 17));
             
@@ -949,6 +950,7 @@ void update_tab_visibility() {
     ShowWindow(control(IDC_VR_ADVANCED_OPTIONS), SW_SHOW);
     ShowWindow(control(IDC_VR_AUTO_START), SW_SHOW);
     ShowWindow(control(IDC_VR_SNAP_TURN), SW_SHOW);
+    ShowWindow(control(IDC_VR_VIEWER_MODE), SW_SHOW);
     
     // Force repaint of the main window to update panels
     InvalidateRect(g_window, nullptr, TRUE);
@@ -1780,7 +1782,28 @@ bool update_head_origin_yaw() {
     return true;
 }
 
+// The separate VR viewer draws the world itself and turns the view on its
+// own; the dashboard only keeps Hytale's camera facing where it looks.
+bool viewer_mode_enabled() {
+    return IsDlgButtonChecked(g_window, IDC_VR_VIEWER_MODE) == BST_CHECKED;
+}
+
+bool viewer_mode_active() {
+    return viewer_mode_enabled() && g_vr_camera_shared &&
+           g_vr_camera_shared->viewer_active != 0;
+}
+
 bool compensate_head_based_locomotion_axes(float& x, float& y) {
+    if (viewer_mode_active()) {
+        if (g_vr_camera_shared->camera_yaw_valid == 0) return false;
+        const float yaw_error = normalize_angle(
+            g_vr_camera_shared->viewer_target_yaw - g_vr_camera_shared->native_camera_yaw);
+        const hytalevr::LocomotionAxes axes =
+            hytalevr::rotate_locomotion_axes(x, y, yaw_error);
+        x = axes.x;
+        y = axes.y;
+        return true;
+    }
     if (!g_vr_head_origin_yaw_valid || !g_vr_camera_shared ||
         g_vr_camera_shared->camera_yaw_valid == 0) {
         return false;
@@ -2429,6 +2452,24 @@ void update_quest_turning() {
     }
     update_turn_calibration(now);
 
+    if (viewer_mode_active()) {
+        // Snap and smooth turns already happened in the viewer. Follow its
+        // headset yaw quickly: Hytale's camera is not what the player sees,
+        // so catching up fast only makes walking direction right sooner.
+        g_turn_mouse_remainder = 0.0f;
+        if (g_vr_camera_shared->camera_yaw_valid == 0) return;
+        const float yaw_error = normalize_angle(
+            g_vr_camera_shared->viewer_target_yaw - g_vr_camera_shared->native_camera_yaw);
+        g_vr_camera_shared->native_head_sync_active = std::fabs(yaw_error) > 0.003f ? 1u : 0u;
+        if (std::fabs(yaw_error) <= 0.003f) return;
+        const float max_pixels = std::max(4.0f, 12.0f * g_mouse_pixels_per_radian * elapsed);
+        g_turn_mouse_remainder = std::clamp(
+            yaw_error * g_mouse_pixels_per_radian, -max_pixels, max_pixels);
+        const LONG mouse_x = static_cast<LONG>(std::lround(g_turn_mouse_remainder));
+        if (mouse_x != 0) send_turn_mouse(mouse_x, now);
+        return;
+    }
+
     const float deadzone = std::clamp(get_float(IDC_VR_QUEST_DEADZONE, 0.35f),
                                       0.10f, 0.90f);
     const float raw_turn = g_vr_camera_shared->controller_turn_x;
@@ -2828,6 +2869,10 @@ void publish_vr_controls(bool enabled, bool shutdown_requested, bool unload_requ
         IsDlgButtonChecked(g_window, IDC_VR_HAND_POINTER) == BST_CHECKED ? 1u : 0u;
     g_vr_camera_shared->physical_swing_enabled =
         IsDlgButtonChecked(g_window, IDC_VR_SWING_TO_HIT) == BST_CHECKED ? 1u : 0u;
+    g_vr_camera_shared->viewer_snap_turn =
+        IsDlgButtonChecked(g_window, IDC_VR_SNAP_TURN) == BST_CHECKED ? 1u : 0u;
+    g_vr_camera_shared->viewer_turn_speed_degrees =
+        std::clamp(get_float(IDC_VR_TURN_SPEED, 120.0f), 20.0f, 360.0f);
     g_vr_camera_shared->hide_center_reticle =
         IsDlgButtonChecked(g_window, IDC_VR_HIDE_RETICLE) == BST_CHECKED ? 1u : 0u;
     g_vr_camera_shared->ui_overlay_enabled =
@@ -2917,7 +2962,8 @@ void publish_vr_controls(bool enabled, bool shutdown_requested, bool unload_requ
 }
 
 void recenter_vr_tracking() {
-    if (!g_vr_tracking || !g_vr_camera_shared || !g_vr_camera_shared->hook_active) {
+    if (!g_vr_tracking || !g_vr_camera_shared ||
+        (!g_vr_camera_shared->hook_active && !viewer_mode_active())) {
         start_vr_tracking();
         return;
     }
@@ -2928,6 +2974,35 @@ void recenter_vr_tracking() {
     wchar_t status[160]{};
     swprintf_s(status, L"VR recenter sent to hook. Sequence=%u", g_vr_recenter_sequence);
     set_status(status);
+}
+
+PROCESS_INFORMATION g_viewer_process{};
+
+bool viewer_process_running() {
+    return g_viewer_process.hProcess &&
+           WaitForSingleObject(g_viewer_process.hProcess, 0) == WAIT_TIMEOUT;
+}
+
+void close_viewer_process_handles() {
+    if (g_viewer_process.hProcess) CloseHandle(g_viewer_process.hProcess);
+    if (g_viewer_process.hThread) CloseHandle(g_viewer_process.hThread);
+    g_viewer_process = {};
+}
+
+bool launch_vr_viewer() {
+    if (viewer_process_running()) return true;
+    close_viewer_process_handles();
+    const std::wstring path = executable_directory() + L"\\hytale_vr_viewer.exe";
+    std::wstring command = L"\"" + path + L"\" --pid " + std::to_wstring(g_pid);
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    if (!CreateProcessW(path.c_str(), command.data(), nullptr, nullptr, FALSE,
+                        0, nullptr, executable_directory().c_str(), &startup,
+                        &g_viewer_process)) {
+        g_viewer_process = {};
+        return false;
+    }
+    return true;
 }
 
 void shutdown_vr() {
@@ -2964,6 +3039,13 @@ void shutdown_vr() {
         vr::VR_Shutdown();
         g_vr_system = nullptr;
     }
+    if (viewer_process_running()) {
+        // The viewer closes itself on shutdown_requested; give it a moment.
+        if (WaitForSingleObject(g_viewer_process.hProcess, 3000) == WAIT_TIMEOUT) {
+            TerminateProcess(g_viewer_process.hProcess, 0);
+        }
+    }
+    close_viewer_process_handles();
     SetWindowTextW(control(IDC_VR_POSE), L"Headset: stopped");
 }
 
@@ -2988,6 +3070,26 @@ void start_vr_tracking() {
         publish_vr_controls(true, false);
         SetWindowTextW(control(IDC_VR_POSE), L"Non-VR: active");
         set_status(L"Non-VR mode active. Only render filters are applied.");
+        return;
+    }
+    if (viewer_mode_enabled()) {
+        if (!initialize_vr_camera_mapping()) {
+            set_status(L"Could not create shared VR memory. Close other dashboards and try again.");
+            return;
+        }
+        g_vr_tracking = true;
+        ++g_vr_recenter_sequence;
+        // Publish before launching so the viewer never sees a stale stop request.
+        publish_vr_controls(true, false);
+        if (!launch_vr_viewer()) {
+            g_vr_tracking = false;
+            publish_vr_controls(false, false);
+            set_status(L"Could not start hytale_vr_viewer.exe. It should be beside this dashboard.");
+            return;
+        }
+        SetTimer(g_window, kVrTimer, 8, nullptr);
+        set_status(L"VR viewer started. It draws the world from the HytaleVR plugin; "
+                   L"press Y in VR for Hytale's screen.");
         return;
     }
     if (!g_vr_system) {
@@ -3046,6 +3148,27 @@ void update_vr_tracking() {
         return;
     }
     update_plugin_bridge();
+    if (viewer_mode_enabled()) {
+        if (!viewer_process_running()) {
+            shutdown_vr();
+            set_status(L"The VR viewer closed. Details are in %TEMP%\\HytaleVR\\viewer.log.");
+            return;
+        }
+        static ULONGLONG last_viewer_status = 0;
+        const ULONGLONG now = GetTickCount64();
+        if (now - last_viewer_status > 500) {
+            last_viewer_status = now;
+            wchar_t text[96]{};
+            if (g_vr_camera_shared->viewer_active == 0) {
+                swprintf_s(text, L"Viewer: waiting for SteamVR");
+            } else if (g_vr_camera_shared->viewer_plugin_connected == 0) {
+                swprintf_s(text, L"Viewer: no plugin, screen only");
+            } else {
+                swprintf_s(text, L"Viewer: %u areas loaded", g_vr_camera_shared->viewer_sections);
+            }
+            SetWindowTextW(control(IDC_VR_POSE), text);
+        }
+    }
     update_quest_turning();
     update_quest_locomotion();
     update_vr_menu_mouse();
@@ -3341,6 +3464,7 @@ void create_ui(HWND window) {
     add(L"BUTTON", L"Advanced options", BS_AUTOCHECKBOX, 20, 92, 145, 24, IDC_VR_ADVANCED_OPTIONS);
     add(L"BUTTON", L"Auto-start VR", BS_AUTOCHECKBOX, 20, 122, 145, 24, IDC_VR_AUTO_START);
     add(L"BUTTON", L"Snap turning", BS_AUTOCHECKBOX, 20, 152, 145, 24, IDC_VR_SNAP_TURN);
+    add(L"BUTTON", L"VR viewer", BS_AUTOCHECKBOX, 20, 182, 145, 24, IDC_VR_VIEWER_MODE);
 
     // Main functional controls
     add(L"BUTTON", L"Scan player block", BS_DEFPUSHBUTTON, 215, 50, 160, 40, IDC_SCAN);
@@ -3496,6 +3620,7 @@ void create_ui(HWND window) {
     CheckDlgButton(g_window, IDC_VR_SWING_TO_HIT, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_AUTO_START, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_SNAP_TURN, BST_CHECKED);
+    CheckDlgButton(g_window, IDC_VR_VIEWER_MODE, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_HIDE_FIRST_PERSON_HAND, BST_CHECKED);
     update_advanced_visibility();
 #endif

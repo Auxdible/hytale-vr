@@ -1079,6 +1079,13 @@ bool read_vr_asset_by_suffix(const std::wstring& assets_zip,
     return read_zip_entry(assets_zip, index, match, bytes, error);
 }
 
+bool decode_vr_png(const std::vector<uint8_t>& bytes,
+                   uint32_t& width,
+                   uint32_t& height,
+                   std::vector<uint8_t>& rgba) {
+    return decode_png(bytes, width, height, rgba);
+}
+
 bool load_vr_asset_texture(const VrItemAssetCatalog& catalog,
                            const std::string& asset_path,
                            uint32_t& width,

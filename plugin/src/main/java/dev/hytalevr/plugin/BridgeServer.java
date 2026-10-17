@@ -22,39 +22,52 @@ final class BridgeServer implements AutoCloseable {
     private static final int MAX_LINE = 4096;
     private static final int MAX_CLIENTS = 8;
 
-    /** One live connection. */
+    /** One live connection. Sends are queued and written by the client's own thread. */
     static final class Client {
+        /** Lines queued beyond this mean the reader has stalled; the link is dropped. */
+        private static final int MAX_QUEUED = 16384;
+        private static final byte[] CLOSE = new byte[0];
+
         private final Socket socket;
         private final OutputStream out;
+        private final java.util.concurrent.BlockingQueue<byte[]> queue =
+                new java.util.concurrent.LinkedBlockingQueue<>(MAX_QUEUED);
         /** Set from the HELLO line: "hytale-vr" (dashboard) or "hytale-vr-viewer". */
         volatile String role = "";
 
         Client(Socket socket) throws IOException {
             this.socket = socket;
-            this.out = socket.getOutputStream();
+            this.out = new java.io.BufferedOutputStream(socket.getOutputStream(), 65536);
+            final Thread writer = new Thread(this::writeLoop, "HytaleVR bridge writer");
+            writer.setDaemon(true);
+            writer.start();
         }
 
-        /** Sends one line; returns false once the dashboard is gone. */
-        synchronized boolean send(String line) {
-            try {
-                out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
-                out.flush();
-                return true;
-            } catch (IOException e) {
+        /** Queues one line without blocking; returns false once the link is gone. */
+        boolean send(String line) {
+            if (socket.isClosed()) return false;
+            if (!queue.offer((line + "\n").getBytes(StandardCharsets.UTF_8))) {
                 closeQuietly();
                 return false;
             }
+            return true;
         }
 
-        /** Sends raw bytes (already framed by the caller). */
-        synchronized boolean sendRaw(byte[] bytes) {
+        private void writeLoop() {
             try {
-                out.write(bytes);
-                out.flush();
-                return true;
-            } catch (IOException e) {
+                while (true) {
+                    byte[] bytes = queue.take();
+                    if (bytes == CLOSE) return;
+                    out.write(bytes);
+                    // Batch whatever else is already waiting before flushing.
+                    while ((bytes = queue.poll()) != null) {
+                        if (bytes == CLOSE) return;
+                        out.write(bytes);
+                    }
+                    out.flush();
+                }
+            } catch (IOException | InterruptedException e) {
                 closeQuietly();
-                return false;
             }
         }
 
@@ -68,6 +81,8 @@ final class BridgeServer implements AutoCloseable {
             } catch (IOException ignored) {
                 // Already closed.
             }
+            queue.clear();
+            queue.offer(CLOSE);
         }
     }
 

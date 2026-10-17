@@ -115,6 +115,12 @@ bool read_vr_asset_by_suffix(const std::wstring& assets_zip,
                              std::vector<uint8_t>& bytes,
                              std::string& error);
 
+// Decodes PNG bytes to 8-bit RGBA rows, top row first.
+bool decode_vr_png(const std::vector<uint8_t>& bytes,
+                   uint32_t& width,
+                   uint32_t& height,
+                   std::vector<uint8_t>& rgba);
+
 bool load_vr_asset_texture(const VrItemAssetCatalog& catalog,
                            const std::string& asset_path,
                            uint32_t& width,

@@ -46,9 +46,9 @@ import org.joml.Vector3d;
 final class WorldStreamer {
     static final String VIEWER_ROLE = "hytale-vr-viewer";
     /** Horizontal radius in 32-block sections around the player. */
-    private static final int RADIUS = 3;
+    static final int RADIUS = 3;
     /** Sections streamed above and below the player's own. */
-    private static final int VERTICAL = 2;
+    static final int VERTICAL = 2;
     private static final int SECTIONS_PER_TICK = 6;
     /** Every this many ticks, nearby sections are re-read in case a change slipped past the counter. */
     private static final int RECHECK_TICKS = 20;
@@ -142,6 +142,12 @@ final class WorldStreamer {
     private void streamSections(BridgeServer.Client client, ViewerState state, ChunkStore chunks,
                                 List<long[]> order, boolean recheck) {
         final Store<ChunkStore> chunkStore = chunks.getStore();
+        // Forget sections that left the radius so they are sent again on return;
+        // the viewer drops them from its own copy too.
+        final Set<Long> inRange = new HashSet<>();
+        for (long[] coords : order) inRange.add(sectionKey((int) coords[0], (int) coords[1], (int) coords[2]));
+        state.sentCounters.keySet().retainAll(inRange);
+        state.sentHashes.keySet().retainAll(inRange);
         int budget = SECTIONS_PER_TICK;
         int index = 0;
         for (long[] coords : order) {

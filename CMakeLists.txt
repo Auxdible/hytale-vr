@@ -115,6 +115,33 @@ add_executable(hytale_player_teleporter WIN32
     src/plugin_bridge.cpp
 )
 
+add_executable(hytale_vr_viewer WIN32
+    src/viewer/viewer_main.cpp
+    src/viewer/viewer_world.cpp
+    src/viewer/viewer_mesher.cpp
+    src/vr_item_assets.cpp
+    src/plugin_bridge.cpp
+)
+target_compile_definitions(hytale_vr_viewer PRIVATE
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+    UNICODE
+    _UNICODE
+)
+target_include_directories(hytale_vr_viewer PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openvr/headers"
+)
+target_link_libraries(hytale_vr_viewer PRIVATE
+    opengl32
+    gdiplus
+    ole32
+    ws2_32
+    shell32
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openvr/lib/win64/openvr_api.lib"
+)
+
 target_compile_definitions(hytale_camera_dashboard PRIVATE
     WIN32_LEAN_AND_MEAN
     NOMINMAX
@@ -210,6 +237,7 @@ set(hytale_runtime_targets
     hytale_noesis_probe
     hytale_noesis_probe_tool
     hytale_player_teleporter
+    hytale_vr_viewer
 )
 if(HYTALE_BUILD_EXPERIMENTAL_PROBE)
     list(APPEND hytale_runtime_targets hytale_camera_probe)
@@ -244,6 +272,15 @@ if(BUILD_TESTING)
     target_link_libraries(hytale_plugin_bridge_tests PRIVATE ws2_32)
     hytale_target_defaults(hytale_plugin_bridge_tests)
     add_test(NAME plugin_bridge COMMAND hytale_plugin_bridge_tests)
+
+    add_executable(hytale_viewer_tests
+        tests/viewer_tests.cpp
+        src/viewer/viewer_world.cpp
+        src/viewer/viewer_mesher.cpp
+    )
+    target_include_directories(hytale_viewer_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    hytale_target_defaults(hytale_viewer_tests)
+    add_test(NAME viewer COMMAND hytale_viewer_tests)
 
     add_executable(hytale_vr_math_tests tests/vr_math_tests.cpp)
     target_include_directories(hytale_vr_math_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -304,6 +341,7 @@ endif()
 install(TARGETS
     HytaleUIScaleHook
     hytale_vr_camera_hook
+    hytale_vr_viewer
     hytale_camera_dashboard
     hytale_player_teleporter
     hytale_viewtarget_writer

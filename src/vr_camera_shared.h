@@ -4,7 +4,7 @@
 
 constexpr wchar_t kVrCameraMappingName[] = L"Local\\HytaleVrCamera_v122FloorAligned";
 constexpr uint32_t kVrCameraMagic = 0x48595652; // HYVR
-constexpr uint32_t kVrCameraVersion = 124;
+constexpr uint32_t kVrCameraVersion = 125;
 
 constexpr uint32_t kVrEffectShadows = 1u << 0;
 constexpr uint32_t kVrEffectParticles = 1u << 1;
@@ -228,4 +228,18 @@ struct VrCameraShared {
     // Hytale's own look direction in the same axes, so the plugin can check
     // the render axes against the server's before trusting a hand ray.
     volatile float native_look[3] = {};
+
+    // The separate VR viewer (hytale_vr_viewer.exe), which draws the world
+    // itself from the server plugin's data instead of hooking Hytale.
+    // Written by the viewer:
+    volatile uint32_t viewer_active = 0;
+    volatile uint32_t viewer_heartbeat = 0;
+    // Where the headset looks, in the dashboard's yaw convention; the
+    // dashboard turns Hytale's camera to follow it so walking goes that way.
+    volatile float viewer_target_yaw = 0.0f;
+    volatile uint32_t viewer_plugin_connected = 0;
+    volatile uint32_t viewer_sections = 0;
+    // Written by the dashboard:
+    uint32_t viewer_snap_turn = 1;
+    float viewer_turn_speed_degrees = 120.0f;
 };

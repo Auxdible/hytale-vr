@@ -5,13 +5,13 @@
 #include "plugin_bridge.h"
 
 #include <cstdio>
+#include <utility>
 
 namespace hytalevr {
 namespace {
 
 constexpr uint64_t kReconnectDelayMs = 2000;
 constexpr uint64_t kConnectTimeoutMs = 1500;
-constexpr size_t kMaxInbox = 64 * 1024;
 
 SOCKET as_socket(uintptr_t value) { return static_cast<SOCKET>(value); }
 
@@ -28,8 +28,8 @@ std::string format_swing_message(int hand, const HandRay& ray, float speed, cons
     return text;
 }
 
-std::string format_hello_message() {
-    return "HELLO hytale-vr " + std::to_string(kPluginBridgeProtocol) + "\n";
+std::string format_hello_message(const std::string& role) {
+    return "HELLO " + role + " " + std::to_string(kPluginBridgeProtocol) + "\n";
 }
 
 std::vector<std::string> take_lines(std::string& buffer) {
@@ -47,7 +47,8 @@ std::vector<std::string> take_lines(std::string& buffer) {
     return lines;
 }
 
-PluginBridge::PluginBridge() : socket_(static_cast<uintptr_t>(INVALID_SOCKET)) {
+PluginBridge::PluginBridge(std::string role, size_t max_inbox)
+    : socket_(static_cast<uintptr_t>(INVALID_SOCKET)), role_(std::move(role)), max_inbox_(max_inbox) {
     WSADATA data{};
     winsock_ready_ = WSAStartup(MAKEWORD(2, 2), &data) == 0;
 }
@@ -123,7 +124,7 @@ std::vector<std::string> PluginBridge::poll(uint64_t now_ms) {
         }
         if (ready > 0 && FD_ISSET(as_socket(socket_), &writable)) {
             state_ = State::Ready;
-            if (!send_line(format_hello_message())) return {};
+            if (!send_line(format_hello_message(role_))) return {};
         } else if (now_ms - connect_started_ms_ > kConnectTimeoutMs) {
             close();
             return {};
@@ -132,12 +133,12 @@ std::vector<std::string> PluginBridge::poll(uint64_t now_ms) {
         }
     }
 
-    char buffer[2048];
+    char buffer[16384];
     for (;;) {
         const int received = recv(as_socket(socket_), buffer, sizeof(buffer), 0);
         if (received > 0) {
             inbox_.append(buffer, static_cast<size_t>(received));
-            if (inbox_.size() > kMaxInbox) {
+            if (inbox_.size() > max_inbox_) {
                 close();
                 return {};
             }
