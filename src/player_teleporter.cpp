@@ -38,6 +38,7 @@ constexpr size_t kScanChunk = 2 * 1024 * 1024;
 constexpr UINT_PTR kWriteTimer = 1;
 #ifdef HYTALE_CAMERA_MODE
 constexpr UINT_PTR kVrTimer = 2;
+constexpr UINT_PTR kAutoStartTimer = 3;
 constexpr UINT kScanCompleteMessage = WM_APP + 1;
 #endif
 
@@ -115,6 +116,7 @@ enum ControlId {
     IDC_VR_KEY_USE,
     IDC_VR_KEY_INVENTORY,
     IDC_VR_SWING_TO_HIT,
+    IDC_VR_AUTO_START,
     IDC_TAB_DASHBOARD = 301,
     IDC_TAB_SETTINGS,
     IDC_TAB_RENDERING,
@@ -659,7 +661,8 @@ LRESULT CALLBACK ToggleSubclassProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM 
             Gdiplus::Graphics g(memDC);
             g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
             const int id = GetDlgCtrlID(hwnd);
-            const bool isSidebarToggle = (id == IDC_VR_ADVANCED_OPTIONS);
+            const bool isSidebarToggle =
+                (id == IDC_VR_ADVANCED_OPTIONS || id == IDC_VR_AUTO_START);
             const bool isHovered = (s_hoveredToggle == hwnd);
             g.Clear(isSidebarToggle ? gdip_rgb(12, 12, 16) : gdip_rgb(13, 13, 17));
             
@@ -925,6 +928,7 @@ void update_tab_visibility() {
     ShowWindow(control(IDC_VR_POSE), SW_SHOW);
     ShowWindow(control(IDC_STATUS), SW_SHOW);
     ShowWindow(control(IDC_VR_ADVANCED_OPTIONS), SW_SHOW);
+    ShowWindow(control(IDC_VR_AUTO_START), SW_SHOW);
     
     // Force repaint of the main window to update panels
     InvalidateRect(g_window, nullptr, TRUE);
@@ -2955,6 +2959,157 @@ HWND add_control(const wchar_t* klass, const wchar_t* text, DWORD style,
     return hwnd;
 }
 
+#ifdef HYTALE_CAMERA_MODE
+// Auto-start: once SteamVR and Hytale both run and the player is in Hytale,
+// replay the manual flow (show F7, scan the player block, Center VR) so the
+// dashboard never has to be touched. It never steals focus from other apps.
+constexpr char kDashboardAppKey[] = "com.hytalevr.dashboard";
+constexpr ULONGLONG kAutoStartRetryMs = 4000;
+constexpr ULONGLONG kAutoStartSlowRetryMs = 15000;
+constexpr ULONGLONG kAutoStartF7SettleMs = 600;
+constexpr int kAutoStartFastAttempts = 6;
+constexpr ULONGLONG kControllerRecenterHoldMs = 1500;
+
+bool g_auto_start_scan_requested = false;
+bool g_auto_start_press_f7 = false;
+ULONGLONG g_auto_start_next_ms = 0;
+int g_auto_start_failed_attempts = 0;
+DWORD g_auto_start_suppressed_pid = 0;
+ULONGLONG g_both_grips_since = 0;
+bool g_controller_recenter_fired = false;
+
+bool auto_start_enabled() {
+    return IsDlgButtonChecked(g_window, IDC_VR_AUTO_START) == BST_CHECKED;
+}
+
+bool process_running(const wchar_t* exe_name) {
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    bool found = false;
+    if (Process32FirstW(snapshot, &entry)) {
+        do {
+            if (_wcsicmp(entry.szExeFile, exe_name) == 0) {
+                found = true;
+                break;
+            }
+        } while (Process32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return found;
+}
+
+// Registers the dashboard with SteamVR so SteamVR launches it on startup.
+// Needs SteamVR running; otherwise it is retried the next time the dashboard starts.
+void update_steamvr_auto_launch() {
+    const bool own_context = g_vr_system == nullptr;
+    if (own_context) {
+        vr::EVRInitError error = vr::VRInitError_None;
+        vr::IVRSystem* system = vr::VR_Init(&error, vr::VRApplication_Background);
+        if (error != vr::VRInitError_None || !system) return;
+    }
+    if (vr::IVRApplications* applications = vr::VRApplications()) {
+        const std::wstring manifest = executable_directory() + L"\\hytalevr.vrmanifest";
+        char manifest_path[MAX_PATH * 3]{};
+        WideCharToMultiByte(CP_UTF8, 0, manifest.c_str(), -1, manifest_path,
+                            static_cast<int>(sizeof(manifest_path)), nullptr, nullptr);
+        applications->AddApplicationManifest(manifest_path, false);
+        applications->SetApplicationAutoLaunch(kDashboardAppKey, auto_start_enabled());
+    }
+    if (own_context) vr::VR_Shutdown();
+}
+
+void schedule_auto_start_retry() {
+    ++g_auto_start_failed_attempts;
+    g_auto_start_press_f7 = true;
+    g_auto_start_next_ms = GetTickCount64() +
+        (g_auto_start_failed_attempts < kAutoStartFastAttempts ? kAutoStartRetryMs
+                                                               : kAutoStartSlowRetryMs);
+}
+
+void on_scan_complete_for_auto_start() {
+    if (!g_auto_start_scan_requested) return;
+    g_auto_start_scan_requested = false;
+    if (g_vr_tracking) return;
+    if (g_candidates.empty()) {
+        // Usually the F7 overlay is hidden or the player is still in a menu.
+        schedule_auto_start_retry();
+        return;
+    }
+    start_vr_tracking();
+    if (g_vr_tracking) {
+        g_auto_start_failed_attempts = 0;
+    } else {
+        schedule_auto_start_retry();
+    }
+}
+
+void update_auto_start() {
+    const DWORD pid = find_hytale();
+    if (g_vr_tracking) {
+        if (pid != g_pid && auto_start_enabled()) {
+            // Hytale closed or restarted; drop this session so the next launch re-arms.
+            shutdown_vr();
+            detach();
+            g_auto_start_failed_attempts = 0;
+            g_auto_start_press_f7 = false;
+            set_status(L"Hytale closed. Auto-start is waiting for it to come back.");
+        }
+        return;
+    }
+    if (!auto_start_enabled() || pid == 0 || pid == g_auto_start_suppressed_pid) return;
+    if (g_auto_start_scan_requested || g_f7_scan_busy.load(std::memory_order_acquire)) return;
+    const ULONGLONG now = GetTickCount64();
+    if (now < g_auto_start_next_ms) return;
+    if (!process_running(L"vrserver.exe")) {
+        g_auto_start_next_ms = now + 2000;
+        return;
+    }
+    if (!attach()) {
+        g_auto_start_next_ms = now + 2000;
+        return;
+    }
+    if (!hytale_has_input_focus()) {
+        g_auto_start_next_ms = now + 1000;
+        return;
+    }
+    if (g_auto_start_press_f7) {
+        // The last scan found no coordinates: toggle the F7 overlay, let it render, then scan.
+        g_auto_start_press_f7 = false;
+        send_key_tap_with_hold(VK_F7, 35);
+        g_auto_start_next_ms = now + kAutoStartF7SettleMs;
+        return;
+    }
+    g_auto_start_scan_requested = true;
+    start_f7_scan();
+    if (!g_f7_scan_busy.load(std::memory_order_acquire) && !g_scan_thread) {
+        g_auto_start_scan_requested = false;
+        schedule_auto_start_retry();
+    }
+}
+
+// Holding both grips recenters, so the desktop window is never needed in VR.
+// The grips' hotbar scrolls go in opposite directions and cancel out.
+void update_controller_recenter() {
+    const bool both_grips = g_vr_tracking && g_vr_camera_shared &&
+        g_vr_camera_shared->controller_left_grip != 0 &&
+        g_vr_camera_shared->controller_right_grip != 0;
+    if (!both_grips) {
+        g_both_grips_since = 0;
+        g_controller_recenter_fired = false;
+        return;
+    }
+    const ULONGLONG now = GetTickCount64();
+    if (g_both_grips_since == 0) g_both_grips_since = now;
+    if (!g_controller_recenter_fired &&
+        now - g_both_grips_since >= kControllerRecenterHoldMs) {
+        g_controller_recenter_fired = true;
+        recenter_vr_tracking();
+    }
+}
+#endif
+
 void create_ui(HWND window) {
     g_window = window;
 #ifdef HYTALE_CAMERA_MODE
@@ -2983,6 +3138,7 @@ void create_ui(HWND window) {
     };
 
     add(L"BUTTON", L"Advanced options", BS_AUTOCHECKBOX, 20, 92, 145, 24, IDC_VR_ADVANCED_OPTIONS);
+    add(L"BUTTON", L"Auto-start VR", BS_AUTOCHECKBOX, 20, 122, 145, 24, IDC_VR_AUTO_START);
 
     // Main functional controls
     add(L"BUTTON", L"Scan player block", BS_DEFPUSHBUTTON, 215, 50, 160, 40, IDC_SCAN);
@@ -3136,6 +3292,7 @@ void create_ui(HWND window) {
     CheckDlgButton(g_window, IDC_VR_MENU_MOUSE, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_NO_UBO_UI, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_SWING_TO_HIT, BST_CHECKED);
+    CheckDlgButton(g_window, IDC_VR_AUTO_START, BST_CHECKED);
     CheckDlgButton(g_window, IDC_VR_HIDE_FIRST_PERSON_HAND, BST_CHECKED);
     update_advanced_visibility();
 #endif
@@ -3172,6 +3329,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         }
         set_status(result->status);
         delete result;
+        on_scan_complete_for_auto_start();
         return 0;
     }
 #endif
@@ -3184,6 +3342,8 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
 #ifdef HYTALE_CAMERA_MODE
         layout_controls_for_current_tab();
         update_tab_visibility();
+        update_steamvr_auto_launch();
+        SetTimer(window, kAutoStartTimer, 500, nullptr);
 #endif
         return 0;
     case WM_CTLCOLOREDIT:
@@ -3438,6 +3598,10 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         case IDC_RESTORE: restore(); return 0;
 #endif
 #ifdef HYTALE_CAMERA_MODE
+        case IDC_VR_AUTO_START:
+            g_auto_start_suppressed_pid = 0;
+            update_steamvr_auto_launch();
+            return 0;
         case IDC_VR_ADVANCED_OPTIONS:
             if (IsDlgButtonChecked(g_window, IDC_VR_ADVANCED_OPTIONS) == BST_CHECKED) {
                 const int choice = MessageBoxW(
@@ -3491,6 +3655,8 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             return 0;
         case IDC_VR_CENTER: recenter_vr_tracking(); return 0;
         case IDC_VR_STOP:
+            // A manual stop holds auto-start off until Hytale restarts.
+            g_auto_start_suppressed_pid = g_pid;
             shutdown_vr();
             if (unload_vr_hook()) {
                 set_status(L"VR tracking stopped and render hook unloaded.");
@@ -3518,6 +3684,11 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
 #ifdef HYTALE_CAMERA_MODE
         if (wparam == kVrTimer) {
             update_vr_tracking();
+            update_controller_recenter();
+            return 0;
+        }
+        if (wparam == kAutoStartTimer) {
+            update_auto_start();
             return 0;
         }
 #endif
@@ -3558,11 +3729,28 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
 } // namespace
 
 int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
-                    _In_ PWSTR, _In_ int show_command) {
+                    _In_ PWSTR command_line, _In_ int show_command) {
     if (const std::optional<int> updater_result =
             hytalevr::dashboard_updater::run_apply_mode()) {
         return *updater_result;
     }
+#ifdef HYTALE_CAMERA_MODE
+    // SteamVR auto-launch passes --background: start minimized without taking focus.
+    const bool background_launch =
+        command_line && wcsstr(command_line, L"--background") != nullptr;
+    if (background_launch) show_command = SW_SHOWMINNOACTIVE;
+    HANDLE single_instance = CreateMutexW(nullptr, FALSE, L"Local\\HytaleVrDashboard");
+    if (single_instance && GetLastError() == ERROR_ALREADY_EXISTS) {
+        if (!background_launch) {
+            if (HWND existing = FindWindowW(kWindowClass, nullptr)) {
+                ShowWindow(existing, SW_RESTORE);
+                SetForegroundWindow(existing);
+            }
+        }
+        CloseHandle(single_instance);
+        return 0;
+    }
+#endif
 
     Gdiplus::GdiplusStartupInput gdiplusStartupInput;
     Gdiplus::GdiplusStartup(&g_gdiplusToken, &gdiplusStartupInput, nullptr);

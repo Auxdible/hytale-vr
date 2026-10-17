@@ -23,14 +23,19 @@ This is an experimental mod. It is not affiliated with or endorsed by Hytale, Hy
 
 ## How to Use
 
-1. Start SteamVR and make sure your headset is connected.
-2. Launch Hytale and enter a world or join a server.
-3. Disable `FXAA` in the Hytale graphics settings.
-4. Press `F7` in-game to show the player coordinate block.
-5. Start `hytale_camera_dashboard.exe`.
-6. In the dashboard, click `Scan player block`.
-7. Select the detected coordinate block from the list.
-8. Click `Center VR` to inject and align the VR view.
+### First-time setup
+
+1. Disable `FXAA` in the Hytale graphics settings.
+2. With SteamVR running, start `hytale_camera_dashboard.exe` once. It registers itself with SteamVR, which then launches it in the background every time SteamVR starts.
+
+### Playing
+
+1. Start SteamVR, then Hytale.
+2. Enter a world or join a server, and click into the Hytale window.
+
+That's it: with `Auto-start VR` on (the default), the dashboard shows the F7 coordinates itself, finds your player, and starts VR. It retries while you are in menus, and re-arms when Hytale restarts. Hold both grips for 1.5 seconds to recenter. `Stop VR` pauses auto-start until Hytale restarts.
+
+To do it by hand instead, turn off `Auto-start VR`, press `F7` in game, click `Scan player block`, select the block, and click `Center VR`.
 
 Keep SteamVR running while using the mod. Hytale must stay focused for the mod controls to work correctly.
 

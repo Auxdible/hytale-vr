@@ -11,6 +11,19 @@
           "name": "Hytale VR"
         }
       }
+    },
+    {
+      "app_key": "com.hytalevr.dashboard",
+      "launch_type": "binary",
+      "binary_path_windows": "hytale_camera_dashboard.exe",
+      "arguments": "--background",
+      "is_dashboard_overlay": true,
+      "strings": {
+        "en_us": {
+          "name": "Hytale VR Auto-start",
+          "description": "Starts VR automatically when you play Hytale"
+        }
+      }
     }
   ]
 }
