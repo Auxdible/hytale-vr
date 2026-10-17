@@ -12,7 +12,8 @@
 - Holding both grips for 1.5 seconds recenters VR.
 - Controller haptics: the swinging hand buzzes on a physical hit, the clicking hand ticks on menu clicks, and both hands pulse when VR starts or recenters.
 - Hytale's character textures and catalogs are no longer shipped with the mod; they are read from your Hytale `Assets.zip` and cached next to the hook on first use.
-- Bumped the shared dashboard/hook layout version to 124; replace the dashboard and hook DLL together.
+- Added the VR viewer (`VR viewer`, on by default): `hytale_vr_viewer.exe` draws the blocks around you in real stereo with Hytale's own textures, from data the `HytaleVR.jar` plugin streams, with mobs as boxes, both controllers, the block your hand would hit, and Hytale's screen on a panel (`Y`) or over the left wrist. It turns the view itself and the dashboard keeps Hytale's camera following the headset. Plants, fluids, mob models, held items and lighting are not drawn yet.
+- Bumped the shared dashboard/hook layout version to 125; replace the dashboard, viewer and hook DLL together.
 
 ## [1.0.4] - 2026-08-24
 

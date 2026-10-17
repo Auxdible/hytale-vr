@@ -37,9 +37,23 @@ That's it: with `Auto-start VR` on (the default), the dashboard starts VR as soo
 
 Keep SteamVR running while using the mod. Hytale must stay focused for the mod controls to work correctly.
 
+### The VR viewer (default)
+
+With `VR viewer` on (the default), VR no longer comes from inside Hytale. A separate program, `hytale_vr_viewer.exe`, draws the world around you in real stereo at your headset's full frame rate, from blocks, your position and nearby mobs that the `HytaleVR.jar` plugin streams out of the game. Hytale keeps running on your monitor and still does all the gameplay; the dashboard still turns your controller input into Hytale's keys and mouse.
+
+What you get: real depth, your real height, 1:1 room-scale head movement, Hytale's block textures with soft corner shading, mobs as coloured boxes, both controllers, and a white outline on the block your right hand would hit.
+
+- Press `Y` to open Hytale's inventory with a big copy of Hytale's screen in front of you. Point with the right controller and pull the trigger to click. Press `Y` again to close both.
+- When the panel is closed, a small copy of Hytale's screen sits over your left wrist for the hotbar and health.
+- Without the plugin, the viewer just shows Hytale's screen on the big panel.
+
+Not drawn yet: plants, torches and other modelled blocks, water and other fluids, real mob models, items in your hands, and lighting (caves are as bright as daylight). Walking around your room moves the view but not your Hytale character, so it can pass through walls. The viewer writes `%TEMP%\HytaleVR\viewer.log`.
+
+Turn `VR viewer` off to use the older in-game render hook instead.
+
 ### Turning
 
-`Snap turning` (on by default) turns 30 degrees per flick of the right stick. Turn it off for smooth turning at `Turn speed` degrees per second. The dashboard measures how far Hytale turns per mouse movement while you play, so turning stays accurate whatever your in-game mouse sensitivity is.
+`Snap turning` (on by default) turns 30 degrees per flick of the right stick. Turn it off for smooth turning at `Turn speed` degrees per second. With the VR viewer, turns happen instantly in the headset and Hytale's camera follows where you look, so walking forward goes where you face. The dashboard measures how far Hytale turns per mouse movement while you play, so turning stays accurate whatever your in-game mouse sensitivity is.
 
 ### Server plugin: hits where your hand points
 
