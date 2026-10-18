@@ -245,6 +245,8 @@ void tab_world(Settings& s) {
     changed |= ImGui::RadioButton("you look", &s.move_with, 0);
     ImGui::SameLine();
     changed |= ImGui::RadioButton("your other hand points", &s.move_with, 1);
+    changed |= ImGui::Checkbox("Toggle sprint", &s.toggle_sprint);
+    hint("Click the left stick to sprint; you keep sprinting until you stop moving or click again.");
     changed |= ImGui::Checkbox("Seated", &s.seated);
     hint("For playing sitting down: you see from your character's eyes, and leaning doesn't crouch or walk.");
     if (!s.seated) {

@@ -39,6 +39,7 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("vignette", s.vignette);
     visit("steady_view", s.steady_view);
     visit("tune_hytale", s.tune_hytale);
+    visit("toggle_sprint", s.toggle_sprint);
     visit("move_with", s.move_with);
     visit("seated", s.seated);
     visit("real_crouch", s.real_crouch);

@@ -265,6 +265,7 @@ struct BowDraw {
     bool drawn = false;   // pulled far enough that Hytale is drawing
     float buzz = 0;       // seconds to the next creak in the string hand
 } g_bow;
+bool g_sprinting = false;  // Toggle sprint: on until you stop moving
 
 void poll_plugin() {
     const bool was = plugin().connected();
@@ -626,7 +627,12 @@ void controls(const FrameContext& context, float dt) {
     input::key(s.key_jump, play && boolean(g_actions.jump).down);
     // In menus (chests, furnaces) the right grip holds Shift, for shift-clicks.
     const bool shift = play && pointer_mode && boolean(g_actions.hotbar_next).down;
-    const bool sprint = play && boolean(g_actions.sprint).down;
+    const Pressed sprint_button = boolean(g_actions.sprint);
+    if (s.toggle_sprint) {
+        if (play && sprint_button.pressed) g_sprinting = !g_sprinting;
+        if (!play || !g_stick_moving) g_sprinting = false;
+    }
+    const bool sprint = play && (s.toggle_sprint ? g_sprinting : sprint_button.down);
     if (s.key_sprint == 225 /* left Shift */) {
         input::key(225, sprint || shift);
     } else {

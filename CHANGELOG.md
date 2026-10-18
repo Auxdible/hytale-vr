@@ -2,6 +2,8 @@
 
 ## 2.3.2
 
+- Toggle sprint (on by default, World tab): click the left stick once to
+  sprint, and you keep sprinting until you stop moving or click again.
 - With the hotbar on your hand, the head HUD no longer shows the hotbar and
   the health bar over it a second time.
 - After your character's arms load, HytaleVR\logs gets arm_texture.png and
