@@ -362,19 +362,36 @@ struct Frame {
     Frame operator*(const Frame& b) const { return {apply(b.x) - p, apply(b.y) - p, apply(b.z) - p, apply(b.p)}; }
 };
 
+// Lenient reads: a missing or null field (models have both) gives the fallback.
+const json& member(const json& object, const char* key) {
+    static const json none;
+    if (!object.is_object()) return none;
+    const auto it = object.find(key);
+    return it == object.end() ? none : *it;
+}
+double number(const json& object, const char* key, double fallback) {
+    const json& value = member(object, key);
+    return value.is_number() ? value.get<double>() : fallback;
+}
+bool flag(const json& object, const char* key, bool fallback) {
+    const json& value = member(object, key);
+    return value.is_boolean() ? value.get<bool>() : fallback;
+}
+std::string text(const json& object, const char* key, const char* fallback = "") {
+    const json& value = member(object, key);
+    return value.is_string() ? value.get<std::string>() : std::string(fallback);
+}
+
 V3 vec(const json& node, const char* key, V3 fallback = {}) {
-    const auto it = node.find(key);
-    if (it == node.end() || !it->is_object()) return fallback;
-    return {it->value("x", fallback.x), it->value("y", fallback.y), it->value("z", fallback.z)};
+    const json& v = member(node, key);
+    return {number(v, "x", fallback.x), number(v, "y", fallback.y), number(v, "z", fallback.z)};
 }
 
 Frame node_frame(const json& node) {
     Frame f;
     f.p = vec(node, "position");
-    double qx = 0, qy = 0, qz = 0, qw = 1;
-    if (auto it = node.find("orientation"); it != node.end() && it->is_object()) {
-        qx = it->value("x", 0.0), qy = it->value("y", 0.0), qz = it->value("z", 0.0), qw = it->value("w", 1.0);
-    }
+    const json& q = member(node, "orientation");
+    double qx = number(q, "x", 0), qy = number(q, "y", 0), qz = number(q, "z", 0), qw = number(q, "w", 1);
     const double l = std::sqrt(qx * qx + qy * qy + qz * qz + qw * qw);
     if (l < 1e-9) return f;
     qx /= l, qy /= l, qz /= l, qw /= l;
@@ -397,7 +414,7 @@ void flatten(const json& nodes, int parent, const Frame& parent_world, std::vect
     for (const json& item : nodes) {
         if (!item.is_object()) continue;
         Node node;
-        node.name = item.value("name", std::string());
+        node.name = text(item, "name");
         node.parent = parent;
         node.depth = parent < 0 ? 0 : out[parent].depth + 1;
         node.world = parent_world * node_frame(item);
@@ -416,10 +433,9 @@ bool face_uv(const json& layout, const char* face, double w, double h, const Ima
     const auto it = layout.find(face);
     if (it == layout.end() || !it->is_object()) return false;
     const V3 offset = vec(*it, "offset");
-    bool mirror_x = false, mirror_y = false;
-    if (auto m = it->find("mirror"); m != it->end() && m->is_object())
-        mirror_x = m->value("x", false), mirror_y = m->value("y", false);
-    const int angle = ((it->value("angle", 0) % 360) + 360) % 360;
+    const json& mirror = member(*it, "mirror");
+    const bool mirror_x = flag(mirror, "x", false), mirror_y = flag(mirror, "y", false);
+    const int angle = ((static_cast<int>(number(*it, "angle", 0)) % 360) + 360) % 360;
     double sx = mirror_x ? -1 : 1, sy = mirror_y ? -1 : 1;
     const double ox = offset.x, oy = offset.y;
     std::array<double, 4> r{};  // x0, y0, x1, y1
@@ -458,13 +474,13 @@ void emit_face(std::vector<V3>& points, std::vector<std::pair<float, float>>& uv
 
 void emit_shape(const json& shape, const Frame& f, const Image& tex, std::vector<V3>& points,
                 std::vector<std::pair<float, float>>& uvs) {
-    if (!shape.value("visible", true)) return;
-    const std::string type = shape.value("type", std::string());
-    const json settings = shape.value("settings", json::object());
+    if (!flag(shape, "visible", true)) return;
+    const std::string type = text(shape, "type");
+    const json& settings = member(shape, "settings");
     const V3 size = vec(settings, "size");
     const V3 stretch = vec(shape, "stretch", {1, 1, 1});
     const V3 o = vec(shape, "offset");
-    const json layout = shape.value("textureLayout", json::object());
+    const json& layout = member(shape, "textureLayout");
     const double hx = size.x * stretch.x / 2, hy = size.y * stretch.y / 2, hz = size.z * stretch.z / 2;
     std::array<std::pair<float, float>, 4> uv;
     if (type == "box") {
@@ -482,7 +498,8 @@ void emit_shape(const json& shape, const Frame& f, const Image& tex, std::vector
         if (face_uv(layout, "bottom", size.x, size.z, tex, uv))
             emit_face(points, uvs, f, {{{x0, y0, z0}, {x1, y0, z0}, {x1, y0, z1}, {x0, y0, z1}}}, uv);
     } else if (type == "quad" && face_uv(layout, "front", size.x, size.y, tex, uv)) {
-        const std::string normal = settings.value("normal", std::string("+Z"));
+        std::string normal = text(settings, "normal", "+Z");
+        if (normal.size() < 2) normal = "+Z";
         std::array<V3, 4> q;
         if (normal[1] == 'X')
             q = {{{o.x, o.y - hy, o.z - hx}, {o.x, o.y - hy, o.z + hx}, {o.x, o.y + hy, o.z + hx}, {o.x, o.y + hy, o.z - hx}}};
@@ -605,7 +622,7 @@ void load() {
         return;
     }
     std::vector<Node> nodes;
-    flatten(model.value("nodes", json::array()), -1, Frame{}, nodes);
+    flatten(member(model, "nodes"), -1, Frame{}, nodes);
     std::string names;
     for (const Node& node : nodes) names += (names.empty() ? "" : ", ") + node.name;
     logf("Character: %zu model parts: %s", nodes.size(), names.c_str());
