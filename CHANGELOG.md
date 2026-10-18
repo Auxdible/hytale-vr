@@ -7,16 +7,11 @@
   with Hytale's walking or swing animations. A bow is held by its middle.
 - Your arms are rebuilt when you change your avatar: the new skin and
   clothes show within a couple of seconds, with no restart.
-- First-person pieces Hytale draws while your hand is empty (sleeves, a
-  cape) are hidden after a moment, so they no longer float on your hand.
-  This needs the server plugin.
 - A quick tap of a trigger now always clicks. The click is held until
   Hytale has seen it, after its camera turns to where your hand points.
-  The camera also turns twice as fast while it's doing that.
+  The camera turns twice as fast while a click waits on it.
 - Toggle sprint (on by default, World tab): click the left stick once to
   sprint, and you keep sprinting until you stop moving or click again.
-- With the hotbar on your hand, the head HUD no longer shows the hotbar and
-  the health bar over it a second time.
 - After your character's arms load, HytaleVR\logs gets arm_texture.png and
   arm_left.obj / arm_right.obj: exactly what the arms were built from, for
   checking the skin texture against Hytale's own.

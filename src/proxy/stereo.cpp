@@ -1652,20 +1652,6 @@ bool is_arm_piece(const Mat4& model, float size) {
     return std::memcmp(g_arm_matrix, model.m, sizeof(g_arm_matrix)) == 0;
 }
 
-// Pieces drawn with nothing in your hand (sleeves, a cape) aren't items:
-// they're hidden with the arm once they've been seen for a while.
-std::unordered_map<GLsizei, int> g_empty_hand_draws;
-bool is_worn_piece() {
-    auto it = g_empty_hand_draws.find(g_draw_indices);
-    if (g_setup.hand_empty) {
-        int& frames = g_empty_hand_draws[g_draw_indices];
-        if (frames < 1000) ++frames;
-        if (frames == 60) logf("Hands: hiding a first-person piece of %d indices, drawn with nothing held", g_draw_indices);
-        return frames >= 60;
-    }
-    return it != g_empty_hand_draws.end() && it->second >= 60;
-}
-
 bool move_first_person() {
     g_fp_moved_location = -1;
     if (!g_setup.hytale_hand || !t.program || !active()) return false;
@@ -1677,7 +1663,7 @@ bool move_first_person() {
     Mat4 moved;
     for (float& v : moved.m) v = 0;  // hidden: every vertex at w = 0, clipped away
     const int side = g_setup.item_hand;
-    if (is_arm_piece(model, size) || is_worn_piece()) {
+    if (is_arm_piece(model, size)) {
         // hidden
     } else if (size > 0 && g_setup.grip_valid[side]) {
         Mat4 grip = g_setup.grip[side];
