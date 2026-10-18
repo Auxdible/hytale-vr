@@ -952,7 +952,7 @@ void two_hand_grip(const Settings& s, stereo::EyeSetup& setup, int main) {
     const float along = dot(to_other, axis);
     const float away = length(to_other - axis * along);
     const float reach = 0.6f * s.item_size;
-    // Your other hand in_reach the handle lights up; holding its trigger there
+    // Your other hand near the handle lights up; holding its trigger there
     // takes hold, and letting go of the trigger lets go of the item.
     const bool in_reach = std::fabs(along) > 0.04f && std::fabs(along) < reach && away < 0.12f;
     if (in_reach && !g_two_hand_near && !g_two_hands && g_actions.haptic[off])
