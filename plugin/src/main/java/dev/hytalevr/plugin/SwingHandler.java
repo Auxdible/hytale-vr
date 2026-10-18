@@ -186,8 +186,8 @@ final class SwingHandler {
         final double[] toTarget = RayMath.normalize(ox + direction[0] * inside - eye.x,
                 oy + direction[1] * inside - eye.y, oz + direction[2] * inside - eye.z);
         if (toTarget == null) return distance + " " + kind;
-        final double[] look = mapping.apply(toTarget);  // the mapping is its own inverse
-        return String.format(java.util.Locale.ROOT, "%s %s %.5f %.5f %.5f", distance, kind, look[0], look[1], look[2]);
+        final double[] way = mapping.apply(toTarget);  // the mapping is its own inverse
+        return String.format(java.util.Locale.ROOT, "%s %s %.5f %.5f %.5f", distance, kind, way[0], way[1], way[2]);
     }
 
     /** Halfway through what the ray hits, but no deeper than half a block. */
