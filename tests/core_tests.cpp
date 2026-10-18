@@ -73,7 +73,7 @@ void test_stick() {
         check(tune_hytale_settings(json).empty(), "already tuned settings stay as they are");
         std::string fov = "{\"FieldOfView\": 70, \"SprintFovEffect\": true, \"SprintFieldOfView\": 80, \"fov\": 1.2}";
         check(tune_hytale_settings(fov, true).size() == 2, "field of view and sprint zoom changed");
-        check(fov == "{\"FieldOfView\": 110, \"SprintFovEffect\": false, \"SprintFieldOfView\": 80, \"fov\": 1.2}",
+        check(fov == "{\"FieldOfView\": 120, \"SprintFovEffect\": false, \"SprintFieldOfView\": 80, \"fov\": 1.2}",
               "field of view raised, radians and sprint left alone");
     }
     {

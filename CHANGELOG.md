@@ -41,7 +41,8 @@
   while following walking, jumping and falling.
 - Hytale's own settings are set for VR (World tab, on): view bobbing, camera
   shake and the sprint zoom off, and, if VR starts with Hytale, field of view
-  raised to 110 so Hytale draws what the headset's wider eyes see. Set in
+  raised to 120 so Hytale draws what the headset's wider eyes see, with room
+  to spare while your head turns ahead of Hytale's camera. Set in
   Hytale's settings file when it starts and again as it
   closes, so they're off from the next start. The original file is kept once
   as HytaleVR\hytale_settings_before_vr.json.

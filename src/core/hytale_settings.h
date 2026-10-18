@@ -10,7 +10,7 @@ namespace hvr {
 
 // The field of view written for VR: Hytale decides what to draw and load from
 // its own camera, which is narrower than a headset's eye unless this is high.
-constexpr int kVrFieldOfView = 110;
+constexpr int kVrFieldOfView = 120;
 
 inline std::string lower(std::string text) {
     for (char& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
