@@ -2,6 +2,10 @@
 
 ## 2.3.2
 
+- Seated (World tab, off): for playing sitting down. Leaning doesn't crouch
+  or walk your character.
+- In menus (chests, furnaces, inventory) the right grip holds Shift, for
+  shift-clicks.
 - Lights (torches, glowing blocks) no longer go missing or show up in the wrong
   spots in 3D. Hytale sorts its lights into a grid over its own camera's view;
   each eye now looks lights up through that camera's view instead of its own.

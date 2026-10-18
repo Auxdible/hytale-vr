@@ -37,6 +37,7 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("steady_view", s.steady_view);
     visit("tune_hytale", s.tune_hytale);
     visit("move_with", s.move_with);
+    visit("seated", s.seated);
     visit("real_crouch", s.real_crouch);
     visit("crouch_depth", s.crouch_depth);
     visit("aim_with_hand", s.aim_with_hand);

@@ -247,8 +247,12 @@ void tab_world(Settings& s) {
     changed |= ImGui::RadioButton("you look", &s.move_with, 0);
     ImGui::SameLine();
     changed |= ImGui::RadioButton("your other hand points", &s.move_with, 1);
-    changed |= ImGui::Checkbox("Crouch for real", &s.real_crouch);
-    if (s.real_crouch) changed |= slider("Crouch depth", &s.crouch_depth, 0.15f, 0.7f, "%.2f m");
+    changed |= ImGui::Checkbox("Seated", &s.seated);
+    hint("For playing sitting down: you see from your character's eyes, and leaning doesn't crouch or walk.");
+    if (!s.seated) {
+        changed |= ImGui::Checkbox("Crouch for real", &s.real_crouch);
+        if (s.real_crouch) changed |= slider("Crouch depth", &s.crouch_depth, 0.15f, 0.7f, "%.2f m");
+    }
     changed |= slider("HUD distance", &s.hud_distance, 0.6f, 5.0f, "%.1f m");
     changed |= slider("HUD width", &s.hud_width, 0.6f, 6.0f, "%.1f m");
     changed |= slider("World scale", &s.world_scale, 0.25f, 4.0f, "%.2fx");

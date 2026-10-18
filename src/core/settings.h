@@ -33,6 +33,7 @@ struct Settings {
     bool tune_hytale = true;        // turn off view bobbing and camera shake in Hytale's own settings
     bool steady_view = true;        // smooths Hytale's camera sway out of the view while you walk
     int move_with = 0;              // the stick walks where 0 your head or 1 your other hand points
+    bool seated = false;            // playing sitting down: no crouching or walking by moving your head
     bool real_crouch = true;        // crouching in your room crouches your character
     float crouch_depth = 0.35f;     // meters your head drops before that counts as crouching
     float vignette = 0.5f;          // comfort: how much the edges darken while the stick moves or turns you (0 = off)

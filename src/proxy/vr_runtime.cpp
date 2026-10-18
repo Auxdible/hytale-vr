@@ -381,11 +381,19 @@ void controls(const FrameContext& context, float dt) {
     input::key(s.key_left, move.left);
     input::key(s.key_right, move.right);
     input::key(s.key_jump, play && boolean(g_actions.jump).down);
-    input::key(s.key_sprint, play && boolean(g_actions.sprint).down);
+    // In menus (chests, furnaces) the right grip holds Shift, for shift-clicks.
+    const bool shift = play && pointer_mode && boolean(g_actions.hotbar_next).down;
+    const bool sprint = play && boolean(g_actions.sprint).down;
+    if (s.key_sprint == 225 /* left Shift */) {
+        input::key(225, sprint || shift);
+    } else {
+        input::key(s.key_sprint, sprint);
+        input::key(225, shift);
+    }
     input::key(s.key_crouch, play && (boolean(g_actions.crouch).down || g_crouch.down));
     input::key(s.key_inventory, play && boolean(g_actions.inventory).down);
     input::key(41 /* Escape */, play && boolean(g_actions.back).down);
-    if (play && boolean(g_actions.hotbar_next).pressed) input::wheel(-1);
+    if (play && !pointer_mode && boolean(g_actions.hotbar_next).pressed) input::wheel(-1);
 
     float lx, ly;
     stick(g_actions.look, lx, ly);
@@ -640,7 +648,7 @@ void prepare_world(const Settings& s, bool showed_world) {
     // Room-scale: the view stays fixed in the world while you stand or walk
     // in your room, and the character steps after your head. Stick movement,
     // falling and the like carry the view along with the character.
-    const bool walk = s.room_walk && s.controller_input && have_engine && showed_world && g_context.game_relative &&
+    const bool walk = s.room_walk && !s.seated && s.controller_input && have_engine && showed_world && g_context.game_relative &&
                       !g_context.menu_open;
     const bool lock = walk && !g_stick_moving;
     if (lock && !g_room_locked) g_room_anchor = engine_position + g_body_offset;
@@ -674,13 +682,13 @@ void prepare_world(const Settings& s, bool showed_world) {
     // crouching) so it can't leave the body.
     const float head_y = position_of(g_hmd).y;
     {
-        const float up = 0.5f, down = s.real_crouch ? 1.0f : 0.5f;
+        const float up = 0.5f, down = s.real_crouch && !s.seated ? 1.0f : 0.5f;
         if (head_y - g_neutral.y > up) g_neutral.y = head_y - up;
         if (head_y - g_neutral.y < -down) g_neutral.y = head_y + down;
     }
     {
         const float drop = g_neutral.y - head_y;  // meters below standing
-        const bool can = s.real_crouch && have_engine && g_context.game_relative && !g_context.menu_open;
+        const bool can = s.real_crouch && !s.seated && have_engine && g_context.game_relative && !g_context.menu_open;
         const float engine_y = engine_position.y;
         if (!g_crouch.down && can && drop > s.crouch_depth) {
             g_crouch.down = true;
