@@ -30,8 +30,14 @@ struct EyeSetup {
     // while the character catches up; otherwise it's an offset from the camera.
     Vec3 anchor;
     bool world_locked = false;
-    // Hytale's first-person arms and held item; hidden when false.
+    // Hytale's first-person arms and held item, stuck to the head; hidden when false.
     bool show_arms = false;
+    // Hytale's hand and held item carried by a controller instead: its grip
+    // relative to the headset (meters), and how big they're drawn.
+    bool hytale_hand = false;
+    bool grip_valid = false;
+    Mat4 grip;
+    float item_size = 1;
     // Smooths small, quick wobbles out of Hytale's camera position (bobbing,
     // sway), while still following walking, jumping and falling.
     bool steady = true;
@@ -104,6 +110,10 @@ void on_blend_func(GLenum src_rgb, GLenum dst_rgb, GLenum src_alpha, GLenum dst_
 // draw, second(), draw again, then finish(). When it returns false nothing
 // was changed.
 bool draw_begin(GLenum mode, GLsizei count);
+// Around each draw: moves a piece of Hytale's first person into the hand (or
+// hides it), and puts Hytale's own matrix back after.
+bool move_first_person();
+void restore_first_person();
 // True for draws that should not run at all in VR (Hytale's occluders).
 bool skip_draw(GLenum mode);
 void draw_second();

@@ -31,6 +31,8 @@ import org.joml.Vector3i;
 final class SwingHandler {
     /** How far a swing reaches from the hand, in blocks. */
     static final double REACH = 4.5;
+    /** A mob this close to the hand is hit whichever way the hand points: the blade sweeps through it. */
+    static final double MELEE = 1.6;
 
     private SwingHandler() {}
 
@@ -70,9 +72,15 @@ final class SwingHandler {
             if (transform == null || bounds == null) continue;
             final Vector3d position = transform.getPosition();
             final Box box = bounds.getBoundingBox();
-            final double t = RayMath.rayBoxEntry(ox, oy, oz, direction[0], direction[1], direction[2],
-                    position.x + box.min.x, position.y + box.min.y, position.z + box.min.z,
-                    position.x + box.max.x, position.y + box.max.y, position.z + box.max.z);
+            final double minX = position.x + box.min.x, minY = position.y + box.min.y, minZ = position.z + box.min.z;
+            final double maxX = position.x + box.max.x, maxY = position.y + box.max.y, maxZ = position.z + box.max.z;
+            double t = RayMath.rayBoxEntry(ox, oy, oz, direction[0], direction[1], direction[2],
+                    minX, minY, minZ, maxX, maxY, maxZ);
+            final double dx = Math.max(Math.max(minX - ox, 0), ox - maxX);
+            final double dy = Math.max(Math.max(minY - oy, 0), oy - maxY);
+            final double dz = Math.max(Math.max(minZ - oz, 0), oz - maxZ);
+            final double near = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (near <= MELEE && (Double.isNaN(t) || near < t)) t = near;
             if (!Double.isNaN(t) && t <= REACH && t < entityDistance) {
                 entityDistance = t;
                 entityHit = candidate;
@@ -95,6 +103,13 @@ final class SwingHandler {
             hitEntity(player, entityHit, held, store);
             return "entity";
         }
+        if (entityHit != null && entityDistance <= MELEE) {
+            hitEntity(player, entityHit, held, store);
+            return "entity";
+        }
+        // Weapons don't dig: a sword swung near the ground shouldn't chip at it.
+        final Item heldItem = held != null ? held.getItem() : null;
+        if (heldItem != null && heldItem.getWeapon() != null) return "none";
         if (blockHit != null) {
             return hitBlock(player, blockHit, held, chunks, store) ? "block" : "blocked";
         }

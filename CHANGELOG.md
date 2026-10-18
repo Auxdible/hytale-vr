@@ -5,11 +5,17 @@
 - Interact (F) is on the right grip in the world, for workbenches, doors and
   chests. The right stick flicked up or down picks the previous or next
   hotbar slot (and touching the hotbar still works).
-- Hytale's first-person arms and held item are hidden in VR: Hytale draws
-  them as several models sharing one placement glued to your head, so moving
-  that placement moved both arms at once. "Show Hytale's arms and held item"
-  (World tab) brings them back. The log now describes each first-person model
-  every few seconds, to find which one is the held item.
+- Hytale's own hand and held item are on your controller (World tab, on),
+  replacing the gray stick on that hand. First person is several models: the
+  held item's placement is taken as the hand's, and the arm's pieces move
+  with it; pieces Hytale keeps behind the camera stay hidden. Item size and
+  Item tilt adjust the fit. Off, "Show Hytale's arms and held item" brings back
+  the old view stuck to your head.
+- With the server plugin connected, Aim with your hand is set aside and Hytale
+  aims with your head: Hytale only draws what its camera faces, so pointing
+  your hand behind you blanked out the view in front.
+- Plugin swings hit a mob within 1.6 blocks of your hand whichever way the
+  controller points, and swords don't chip at blocks.
 - Fixed the headset going black after lowering Sharpness: the right eye's
   copies of Hytale's targets asked for more mip levels than the smaller size
   allows, and a failed copy was never retried.

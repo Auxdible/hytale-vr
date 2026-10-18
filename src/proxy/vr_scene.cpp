@@ -283,8 +283,9 @@ void Scene::draw_hands(const Mat4& vp, const SceneView& scene) {
     for (const HandView& hand : scene.hands) {
         if (!hand.valid) continue;
         const float body[4] = {0.32f, 0.34f, 0.38f, 1.0f};
-        draw(kCubeFirst, kCubeCount, vp, hand.pose * translation({0, -0.01f, 0.05f}) * hvr::scale({0.035f, 0.03f, 0.11f}), 1,
-             body);
+        if (!hand.hide_model)
+            draw(kCubeFirst, kCubeCount, vp,
+                 hand.pose * translation({0, -0.01f, 0.05f}) * hvr::scale({0.035f, 0.03f, 0.11f}), 1, body);
         if (!hand.laser) continue;
         const Vec3 origin = position_of(hand.pose);
         const Vec3 forward = normalize(transform_direction(hand.pose, {0, 0, -1}));

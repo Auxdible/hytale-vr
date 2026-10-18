@@ -747,7 +747,7 @@ void compute_eyes(const Mono& mono) {
         eye.view = inverse_rigid(to_camera(g_setup.head * g_setup.eye_to_head[e], body));
         eye.projection = eye_projection(g_setup.headset_projection[e], mono.projection);
         const Mat4 fp_projection = eye_projection(g_setup.headset_projection[e], mono.fp_projection);
-        if (!g_setup.show_arms) {
+        if (!g_setup.show_arms && !g_setup.hytale_hand) {
             // Everything drawn with this matrix lands at w = 0, which the GPU clips away.
             eye.fp_projection = Mat4{};
             for (int r = 0; r < 4; ++r) eye.fp_projection.at(r, r) = 0;
@@ -1617,6 +1617,93 @@ bool draw_begin(GLenum mode, GLsizei count) {
     if (p.kind == Kind::Composite) begin_composite();
     ++g_stereo_draws;
     return true;
+}
+
+// --- Hytale's hand and item on the controller ---
+//
+// First person is several models drawn one after another: the arm's pieces
+// share one uModelMatrix (a 1/64 scale turned to face the camera), and the
+// held item gets its own, placed where the hand holds it. Taking the item's
+// matrix as the hand's frame, every piece is moved by grip * inverse(hand),
+// so the item lands in the controller and the arm comes along attached to it.
+// Pieces Hytale keeps behind the camera (the other arm, the body) stay hidden.
+
+struct FirstPersonPiece {
+    int checked = -1000;  // frame
+    bool behind = false;
+};
+std::unordered_map<GLint, FirstPersonPiece> g_fp_pieces;  // by vertex array
+Mat4 g_hand_frame;
+int g_hand_frame_at = -1000;
+GLint g_fp_moved_location = -1;
+
+bool arm_shaped(const Mat4& m, float size) {
+    const float slack = size * 0.1f;
+    return std::fabs(m.at(0, 0) + size) < slack && std::fabs(m.at(1, 1) - size) < slack &&
+           std::fabs(m.at(2, 2) + size) < slack;
+}
+
+// Whether a piece's root bone sits behind Hytale's first-person camera, where
+// it's never seen. Checked now and then per piece, as it reads the GPU's copy.
+bool behind_camera(const ProgramInfo& info, const Mat4& model) {
+    GLint vao = 0;
+    glr.glGetIntegerv(gl::VERTEX_ARRAY_BINDING, &vao);
+    FirstPersonPiece& piece = g_fp_pieces[vao];
+    if (g_frame - piece.checked < 20) return piece.behind;
+    piece.checked = g_frame;
+    GLint binding = -1;
+    if (info.node_block >= 0)
+        glr.glGetActiveUniformBlockiv(t.program, static_cast<GLuint>(info.node_block), gl::UNIFORM_BLOCK_BINDING,
+                                      &binding);
+    if (binding < 0 || binding >= kUboIndices || !t.ubo[binding].buffer || !glr.has_dsa) return piece.behind = false;
+    float root[16] = {};
+    glr.glGetNamedBufferSubData(t.ubo[binding].buffer, t.ubo[binding].offset, sizeof(root), root);
+    const float z = model.at(2, 0) * root[12] + model.at(2, 1) * root[13] + model.at(2, 2) * root[14] + model.at(2, 3);
+    return piece.behind = z > 0;
+}
+
+bool move_first_person() {
+    g_fp_moved_location = -1;
+    if (!g_setup.hytale_hand || !t.program || !active()) return false;
+    const ProgramInfo& info = program_info(t.program);
+    if (!info.first_person || info.model_matrix < 0) return false;
+    const Mat4 model = mat_at(g_fp_model);
+    const float size = std::sqrt(model.at(0, 0) * model.at(0, 0) + model.at(1, 0) * model.at(1, 0) +
+                                 model.at(2, 0) * model.at(2, 0));
+    Mat4 moved;
+    for (float& v : moved.m) v = 0;  // hidden: every vertex at w = 0, clipped away
+    if (g_setup.grip_valid && size > 0) {
+        bool show = true;
+        Mat4 hand;
+        if (!arm_shaped(model, size)) {
+            // The held item: its own frame is the hand's.
+            hand = model;
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 3; ++c) hand.at(r, c) /= size;
+            g_hand_frame = hand;
+            g_hand_frame_at = g_frame;
+        } else if (behind_camera(info, model)) {
+            show = false;
+        } else if (g_frame - g_hand_frame_at <= 3) {
+            hand = g_hand_frame;
+        } else {
+            hand = translation({0.3f, -0.35f, -0.5f});  // empty hand: about where Hytale shows it
+        }
+        if (show) {
+            Mat4 grip = g_setup.grip;
+            for (int r = 0; r < 3; ++r) grip.at(r, 3) *= g_setup.world_scale;
+            const float k = g_setup.item_size;
+            moved = grip * scale({k, k, k}) * inverse_rigid(hand) * model;
+        }
+    }
+    glr.glUniformMatrix4fv(info.model_matrix, 1, gl::FALSE_, moved.m);
+    g_fp_moved_location = info.model_matrix;
+    return true;
+}
+
+void restore_first_person() {
+    if (g_fp_moved_location >= 0) glr.glUniformMatrix4fv(g_fp_moved_location, 1, gl::FALSE_, g_fp_model);
+    g_fp_moved_location = -1;
 }
 
 void draw_second() {

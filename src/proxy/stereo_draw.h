@@ -21,6 +21,7 @@ inline void stereo_draw(GLenum mode, GLsizei count, Draw&& draw) {
     // Time spent here while stereo is on goes in the log's frame stats.
     LARGE_INTEGER start, end;
     QueryPerformanceCounter(&start);
+    const bool moved = stereo::move_first_person();
     if (stereo::skip_draw(mode)) {
     } else if (stereo::draw_begin(mode, count)) {
         draw();
@@ -30,6 +31,7 @@ inline void stereo_draw(GLenum mode, GLsizei count, Draw&& draw) {
     } else {
         draw();
     }
+    if (moved) stereo::restore_first_person();
     QueryPerformanceCounter(&end);
     stereo::add_draw_time(end.QuadPart - start.QuadPart);
 }
