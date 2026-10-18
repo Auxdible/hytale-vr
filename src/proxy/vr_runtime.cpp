@@ -237,11 +237,17 @@ PluginBridge& plugin() {
     return *bridge;
 }
 std::atomic<bool> g_plugin_connected{false};
+bool g_plugin_click = false;  // the plugin asked for Hytale's own attack (a weapon is held)
 
 void poll_plugin() {
     const bool was = plugin().connected();
-    for (const std::string& line : plugin().poll(GetTickCount64()))
+    for (const std::string& line : plugin().poll(GetTickCount64())) {
+        if (line == "HIT click") {
+            g_plugin_click = true;
+            continue;
+        }
         if (line != "HIT miss") logf("Plugin: %s", line.c_str());
+    }
     const bool now = plugin().connected();
     if (now != was) logf(now ? "Connected to the Hytale VR server plugin" : "Lost the Hytale VR server plugin");
     g_plugin_connected = now;
@@ -407,6 +413,10 @@ void controls(const FrameContext& context, float dt) {
     const int attack_hand = s.left_handed ? 0 : 1;
     g_swing.cooldown = std::fmax(0.0f, g_swing.cooldown - dt);
     if (g_swing.click_frames > 0) --g_swing.click_frames;
+    if (g_plugin_click) {
+        g_plugin_click = false;
+        g_swing.click_frames = 3;
+    }
     if (s.swing_to_hit && g_world_frame && context.game_relative && !context.menu_open) {
         const float speed = g_hand_speed[attack_hand];
         if (g_swing.armed && speed > s.swing_speed && g_swing.cooldown <= 0) {

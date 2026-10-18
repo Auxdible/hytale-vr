@@ -58,6 +58,10 @@ final class SwingHandler {
         final double oz = eye.z + offset[2];
 
         final ItemStack held = heldItem(player, store);
+        // Weapons go through Hytale's own attack (its damage, knockback and
+        // combos), which a plugin can't replay: the client clicks instead.
+        final Item heldItem = held != null ? held.getItem() : null;
+        if (heldItem != null && heldItem.getWeapon() != null) return "click";
 
         // Mobs and other players: the nearest bounding box the ray enters.
         Ref<EntityStore> entityHit = null;
@@ -107,9 +111,6 @@ final class SwingHandler {
             hitEntity(player, entityHit, held, store);
             return "entity";
         }
-        // Weapons don't dig: a sword swung near the ground shouldn't chip at it.
-        final Item heldItem = held != null ? held.getItem() : null;
-        if (heldItem != null && heldItem.getWeapon() != null) return "none";
         if (blockHit != null) {
             return hitBlock(player, blockHit, held, chunks, store) ? "block" : "blocked";
         }

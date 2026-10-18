@@ -14,8 +14,10 @@
 - With the server plugin connected, Aim with your hand is set aside and Hytale
   aims with your head: Hytale only draws what its camera faces, so pointing
   your hand behind you blanked out the view in front.
-- Plugin swings hit a mob within 1.6 blocks of your hand whichever way the
-  controller points, and swords don't chip at blocks.
+- Swinging a weapon uses Hytale's own attack (its real damage, knockback and
+  combos): the plugin sees the weapon and the swing becomes a click. Tools and
+  bare hands still hit where your hand goes, and a mob within 1.6 blocks of
+  your hand is hit whichever way the controller points.
 - Fixed the headset going black after lowering Sharpness: the right eye's
   copies of Hytale's targets asked for more mip levels than the smaller size
   allows, and a failed copy was never retried.
