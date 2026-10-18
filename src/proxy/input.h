@@ -4,7 +4,8 @@
 
 namespace hvr::input {
 
-// Only sends while the game window has focus. Call each frame.
+// Sends through Windows while the game window has focus; otherwise keys,
+// buttons and scrolling go straight into Hytale's SDL (mouse_move doesn't).
 void set_target(void* hwnd);
 bool target_focused();
 

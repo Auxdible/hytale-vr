@@ -4,12 +4,18 @@
 
 #include <cstdint>
 
+#include "sdl_hooks.h"
+
 namespace hvr::input {
 namespace {
 
 HWND g_target = nullptr;
 bool g_keys[512] = {};
 bool g_buttons[4] = {};
+// Held through SDL instead of Windows, because another window had focus when
+// pressed; released the same way.
+bool g_sdl_keys[512] = {};
+bool g_sdl_buttons[4] = {};
 
 // SDL scancode to PC set-1 scan code; 0xE0xx marks extended keys.
 uint16_t set1_scan(int s) {
@@ -70,12 +76,7 @@ bool target_focused() {
     return foreground == g_target || GetAncestor(foreground, GA_ROOT) == GetAncestor(g_target, GA_ROOT);
 }
 
-void key(int sdl_scancode, bool down) {
-    if (sdl_scancode <= 0 || sdl_scancode >= 512 || g_keys[sdl_scancode] == down) return;
-    if (down && !target_focused()) return;
-    const uint16_t scan = set1_scan(sdl_scancode);
-    if (!scan) return;
-    g_keys[sdl_scancode] = down;
+static void send_key(uint16_t scan, bool down) {
     INPUT in{};
     in.type = INPUT_KEYBOARD;
     in.ki.wScan = scan & 0xFF;
@@ -83,16 +84,53 @@ void key(int sdl_scancode, bool down) {
     send(in);
 }
 
-void mouse_button(int button, bool down) {
-    if (button < 1 || button > 3 || g_buttons[button] == down) return;
-    if (down && !target_focused()) return;
-    g_buttons[button] = down;
+static void send_button(int button, bool down) {
     INPUT in{};
     in.type = INPUT_MOUSE;
     static const DWORD downs[4] = {0, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_RIGHTDOWN};
     static const DWORD ups[4] = {0, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTUP};
     in.mi.dwFlags = down ? downs[button] : ups[button];
     send(in);
+}
+
+// Pressed through Windows while Hytale has focus; through Hytale's SDL while
+// another window does (also when one held through Windows was let go by SDL
+// as you tabbed out). Released through whichever holds it.
+void key(int sdl_scancode, bool down) {
+    if (sdl_scancode <= 0 || sdl_scancode >= 512) return;
+    const uint16_t scan = set1_scan(sdl_scancode);
+    if (!down) {
+        if (g_keys[sdl_scancode] && scan) send_key(scan, false);
+        if (g_sdl_keys[sdl_scancode]) sdl::inject_key(sdl_scancode, false);
+        g_keys[sdl_scancode] = g_sdl_keys[sdl_scancode] = false;
+        return;
+    }
+    if (target_focused()) {
+        if (!g_keys[sdl_scancode] && scan) {
+            send_key(scan, true);
+            g_keys[sdl_scancode] = true;
+        }
+    } else if (!g_sdl_keys[sdl_scancode]) {
+        g_sdl_keys[sdl_scancode] = sdl::inject_key(sdl_scancode, true);
+    }
+}
+
+void mouse_button(int button, bool down) {
+    if (button < 1 || button > 3) return;
+    if (!down) {
+        if (g_buttons[button]) send_button(button, false);
+        if (g_sdl_buttons[button]) sdl::inject_button(button, false);
+        g_buttons[button] = g_sdl_buttons[button] = false;
+        return;
+    }
+    if (target_focused()) {
+        if (!g_buttons[button]) {
+            send_button(button, true);
+            g_buttons[button] = true;
+        }
+    } else if (!g_sdl_buttons[button]) {
+        g_sdl_buttons[button] = sdl::inject_button(button, true);
+    }
 }
 
 void mouse_move(int dx, int dy) {
@@ -106,7 +144,11 @@ void mouse_move(int dx, int dy) {
 }
 
 void wheel(int clicks) {
-    if (clicks == 0 || !target_focused()) return;
+    if (clicks == 0) return;
+    if (!target_focused()) {
+        sdl::inject_wheel(clicks);
+        return;
+    }
     INPUT in{};
     in.type = INPUT_MOUSE;
     in.mi.mouseData = static_cast<DWORD>(clicks * WHEEL_DELTA);
@@ -116,9 +158,9 @@ void wheel(int clicks) {
 
 void release_all() {
     for (int i = 0; i < 512; ++i)
-        if (g_keys[i]) key(i, false);
+        if (g_keys[i] || g_sdl_keys[i]) key(i, false);
     for (int b = 1; b <= 3; ++b)
-        if (g_buttons[b]) mouse_button(b, false);
+        if (g_buttons[b] || g_sdl_buttons[b]) mouse_button(b, false);
 }
 
 }  // namespace hvr::input

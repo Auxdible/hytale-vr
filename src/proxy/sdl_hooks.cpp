@@ -4,6 +4,7 @@
 
 #include <MinHook.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <mutex>
@@ -44,6 +45,7 @@ bool (*fn_PushEvent)(Event*) = nullptr;
 uint32_t (*fn_GetWindowID)(Window*) = nullptr;
 Window* (*fn_GL_GetCurrentWindow)() = nullptr;
 uint64_t (*fn_GetTicksNS)() = nullptr;
+uint32_t (*fn_GetKeyFromScancode)(int, uint16_t, bool) = nullptr;
 
 std::atomic<bool> g_installed{false};
 std::atomic<void*> g_hwnd{nullptr};
@@ -55,6 +57,11 @@ bool g_saved_relative = false;
 bool g_saved_cursor_hidden = false;
 
 std::atomic<int> g_inject_x{0}, g_inject_y{0};
+// Keys and buttons we hold through SDL itself (while another window has focus).
+std::atomic<bool> g_held_keys[sdl3::SCANCODE_COUNT];
+std::atomic<int> g_held_key_count{0};
+std::atomic<uint32_t> g_held_buttons{0};
+std::atomic<bool> g_keep_focus{false};
 std::atomic<bool> g_warp_pending{false};
 std::atomic<float> g_warp_x{0}, g_warp_y{0};
 
@@ -164,6 +171,8 @@ void record(const MenuInput& input) {
 bool pass(Event& e) {
     if (e.common.reserved == sdl3::kOurEvent) return true;
     const uint32_t type = e.type;
+    // In the headset, Hytale keeps playing when you tab out on the desktop.
+    if (g_keep_focus && (type == sdl3::WINDOW_FOCUS_LOST || type == sdl3::WINDOW_MOUSE_LEAVE)) return false;
     if (type == sdl3::WINDOW_PIXEL_SIZE_CHANGED && g_render_scale.load() != 1.0f) {
         e.window.data1 = scaled(e.window.data1);
         e.window.data2 = scaled(e.window.data2);
@@ -278,19 +287,24 @@ bool hook_SetWindowRelativeMouseMode(Window* w, bool enabled) {
 const bool* hook_GetKeyboardState(int* count) {
     ++g_key_state;
     const bool* keys = real_GetKeyboardState(count);
-    return g_capture_applied ? g_zero_keys : keys;
+    if (g_capture_applied) return g_zero_keys;
+    if (g_held_key_count.load() <= 0 || !keys) return keys;
+    static bool merged[sdl3::SCANCODE_COUNT];
+    const int n = std::min(count ? *count : sdl3::SCANCODE_COUNT, sdl3::SCANCODE_COUNT);
+    for (int i = 0; i < n; ++i) merged[i] = keys[i] || g_held_keys[i].load(std::memory_order_relaxed);
+    return merged;
 }
 
 uint32_t hook_GetMouseState(float* x, float* y) {
     ++g_mouse_state;
     const uint32_t buttons = real_GetMouseState(x, y);
-    return g_capture_applied ? 0 : buttons;
+    return g_capture_applied ? 0 : buttons | g_held_buttons.load();
 }
 
 uint32_t hook_GetRelativeMouseState(float* x, float* y) {
     ++g_relative_state;
     const uint32_t buttons = real_GetRelativeMouseState(x, y);
-    if (!g_capture_applied) return buttons;
+    if (!g_capture_applied) return buttons | g_held_buttons.load();
     if (x) *x = 0;
     if (y) *y = 0;
     return 0;
@@ -370,6 +384,8 @@ bool install() {
     ok &= find(module, "SDL_GetWindowID", fn_GetWindowID);
     ok &= find(module, "SDL_GL_GetCurrentWindow", fn_GL_GetCurrentWindow);
     fn_GetTicksNS = reinterpret_cast<uint64_t (*)()>(GetProcAddress(module, "SDL_GetTicksNS"));
+    fn_GetKeyFromScancode =
+        reinterpret_cast<uint32_t (*)(int, uint16_t, bool)>(GetProcAddress(module, "SDL_GetKeyFromScancode"));
     if (!ok) {
         logf("SDL3 is missing functions; the VR menu can't take input");
         return false;
@@ -479,6 +495,55 @@ void inject_mouse_motion(int dx, int dy) {
     if (dx) g_inject_x += dx;
     if (dy) g_inject_y += dy;
 }
+
+bool inject_key(int scancode, bool down) {
+    if (!g_installed || !fn_PushEvent || scancode <= 0 || scancode >= sdl3::SCANCODE_COUNT) return false;
+    if (g_held_keys[scancode].exchange(down) != down) g_held_key_count += down ? 1 : -1;
+    Event e{};
+    e.key.type = down ? sdl3::KEY_DOWN : sdl3::KEY_UP;
+    e.key.reserved = sdl3::kOurEvent;
+    e.key.timestamp = fn_GetTicksNS ? fn_GetTicksNS() : 0;
+    Window* w = window();
+    e.key.windowID = (w && fn_GetWindowID) ? fn_GetWindowID(w) : 0;
+    e.key.scancode = scancode;
+    e.key.key = fn_GetKeyFromScancode ? fn_GetKeyFromScancode(scancode, 0, true) : 0;
+    e.key.down = down;
+    return fn_PushEvent(&e);
+}
+
+bool inject_button(int button, bool down) {
+    if (!g_installed || !fn_PushEvent || button < 1 || button > 5) return false;
+    const uint32_t mask = 1u << (button - 1);
+    if (down) g_held_buttons |= mask;
+    else g_held_buttons &= ~mask;
+    Event e{};
+    e.button.type = down ? sdl3::MOUSE_BUTTON_DOWN : sdl3::MOUSE_BUTTON_UP;
+    e.button.reserved = sdl3::kOurEvent;
+    e.button.timestamp = fn_GetTicksNS ? fn_GetTicksNS() : 0;
+    Window* w = window();
+    e.button.windowID = (w && fn_GetWindowID) ? fn_GetWindowID(w) : 0;
+    e.button.button = static_cast<uint8_t>(button);
+    e.button.down = down;
+    e.button.clicks = 1;
+    if (real_GetMouseState) real_GetMouseState(&e.button.x, &e.button.y);
+    return fn_PushEvent(&e);
+}
+
+bool inject_wheel(int clicks) {
+    if (!g_installed || !fn_PushEvent || clicks == 0) return false;
+    Event e{};
+    e.wheel.type = sdl3::MOUSE_WHEEL;
+    e.wheel.reserved = sdl3::kOurEvent;
+    e.wheel.timestamp = fn_GetTicksNS ? fn_GetTicksNS() : 0;
+    Window* w = window();
+    e.wheel.windowID = (w && fn_GetWindowID) ? fn_GetWindowID(w) : 0;
+    e.wheel.y = static_cast<float>(clicks);
+    e.wheel.integer_y = clicks;
+    if (real_GetMouseState) real_GetMouseState(&e.wheel.mouse_x, &e.wheel.mouse_y);
+    return fn_PushEvent(&e);
+}
+
+void set_keep_focus(bool on) { g_keep_focus = on; }
 
 void warp_mouse(float x, float y) {
     g_warp_x = x;

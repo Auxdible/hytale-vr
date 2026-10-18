@@ -29,6 +29,7 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("bow_grip_offset", s.bow_grip);
     visit("hands_share_depth", s.hands_share_depth);
     visit("two_hand_grip", s.two_hand_grip);
+    visit("item_fixes", s.item_fixes);
     visit("character_arms", s.character_arms);
     visit("target_line", s.target_line);
     visit("aim_actions_by_hand", s.aim_actions_by_hand);
@@ -89,6 +90,7 @@ void assign(int& field, const std::string& value) {
     const long parsed = std::strtol(value.c_str(), &end, 10);
     if (end != value.c_str()) field = static_cast<int>(parsed);
 }
+void assign(std::string& field, const std::string& value) { field = value; }
 void assign(float& field, const std::string& value) {
     char* end = nullptr;
     const float parsed = std::strtof(value.c_str(), &end);
@@ -97,6 +99,7 @@ void assign(float& field, const std::string& value) {
 
 std::string text_of(bool value) { return value ? "true" : "false"; }
 std::string text_of(int value) { return std::to_string(value); }
+std::string text_of(const std::string& value) { return value; }
 std::string text_of(float value) {
     char buffer[32];
     std::snprintf(buffer, sizeof(buffer), "%.5g", value);

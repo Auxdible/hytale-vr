@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
 #include <map>
 #include <string>
 #include <mutex>
@@ -1171,6 +1172,34 @@ bool g_item_sides[2] = {}, g_item_sides_last[2] = {};
 bool g_both_logged = false;
 bool offhand_item() { return g_item_sides_last[0] && g_item_sides_last[1]; }
 
+// Held items turned around from the menu, by model (index count): 1 spun
+// about the handle, 2 end to end.
+std::map<int, int> g_item_fixes;
+std::string g_item_fixes_text;
+bool g_item_fixes_changed = false;
+int g_held_model = 0, g_held_model_frame = -1000;
+
+int held_item_model() { return g_frame - g_held_model_frame < 30 ? g_held_model : 0; }
+
+void set_item_fixes(const std::string& fixes) {
+    if (fixes == g_item_fixes_text) return;
+    g_item_fixes_text = fixes;
+    g_item_fixes.clear();
+    size_t at = 0;
+    while (at < fixes.size()) {
+        size_t end = fixes.find(',', at);
+        if (end == std::string::npos) end = fixes.size();
+        const std::string pair = fixes.substr(at, end - at);
+        const size_t colon = pair.find(':');
+        if (colon != std::string::npos) {
+            const int model = std::atoi(pair.substr(0, colon).c_str()), how = std::atoi(pair.substr(colon + 1).c_str());
+            if (model > 0 && how > 0) g_item_fixes[model] = how;
+        }
+        at = end + 1;
+    }
+    g_item_fixes_changed = true;
+}
+
 
 FrameResult end_frame(int window_w, int window_h) {
     g_render_thread = GetCurrentThreadId();
@@ -1733,11 +1762,17 @@ ItemShape learn_item_shape() {
     (&v.x)[b] = avg[b] >= c[b] ? 1.0f : -1.0f;
     // A bow's parts crowd on its belly, so that side faces away and the string comes to you.
     if (g_setup.held == EyeSetup::Held::Bow) v = Vec3{} - v;
+    // Turned around from the menu, for the odd item the guesses above get wrong.
+    const auto fix = g_item_fixes.find(g_draw_indices);
+    const int how = fix != g_item_fixes.end() ? fix->second : 0;
+    if (how & 1) v = Vec3{} - v;
+    if (how & 2) u = Vec3{} - u;
     const Vec3 w = cross(u, v);
     Vec3 grip = center;
     using Held = EyeSetup::Held;
     const Held held = g_setup.held;
     if (held == Held::Other) grip = center - u * (length * 0.3f);  // a fifth of the way up from the handle's end
+    if (held == Held::Aimed) grip = center - u * (length * 0.2f);  // behind the middle, like a pistol grip or stock
     // Rows: item vectors onto v (x), u x v (y), u (z).
     Mat4 r;
     r.at(0, 0) = v.x, r.at(0, 1) = v.y, r.at(0, 2) = v.z;
@@ -1745,8 +1780,10 @@ ItemShape learn_item_shape() {
     r.at(2, 0) = u.x, r.at(2, 1) = u.y, r.at(2, 2) = u.z;
     shape.hold = r * translation(Vec3{} - grip);
     shape.known = true;
-    logf("Hands: item (%d indices, %zu parts) %.0f units long along %c, held %s", g_draw_indices, parts.size(), length,
-         "xyz"[a], held == Held::Other ? "near the handle's end" : "by the middle");
+    logf("Hands: item (%d indices, %zu parts) %.0f units long along %c, held %s%s", g_draw_indices, parts.size(), length,
+         "xyz"[a],
+         held == Held::Other ? "near the handle's end" : held == Held::Aimed ? "pointing ahead" : "by the middle",
+         how ? " (turned around in the menu)" : "");
     return shape;
 }
 
@@ -1784,7 +1821,9 @@ bool move_first_person() {
         const float k = size * g_setup.item_size * 0.7f;
         GLint vao = 0;
         glr.glGetIntegerv(gl::VERTEX_ARRAY_BINDING, &vao);
-        if (g_setup.held != g_item_shapes_held || g_item_shapes.size() > 64) {
+        if (side == g_setup.item_hand) g_held_model = g_draw_indices, g_held_model_frame = g_frame;
+        if (g_setup.held != g_item_shapes_held || g_item_shapes.size() > 64 || g_item_fixes_changed) {
+            g_item_fixes_changed = false;
             g_item_shapes.clear();
             g_item_shapes_held = g_setup.held;
         }

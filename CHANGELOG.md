@@ -2,6 +2,21 @@
 
 ## 2.3.2
 
+- Held items no longer show through your hand: Hytale squashes the depth of
+  what you hold so it never dips into walls, and your hands now get the same
+  squash.
+- Tabbed out on the desktop, the controllers still play Hytale: keys and
+  clicks go straight into the game, and it isn't told it lost focus.
+- With a dagger in each hand, a swing of either hand attacks.
+- Two-handed holds take hold more easily (about a fist's width around the
+  handle) and stay held however you turn the item until your hands come apart.
+  Crossbows and guns can be held in both hands too.
+- Crossbows, guns, the hookshot and the like aren't drawn like a bow anymore:
+  they point where your hand points, held by the grip, and the trigger fires
+  them (reloading is Hytale's own). Server plugin 1.3.2 tells them apart and
+  aims them as far as a bow.
+- Spin held item and Swap its ends (World tab) fix the odd item held the
+  wrong way round, like some shovels and scythes; it's remembered for that item.
 - Bows face the right way: the string toward you.
 - With an item in each hand (two daggers, say), each one goes in its own
   hand instead of both in one.

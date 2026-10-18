@@ -6,6 +6,7 @@
 #include <imgui.h>
 #include <backends/imgui_impl_opengl3.h>
 
+#include <cstdlib>
 #include <string>
 
 #include "app.h"
@@ -18,6 +19,35 @@
 
 namespace hvr::menu {
 namespace {
+
+// Settings::item_fixes: "model:how" pairs separated by commas.
+int item_fix(const std::string& fixes, int model) {
+    const std::string key = std::to_string(model) + ":";
+    size_t at = 0;
+    while (at < fixes.size()) {
+        size_t end = fixes.find(',', at);
+        if (end == std::string::npos) end = fixes.size();
+        if (fixes.compare(at, key.size(), key) == 0) return std::atoi(fixes.c_str() + at + key.size());
+        at = end + 1;
+    }
+    return 0;
+}
+
+bool set_item_fix(std::string& fixes, int model, int how) {
+    std::string kept;
+    const std::string key = std::to_string(model) + ":";
+    size_t at = 0;
+    while (at < fixes.size()) {
+        size_t end = fixes.find(',', at);
+        if (end == std::string::npos) end = fixes.size();
+        const std::string pair = fixes.substr(at, end - at);
+        if (!pair.empty() && pair.compare(0, key.size(), key) != 0) kept += (kept.empty() ? "" : ",") + pair;
+        at = end + 1;
+    }
+    if (how) kept += (kept.empty() ? "" : ",") + key + std::to_string(how);
+    fixes = kept;
+    return true;
+}
 
 bool g_ready = false;
 ImFont* g_body = nullptr;
@@ -278,6 +308,15 @@ void tab_world(Settings& s) {
             hint("Lean tips the item forward or back in your fist; turn spins it about its handle.");
             changed |= slider("Bow grip", &s.bow_grip, -0.5f, 0.5f, "%.2f m");
             hint("Moves a bow up or down through your hand; 0 holds it by its middle.");
+            // For the odd item held the wrong way round; remembered for that item.
+            const int model = stereo::held_item_model();
+            if (model > 0) {
+                const int how = item_fix(s.item_fixes, model);
+                if (ImGui::Button("Spin held item")) changed |= set_item_fix(s.item_fixes, model, how ^ 1);
+                ImGui::SameLine();
+                if (ImGui::Button("Swap its ends")) changed |= set_item_fix(s.item_fixes, model, how ^ 2);
+                hint("Spin turns the item you're holding half a turn about its handle; swap puts its other end in your fist. Kept for that item.");
+            }
         } else {
             changed |= slider("Item tilt", &s.item_tilt, -90.0f, 90.0f, "%.0f deg");
             changed |= slider("Item turn", &s.item_turn, -180.0f, 180.0f, "%.0f deg");

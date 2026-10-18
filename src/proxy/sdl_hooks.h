@@ -53,6 +53,14 @@ void set_render_scale(float scale);
 float render_scale();
 // Adds relative mouse motion for Hytale's camera, delivered as an SDL event.
 void inject_mouse_motion(int dx, int dy);
+// Keys, buttons and scrolling delivered straight into Hytale's SDL events
+// (and its key and button state), for when another window has focus.
+bool inject_key(int scancode, bool down);
+bool inject_button(int button, bool down);  // 1 left, 2 middle, 3 right
+bool inject_wheel(int clicks);              // positive scrolls up
+// While on, Hytale isn't told when its window loses focus, so it keeps
+// playing (and doesn't pause) when you tab out in the headset.
+void set_keep_focus(bool on);
 
 std::string usage_summary();
 

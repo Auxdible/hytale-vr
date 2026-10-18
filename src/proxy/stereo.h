@@ -38,7 +38,7 @@ struct EyeSetup {
     bool grip_valid[2] = {};
     Mat4 grip[2];  // [0] left hand
     int item_hand = 1;
-    enum class Held { Other, Bow, Food, Block } held = Held::Other;  // what the plugin says is held
+    enum class Held { Other, Bow, Food, Block, Aimed } held = Held::Other;  // what the plugin says is held
     float item_size = 1;
     // Your character's hands: each palm from the head (meters), how many
     // meters a model unit is, and where the hand and its item point sit in the
@@ -81,6 +81,10 @@ struct FrameResult {
 FrameResult end_frame(int window_w, int window_h);
 // Whether Hytale drew an item in each hand last frame (two daggers, say).
 bool offhand_item();
+// The model of the item in your hand lately (0 for none), and the fixes to
+// apply to held items, as in Settings::item_fixes.
+int held_item_model();
+void set_item_fixes(const std::string& fixes);
 // The HUD target for the menu to draw into this frame (0 when not stereo).
 GLuint hud_fbo_this_frame();
 

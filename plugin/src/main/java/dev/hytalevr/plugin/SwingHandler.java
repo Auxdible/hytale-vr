@@ -145,7 +145,8 @@ final class SwingHandler {
         final double[] direction = mapping.apply(aim.direction());
         final double ox = eye.x + offset[0], oy = eye.y + offset[1], oz = eye.z + offset[2];
         // A bow reaches much further than a hand.
-        final double reach = kind.equals("bow") ? BOW_REACH : AIM_REACH;
+        final boolean ranged = kind.equals("bow") || kind.equals("crossbow") || kind.equals("gun");
+        final double reach = ranged ? BOW_REACH : AIM_REACH;
         double best = Double.POSITIVE_INFINITY;
         double inside = Double.NaN;  // a point inside what's hit, along the ray
 
@@ -206,12 +207,25 @@ final class SwingHandler {
         if (item == null) return "none";
         final String animations = item.getPlayerAnimationsId() != null ? item.getPlayerAnimationsId() : "";
         final String id = item.getId() != null ? item.getId() : "";
+        if (has(animations, "crossbow") || has(id, "crossbow")) return "crossbow";
         if (isBow(animations) || isBow(id)) return "bow";
+        if (isAimed(animations) || isAimed(id)) return "gun";
         if (item.getWeapon() != null) return "weapon";
         if (item.getTool() != null) return "tool";
         if (item.isConsumable()) return "food";
         if (item.hasBlockType()) return "block";
         return "item";
+    }
+
+    private static boolean has(String name, String word) {
+        return name.toLowerCase(java.util.Locale.ROOT).contains(word);
+    }
+
+    /** Pointed and fired rather than drawn or swung: guns, the hookshot and the like. */
+    private static boolean isAimed(String name) {
+        for (String word : new String[] {"gun", "pistol", "rifle", "musket", "blunderbuss", "hookshot", "grapple", "flintlock"})
+            if (has(name, word)) return true;
+        return false;
     }
 
     private static boolean isBow(String name) {

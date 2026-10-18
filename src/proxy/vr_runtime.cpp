@@ -394,10 +394,11 @@ bool hand_pose(int hand, Mat4& pose) {
     return true;
 }
 
-// Swing to hit: a fast flick of the attack hand clicks once.
+// Swing to hit: a fast flick of the attack hand clicks once. With an item in
+// each hand (two daggers), either hand's flick does.
 struct Swing {
-    bool armed = true;
-    float cooldown = 0;
+    bool armed[2] = {true, true};
+    float cooldown[2] = {};
     int click_frames = 0;
 } g_swing;
 
@@ -517,7 +518,7 @@ void controls(const FrameContext& context, float dt) {
     const Pressed right_trigger = boolean(g_actions.primary);
     const Pressed left_trigger = boolean(g_actions.secondary);
     const int attack_hand = s.left_handed ? 0 : 1;
-    g_swing.cooldown = std::fmax(0.0f, g_swing.cooldown - dt);
+    for (float& c : g_swing.cooldown) c = std::fmax(0.0f, c - dt);
     // A click waits for the camera to turn to your hand's target before it counts down.
     if (g_swing.click_frames > 0 && (!g_act.aiming || g_act.pressing)) --g_swing.click_frames;
     if (g_plugin_click) {
@@ -526,17 +527,20 @@ void controls(const FrameContext& context, float dt) {
     }
     // Not with a bow: pulling the string back would read as a swing.
     if (s.swing_to_hit && g_world_frame && context.game_relative && !context.menu_open && g_held_kind != "bow") {
-        const float speed = g_hand_speed[attack_hand];
-        if (g_swing.armed && speed > s.swing_speed && g_swing.cooldown <= 0) {
-            g_swing.armed = false;
-            g_swing.cooldown = 0.3f;
-            if (!send_swing(attack_hand, speed, s.world_scale))
-                g_swing.click_frames = 3;  // long enough for Hytale to see the press
-            if (g_actions.haptic[attack_hand])
-                ::vr::VRInput()->TriggerHapticVibrationAction(g_actions.haptic[attack_hand], 0, 0.04f, 120.0f, 0.6f,
-                                                            ::vr::k_ulInvalidInputValueHandle);
+        for (int hand = 0; hand < 2; ++hand) {
+            if (hand != attack_hand && !stereo::offhand_item()) continue;
+            const float speed = g_hand_speed[hand];
+            if (g_swing.armed[hand] && speed > s.swing_speed && g_swing.cooldown[hand] <= 0) {
+                g_swing.armed[hand] = false;
+                g_swing.cooldown[hand] = 0.3f;
+                if (!send_swing(hand, speed, s.world_scale))
+                    g_swing.click_frames = 3;  // long enough for Hytale to see the press
+                if (g_actions.haptic[hand])
+                    ::vr::VRInput()->TriggerHapticVibrationAction(g_actions.haptic[hand], 0, 0.04f, 120.0f, 0.6f,
+                                                                ::vr::k_ulInvalidInputValueHandle);
+            }
+            if (speed < s.swing_speed * 0.5f) g_swing.armed[hand] = true;
         }
-        if (speed < s.swing_speed * 0.5f) g_swing.armed = true;
     } else {
         g_swing.click_frames = 0;
     }
@@ -911,13 +915,21 @@ void place_hud(const Settings& s, bool force) {
     }
 }
 
+// Crossbows, guns, the hookshot and the like: pointed where your hand points
+// and fired with the trigger, not drawn like a bow.
+bool aimed_kind() { return g_held_kind == "crossbow" || g_held_kind == "gun"; }
+
 // Both hands on a weapon or tool: with your other hand on its handle (above
 // or below your grip), the item points along the line between your hands.
 bool g_two_hands = false;
+float g_two_hand_sign = 1;  // +1 when the other hand took hold above your grip, -1 below
+// Hytale's first-person shaders scale clip-space z by this.
+constexpr float kFirstPersonDepth = 0.55f;
 
 void two_hand_grip(const Settings& s, stereo::EyeSetup& setup, int main) {
     const int off = 1 - main;
-    const bool can = s.two_hand_grip && s.hytale_hand && (g_held_kind == "weapon" || g_held_kind == "tool") &&
+    const bool can = s.two_hand_grip && s.hytale_hand &&
+                     (g_held_kind == "weapon" || g_held_kind == "tool" || aimed_kind()) &&
                      !stereo::offhand_item() && setup.grip_valid[main] && setup.grip_valid[off];
     if (!can) {
         g_two_hands = false;
@@ -925,18 +937,25 @@ void two_hand_grip(const Settings& s, stereo::EyeSetup& setup, int main) {
     }
     const Mat4& grip = setup.grip[main];
     const Vec3 base = position_of(grip), axis = transform_direction(grip, {0, 0, 1});
-    const Vec3 to_other = position_of(setup.palm[off]) - base;
+    // From fist to fist: where each hand closes on a handle.
+    const Vec3 to_other = position_of(setup.grip[off]) - base;
     const float along = dot(to_other, axis);
     const float away = length(to_other - axis * along);
     const float reach = 0.6f * s.item_size;
-    const bool on_handle = std::fabs(along) > 0.06f && std::fabs(along) < reach && away < (g_two_hands ? 0.18f : 0.09f);
+    // Easy to take hold of and hard to lose: about a fist's width around the
+    // handle, and loose while held so moving your hands doesn't let go.
+    // Once held, it stays held however you turn it, until your hands come apart.
+    const float apart = length(to_other);
+    const bool on_handle = g_two_hands ? apart > 0.04f && apart < reach + 0.25f
+                                       : std::fabs(along) > 0.04f && std::fabs(along) < reach && away < 0.14f;
+    if (on_handle && !g_two_hands) g_two_hand_sign = along > 0 ? 1.0f : -1.0f;
     if (on_handle && !g_two_hands && g_actions.haptic[off])
         ::vr::VRInput()->TriggerHapticVibrationAction(g_actions.haptic[off], 0, 0.04f, 120.0f, 0.4f,
                                                     ::vr::k_ulInvalidInputValueHandle);
     g_two_hands = on_handle;
     if (!g_two_hands) return;
     // Up the item from the lower hand through the upper one, still turned as your main hand turns it.
-    const Vec3 z = normalize(to_other * (along > 0 ? 1.0f : -1.0f));
+    const Vec3 z = normalize(to_other * g_two_hand_sign);
     const Vec3 old_x = transform_direction(grip, {1, 0, 0});
     Vec3 x = old_x - z * dot(old_x, z);
     if (length(x) < 1e-3f) return;
@@ -1127,6 +1146,7 @@ void prepare_world(const Settings& s, bool showed_world) {
     setup.held = g_held_kind == "bow"     ? stereo::EyeSetup::Held::Bow
                  : g_held_kind == "food"  ? stereo::EyeSetup::Held::Food
                  : g_held_kind == "block" ? stereo::EyeSetup::Held::Block
+                 : aimed_kind()           ? stereo::EyeSetup::Held::Aimed
                                           : stereo::EyeSetup::Held::Other;
     const float degrees = 3.14159265f / 180.0f;
     for (int hand = 0; hand < 2; ++hand) {
@@ -1158,12 +1178,23 @@ void prepare_world(const Settings& s, bool showed_world) {
                                rotation_x((-120.0f - s.grip_tilt) * degrees) * rotation_z((90.0f + s.grip_turn) * degrees);
             // A bow is held by its middle, not its end.
             if (g_held_kind == "bow") setup.grip[hand] = setup.grip[hand] * translation({0, 0, s.bow_grip * s.item_size});  // the middle comes from the bow's shape
+            // Pointed ahead along your hand, held by its grip like a pistol: barrel
+            // where the controller points, its grip or stock side down.
+            if (aimed_kind()) {
+                Mat4 point_ahead;
+                point_ahead.at(0, 0) = 0, point_ahead.at(1, 0) = -1, point_ahead.at(2, 0) = 0;
+                point_ahead.at(0, 1) = -1, point_ahead.at(1, 1) = 0, point_ahead.at(2, 1) = 0;
+                point_ahead.at(0, 2) = 0, point_ahead.at(1, 2) = 0, point_ahead.at(2, 2) = -1;
+                setup.grip[hand] = setup.palm[hand] * translation(point) * rotation_x(-s.grip_tilt * degrees) *
+                                   rotation_y(s.grip_turn * degrees) * point_ahead;
+            }
             // Food sits on top of your hand, not through your fingers.
             if (g_held_kind == "food")
                 setup.grip[hand] = setup.palm[hand] * translation(point + Vec3{0, 0.06f * s.item_size, 0}) *
                                    rotation_x(-s.grip_tilt * degrees) * rotation_y(s.grip_turn * degrees);
         }
     }
+    stereo::set_item_fixes(s.item_fixes);
     two_hand_grip(s, setup, grip_hand);
     stereo::set_eyes(setup);
 }
@@ -1197,6 +1228,7 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
             shown = held = 0;
         }
     }
+    sdl::set_keep_focus(g_world_frame);
     if (g_world_frame && !drawn && g_last_world_texture[0]) {
         // A frame without the world in the middle of playing (chunks loading):
         // submit nothing, so SteamVR keeps the last world frame and turns it
@@ -1245,6 +1277,9 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
                 depth.height = world.item_height;
                 depth.depth_func = world.item_depth_func;
                 depth.view_projection = world.item_projection[eye] * scale({ws, ws, ws}) * inverse_rigid(g_hmd);
+                // Hytale's first-person shader squashes depth (gl_Position.z *= 0.55) so held items
+                // never dip into walls; the hands get the same squash or the item shows through them.
+                for (int c = 0; c < 4; ++c) depth.view_projection.at(2, c) *= kFirstPersonDepth;
             }
             g_scene.render_overlay(world.eye_fbo[eye], world.width, world.height, eye_projection_near(eye), eye_view(eye),
                                    g_view, world.hud_texture, share ? &depth : nullptr);
