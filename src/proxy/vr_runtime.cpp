@@ -258,6 +258,13 @@ struct HandAction {
     Vec3 direction{0, 0, -1};  // where the camera should look, standing space
 } g_act;
 float g_light = 1;  // how lit the hands are, following the world's brightness
+// A bow draws like a real one: your string hand takes the string at the bow
+// (its trigger, close to the bow), pulls back, and lets go to shoot.
+struct BowDraw {
+    bool nocked = false;  // the string hand has the string
+    bool drawn = false;   // pulled far enough that Hytale is drawing
+    float buzz = 0;       // seconds to the next creak in the string hand
+} g_bow;
 
 void poll_plugin() {
     const bool was = plugin().connected();
@@ -512,11 +519,47 @@ void controls(const FrameContext& context, float dt) {
     } else {
         g_swing.click_frames = 0;
     }
-    const bool primary = (s.left_handed ? left_trigger.down : right_trigger.down) || g_swing.click_frames > 0;
+    bool primary = (s.left_handed ? left_trigger.down : right_trigger.down) || g_swing.click_frames > 0;
     bool use = s.left_handed ? right_trigger.down : left_trigger.down;
     const bool in_world = g_world_frame && !pointer_mode && !context.menu_open && context.game_relative;
-    // Food held up to your mouth is eaten: Hytale's use, held while it's there.
     const int holder = item_hand(s);
+    if (in_world && g_held_kind == "bow") {
+        // The bow is in your other hand; the attack hand's trigger is the string.
+        const int string_hand = 1 - holder;
+        const Pressed& grab = s.left_handed ? left_trigger : right_trigger;
+        const HandView& bow = g_view.hands[holder];
+        const HandView& string = g_view.hands[string_hand];
+        const auto buzz = [&](int hand, float seconds, float frequency, float amplitude) {
+            if (g_actions.haptic[hand])
+                ::vr::VRInput()->TriggerHapticVibrationAction(g_actions.haptic[hand], 0, seconds, frequency, amplitude,
+                                                            ::vr::k_ulInvalidInputValueHandle);
+        };
+        if (bow.valid && string.valid && grab.down) {
+            const float pull = length(position_of(string.pose) - position_of(bow.pose * translation(kPalm)));
+            if (!g_bow.nocked && grab.pressed && pull < 0.15f) {
+                g_bow.nocked = true;
+                buzz(string_hand, 0.02f, 180.0f, 0.5f);
+                buzz(holder, 0.02f, 180.0f, 0.3f);
+            }
+            // Hytale draws while its attack is held, so it starts once you pull.
+            if (g_bow.nocked && !g_bow.drawn && pull > 0.12f) g_bow.drawn = true;
+            if (g_bow.drawn && (g_bow.buzz -= dt) <= 0) {
+                const float tension = std::clamp(pull / 0.6f, 0.0f, 1.0f);
+                buzz(string_hand, 0.01f, 90.0f + 80.0f * tension, 0.08f + 0.35f * tension);
+                g_bow.buzz = 0.06f;
+            }
+        } else {
+            if (g_bow.drawn) {
+                buzz(string_hand, 0.03f, 220.0f, 0.7f);
+                buzz(holder, 0.05f, 140.0f, 0.8f);
+            }
+            g_bow = BowDraw{};
+        }
+        primary = g_bow.drawn;
+    } else {
+        g_bow = BowDraw{};
+    }
+    // Food held up to your mouth is eaten: Hytale's use, held while it's there.
     bool eating = false;
     if (in_world && g_held_kind == "food" && g_view.hands[holder].valid && g_hmd_valid) {
         const Vec3 mouth = transform_point(g_hmd, {0, -0.09f, -0.06f});

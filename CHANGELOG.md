@@ -4,7 +4,7 @@
 
 - With the hotbar on your hand, the head HUD no longer shows the hotbar and
   the health bar over it a second time.
-- After your character's arms load, HytaleVR\\logs gets arm_texture.png and
+- After your character's arms load, HytaleVR\logs gets arm_texture.png and
   arm_left.obj / arm_right.obj: exactly what the arms were built from, for
   checking the skin texture against Hytale's own.
 - Interact (F) is on the right grip in the world, for workbenches, doors and
@@ -29,9 +29,12 @@
   for the moment a trigger is held, Hytale's camera turns to the spot your
   hand's line reaches and the click waits for it to arrive (Use and place
   where your hand points, World tab).
-- Bows go in your other hand. Pull the string with your main hand's trigger
-  and let go to shoot; the arrow flies from the bow away from the pulling
-  hand.
+- Bows draw like real ones, as in Vivecraft. The bow goes in your other
+  hand. Bring your main hand to the bow and squeeze its trigger to take the
+  string, pull back (the draw starts once you've pulled about 12 cm) and let
+  go to shoot. The arrow flies from your pulling hand through the bow. The
+  string hand creaks harder the further you pull, and both hands kick on
+  release. Squeezing the trigger away from the bow does nothing.
 - Holding food up to your mouth eats it.
 - Fixed the plugin link filling up with unterminated requests, which could
   stall swings and drop the connection.
