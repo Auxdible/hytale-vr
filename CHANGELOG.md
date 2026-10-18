@@ -22,7 +22,9 @@
   them (reloading is Hytale's own). Server plugin 1.3.2 tells them apart and
   aims them as far as a bow.
 - Spin held item and Swap its ends (World tab) fix the odd item held the
-  wrong way round, like some shovels and scythes; it's remembered for that item.
+  wrong way round, like some shovels and scythes; it's remembered for that
+  item (by its model's size and number of parts, so one fix doesn't turn
+  other items of the same size).
 - Bows face the right way: the string toward you.
 - With an item in each hand (two daggers, say), each one goes in its own
   hand instead of both in one.

@@ -1717,6 +1717,7 @@ bool is_arm_piece(const Mat4& model, float size) {
 struct ItemShape {
     bool known = false;
     bool slender = false;  // much longer than it is wide, like meat on a bone
+    int id = 0;            // tells item models apart across runs, for the menu's fixes
     Mat4 hold;  // item units in, grip frame out: length along +Z, head toward +X, grip point at 0
 };
 // By vertex array and index count; forgotten when what's held changes kind.
@@ -1765,6 +1766,10 @@ ItemShape learn_item_shape() {
     if (crossbow && e[b] > 0 && std::fabs(avg[b] - c[b]) / e[b] > std::fabs(avg[a] - c[a]) / e[a]) std::swap(a, b);
     const float length = e[a];
     if (length < 2.0f) return shape;  // too small to tell (a single part)
+    // Many items share an index count, so the number of parts goes in too.
+    shape.id = static_cast<int>((static_cast<unsigned>(g_draw_indices) * 131u + static_cast<unsigned>(parts.size())) &
+                                0x7fffffffu);
+    if (shape.id == 0) shape.id = 1;
     // The handle starts nearest the item's own origin; the head is the far end.
     Vec3 u{}, v{};
     (&u.x)[a] = crossbow ? (avg[a] >= c[a] ? 1.0f : -1.0f) : c[a] >= 0 ? 1.0f : -1.0f;
@@ -1773,7 +1778,7 @@ ItemShape learn_item_shape() {
     // A bow's parts crowd on its belly, so that side faces away and the string comes to you.
     if (g_setup.held == EyeSetup::Held::Bow) v = Vec3{} - v;
     // Turned around from the menu, for the odd item the guesses above get wrong.
-    const auto fix = g_item_fixes.find(g_draw_indices);
+    const auto fix = g_item_fixes.find(shape.id);
     const int how = fix != g_item_fixes.end() ? fix->second : 0;
     if (how & 1) v = Vec3{} - v;
     if (how & 2) u = Vec3{} - u;
@@ -1785,7 +1790,7 @@ ItemShape learn_item_shape() {
     if (held == Held::Aimed || held == Held::Crossbow) grip = center - u * (length * 0.2f);
     // Slender food (meat on a bone, a fish) is held by its end like a handle; round food sits on your hand.
     shape.slender = length >= 1.6f * std::max(e[b], 0.5f);
-    if (held == Held::Food && shape.slender) grip = center - u * (length * 0.35f);  // behind the middle, like a pistol grip or stock
+    if (held == Held::Food && shape.slender) grip = center - u * (length * 0.35f);
     // Rows: item vectors onto v (x), u x v (y), u (z).
     Mat4 r;
     r.at(0, 0) = v.x, r.at(0, 1) = v.y, r.at(0, 2) = v.z;
@@ -1793,7 +1798,7 @@ ItemShape learn_item_shape() {
     r.at(2, 0) = u.x, r.at(2, 1) = u.y, r.at(2, 2) = u.z;
     shape.hold = r * translation(Vec3{} - grip);
     shape.known = true;
-    logf("Hands: item (%d indices, %zu parts) %.0f units long along %c, held %s%s", g_draw_indices, parts.size(), length,
+    logf("Hands: item %d (%d indices, %zu parts) %.0f units long along %c, held %s%s", shape.id, g_draw_indices, parts.size(), length,
          "xyz"[a],
          held == Held::Other || (held == Held::Food && shape.slender) ? "near the handle's end"
         : held == Held::Aimed || held == Held::Crossbow               ? "pointing ahead"
@@ -1836,7 +1841,6 @@ bool move_first_person() {
         const float k = size * g_setup.item_size * 0.7f;
         GLint vao = 0;
         glr.glGetIntegerv(gl::VERTEX_ARRAY_BINDING, &vao);
-        if (side == g_setup.item_hand) g_held_model = g_draw_indices, g_held_model_frame = g_frame;
         if (g_setup.held != g_item_shapes_held || g_item_shapes.size() > 64 || g_item_fixes_changed) {
             g_item_fixes_changed = false;
             g_item_shapes.clear();
@@ -1845,7 +1849,8 @@ bool move_first_person() {
         const auto key = std::make_pair(vao, g_draw_indices);
         auto it = g_item_shapes.find(key);
         if (it == g_item_shapes.end()) it = g_item_shapes.emplace(key, learn_item_shape()).first;
-        if (side == g_setup.item_hand) g_held_slender = it->second.slender;
+        if (side == g_setup.item_hand && it->second.id)
+            g_held_model = it->second.id, g_held_model_frame = g_frame, g_held_slender = it->second.slender;
         moved = grip * scale({k, k, k});
         if (it->second.known) moved = moved * it->second.hold;
         // Remember where it's drawn, for the hands to share its depth.
