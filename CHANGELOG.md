@@ -2,6 +2,12 @@
 
 ## 2.3.2
 
+- Bows face the right way: the string toward you.
+- With an item in each hand (two daggers, say), each one goes in its own
+  hand instead of both in one.
+- Hold weapons and tools with both hands (World tab, on by default): put your
+  other hand on the handle above or below your grip and the item points along
+  the line between your hands, with a buzz when it takes hold.
 - Your hands are drawn in Hytale's own depth for the held item, so the item
   sits inside your fingers instead of behind your hand. Turn off Items in
   front of your hands (World tab) if your hands disappear; the log says

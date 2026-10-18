@@ -911,6 +911,47 @@ void place_hud(const Settings& s, bool force) {
     }
 }
 
+// Both hands on a weapon or tool: with your other hand on its handle (above
+// or below your grip), the item points along the line between your hands.
+bool g_two_hands = false;
+
+void two_hand_grip(const Settings& s, stereo::EyeSetup& setup, int main) {
+    const int off = 1 - main;
+    const bool can = s.two_hand_grip && s.hytale_hand && (g_held_kind == "weapon" || g_held_kind == "tool") &&
+                     !stereo::offhand_item() && setup.grip_valid[main] && setup.grip_valid[off];
+    if (!can) {
+        g_two_hands = false;
+        return;
+    }
+    const Mat4& grip = setup.grip[main];
+    const Vec3 base = position_of(grip), axis = transform_direction(grip, {0, 0, 1});
+    const Vec3 to_other = position_of(setup.palm[off]) - base;
+    const float along = dot(to_other, axis);
+    const float away = length(to_other - axis * along);
+    const float reach = 0.6f * s.item_size;
+    const bool on_handle = std::fabs(along) > 0.06f && std::fabs(along) < reach && away < (g_two_hands ? 0.18f : 0.09f);
+    if (on_handle && !g_two_hands && g_actions.haptic[off])
+        ::vr::VRInput()->TriggerHapticVibrationAction(g_actions.haptic[off], 0, 0.04f, 120.0f, 0.4f,
+                                                    ::vr::k_ulInvalidInputValueHandle);
+    g_two_hands = on_handle;
+    if (!g_two_hands) return;
+    // Up the item from the lower hand through the upper one, still turned as your main hand turns it.
+    const Vec3 z = normalize(to_other * (along > 0 ? 1.0f : -1.0f));
+    const Vec3 old_x = transform_direction(grip, {1, 0, 0});
+    Vec3 x = old_x - z * dot(old_x, z);
+    if (length(x) < 1e-3f) return;
+    x = normalize(x);
+    const Vec3 y = cross(z, x);
+    Mat4 steered = grip;
+    const Vec3 cols[3] = {x, y, z};
+    for (int c = 0; c < 3; ++c) {
+        steered.at(0, c) = cols[c].x;
+        steered.at(1, c) = cols[c].y;
+        steered.at(2, c) = cols[c].z;
+    }
+    setup.grip[main] = steered;
+}
+
 // After the poses for the next frame arrive: where each eye goes in Hytale.
 void prepare_world(const Settings& s, bool showed_world) {
     // 3D only once you're playing in a world: Hytale's main menu draws a 3D
@@ -1123,6 +1164,7 @@ void prepare_world(const Settings& s, bool showed_world) {
                                    rotation_x(-s.grip_tilt * degrees) * rotation_y(s.grip_turn * degrees);
         }
     }
+    two_hand_grip(s, setup, grip_hand);
     stereo::set_eyes(setup);
 }
 

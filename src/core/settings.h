@@ -50,6 +50,7 @@ struct Settings {
     float grip_tilt = 0.0f;         // with your character's arms: degrees the item leans forward (+) or back
     float grip_turn = 0.0f;         // and degrees it turns about its own length
     float bow_grip = 0.0f;          // meters to move a bow up (+) or down through your hand from its middle
+    bool two_hand_grip = true;      // your other hand on a weapon or tool's handle steers it
     bool hands_share_depth = true;  // held items can be in front of your hands (Hytale's depth)
     bool character_arms = true;     // your character's forearms and hands from Hytale's files, not blocky hands
     bool aim_actions_by_hand = true;  // placing, using and shooting go where your hand points (needs the plugin for its target)

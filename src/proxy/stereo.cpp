@@ -1165,10 +1165,17 @@ struct ItemTarget {
     int width = 0, height = 0;
     GLint depth_func = 0;
 } g_item_target;
+// Which of Hytale's hands drew an item (0 its left, 1 its right): this frame,
+// and the last finished one. Both means one in each hand, like two daggers.
+bool g_item_sides[2] = {}, g_item_sides_last[2] = {};
+bool g_both_logged = false;
+bool offhand_item() { return g_item_sides_last[0] && g_item_sides_last[1]; }
+
 
 FrameResult end_frame(int window_w, int window_h) {
     g_render_thread = GetCurrentThreadId();
     FrameResult result;
+    for (int i = 0; i < 2; ++i) g_item_sides_last[i] = g_item_sides[i], g_item_sides[i] = false;
     if (g_item_target.frame == g_frame && g_item_target.fbo[0] && g_item_target.fbo[1] && g_eye_valid) {
         result.item_depth = true;
         for (int e = 0; e < 2; ++e) {
@@ -1724,6 +1731,8 @@ ItemShape learn_item_shape() {
     (&u.x)[a] = c[a] >= 0 ? 1.0f : -1.0f;
     // The head sticks out the side where its parts crowd.
     (&v.x)[b] = avg[b] >= c[b] ? 1.0f : -1.0f;
+    // A bow's parts crowd on its belly, so that side faces away and the string comes to you.
+    if (g_setup.held == EyeSetup::Held::Bow) v = Vec3{} - v;
     const Vec3 w = cross(u, v);
     Vec3 grip = center;
     using Held = EyeSetup::Held;
@@ -1751,8 +1760,23 @@ bool move_first_person() {
                                  model.at(2, 0) * model.at(2, 0));
     Mat4 moved;
     for (float& v : moved.m) v = 0;  // hidden: every vertex at w = 0, clipped away
-    const int side = g_setup.item_hand;
-    if (is_arm_piece(model, size)) {
+    int side = g_setup.item_hand;
+    // Hytale's off-hand item (its left, at -x) goes in your other hand when
+    // it's holding one in each.
+    const bool hytale_right = model.at(0, 3) >= 0;
+    const bool arm = is_arm_piece(model, size);
+    if (!arm && size > 0) {
+        g_item_sides[hytale_right] = true;
+        if (g_item_sides_last[0] && g_item_sides_last[1]) {
+            if (!hytale_right) side = 1 - side;
+            if (!g_both_logged) {
+                g_both_logged = true;
+                logf("Hands: an item in each hand; this one at x %.2f goes in your %s hand", model.at(0, 3),
+                     side == 0 ? "left" : "right");
+            }
+        }
+    }
+    if (arm) {
         // hidden
     } else if (size > 0 && g_setup.grip_valid[side]) {
         Mat4 grip = g_setup.grip[side];

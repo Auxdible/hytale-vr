@@ -79,6 +79,8 @@ struct FrameResult {
     Mat4 item_projection[2];
 };
 FrameResult end_frame(int window_w, int window_h);
+// Whether Hytale drew an item in each hand last frame (two daggers, say).
+bool offhand_item();
 // The HUD target for the menu to draw into this frame (0 when not stereo).
 GLuint hud_fbo_this_frame();
 

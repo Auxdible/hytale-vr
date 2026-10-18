@@ -270,6 +270,8 @@ void tab_world(Settings& s) {
         changed |= slider("Item size", &s.item_size, 0.2f, 2.0f, "%.2fx");
         changed |= ImGui::Checkbox("Items in front of your hands", &s.hands_share_depth);
         hint("Your hand and the item cover each other as they really would. Turn off if hands go missing.");
+        changed |= ImGui::Checkbox("Hold weapons and tools with both hands", &s.two_hand_grip);
+        hint("Put your other hand on the handle and the item points along both hands.");
         if (s.character_arms) {
             changed |= slider("Item lean", &s.grip_tilt, -90.0f, 90.0f, "%.0f deg");
             changed |= slider("Item turn", &s.grip_turn, -180.0f, 180.0f, "%.0f deg");
