@@ -10,7 +10,7 @@ shader mods do, and adds an in-game VR menu.
 - **Standing in the world (experimental).** In a world, Hytale's own renderer
   draws each frame once per eye, so you see real 3D around you. Your head aims,
   the right stick turns you (snap or smooth), and the HUD floats on a panel in
-  front of you. Your held item follows your right controller, the hotbar sits
+  front of you. Your controllers show as gray hands, the hotbar sits
   over your left hand, and swinging the controller hits. The stick walks where
   you look (or where your other hand points), crouching in your room crouches
   your character, and Aim with your hand (optional) has Hytale aim where the
@@ -32,8 +32,9 @@ shader mods do, and adds an in-game VR menu.
 
 ## What's next
 
-- Tuning the hands from testing: where the held item sits in your grip, and
-  where the hotbar is cut from the HUD.
+- Drawing the held item's own model in your hand (needs the item's identity
+  from the server plugin and its model from Hytale's assets), and tuning where
+  the hotbar is cut from the HUD.
 - Polish from testing: performance, transparency (water, glass) in the right
   eye, and the HUD layout.
 

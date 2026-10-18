@@ -258,27 +258,11 @@ void tab_world(Settings& s) {
     hint(app::render_status().c_str());
     ImGui::Spacing();
     ImGui::TextUnformatted("Hands");
-    changed |= ImGui::Checkbox("Held item in your hand", &s.item_in_hand);
-    if (s.item_in_hand) {
-        if (ImGui::Button("Line up held item")) {
-            session::align_item();
-            app::set_menu_open(false);
-        }
-        hint("The item goes back in front of you. Put your controller where its handle is, at the same angle, "
-             "and squeeze the grip.");
-        if (s.item_aligned) {
-            if (ImGui::Button("Forget lined-up item")) {
-                s.item_aligned = false;
-                changed = true;
-            }
-        } else {
-            hint("Or move these until the item sits in your grip:");
-            changed |= slider("Item tilt", &s.item_pitch, -90.0f, 90.0f, "%.0f deg");
-            changed |= slider("Item left/right", &s.item_x, -1.0f, 1.0f, "%.2f");
-            changed |= slider("Item up/down", &s.item_y, -1.0f, 1.0f, "%.2f");
-            changed |= slider("Item near/far", &s.item_z, -1.5f, 0.5f, "%.2f");
-        }
-    }
+    changed |= ImGui::Checkbox("Show Hytale's arms and held item", &s.show_arms);
+    hint("They're stuck to your head as one piece in VR, so they're off by default. Your gray hands are where you hit.");
+    hint(session::plugin_connected()
+             ? "Server plugin connected: swings hit where your hand is, with no swing animation."
+             : "Server plugin not connected: swings are a left click. It's installed for single player worlds.");
     changed |= ImGui::Checkbox("Hotbar on your other hand", &s.hotbar_on_hand);
     if (s.hotbar_on_hand) {
         changed |= slider("Hotbar size", &s.hotbar_width, 0.08f, 0.6f, "%.2f m");

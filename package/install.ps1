@@ -87,6 +87,8 @@ if ($Uninstall) {
         Move-Item -LiteralPath $backup -Destination $proxy -Force
         Say 'Put back the opengl32.dll that was there before Hytale VR.'
     }
+    $pluginJar = Join-Path $env:APPDATA 'Hytale\UserData\Mods\HytaleVR.jar'
+    if (Test-Path -LiteralPath $pluginJar) { Remove-Item -LiteralPath $pluginJar -Force }
     Remove-Item -LiteralPath $dataDir -Recurse -Force
     Say 'Hytale VR is uninstalled.' Green
     exit 0
@@ -115,6 +117,14 @@ if ((Test-Path -LiteralPath $proxy) -and -not $ours) {
 }
 
 Copy-Item -LiteralPath (Join-Path $files 'opengl32.dll') -Destination $proxy -Force
+# The companion server plugin: hits where your hand swings, in singleplayer worlds.
+$jar = Join-Path $files 'HytaleVR.jar'
+if (Test-Path -LiteralPath $jar) {
+    $mods = Join-Path $env:APPDATA 'Hytale\UserData\Mods'
+    New-Item -ItemType Directory -Force -Path $mods | Out-Null
+    Copy-Item -LiteralPath $jar -Destination (Join-Path $mods 'HytaleVR.jar') -Force
+    Say "Copied the HytaleVR plugin to $mods. Turn it on in your world's mods list if Hytale asks."
+}
 Get-ChildItem -LiteralPath (Join-Path $files 'HytaleVR') -File | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $dataDir $_.Name) -Force
 }

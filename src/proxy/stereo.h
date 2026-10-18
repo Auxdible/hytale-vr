@@ -30,10 +30,8 @@ struct EyeSetup {
     // while the character catches up; otherwise it's an offset from the camera.
     Vec3 anchor;
     bool world_locked = false;
-    // Hytale's first-person item and arm: from its first-person view space to
-    // the same space as head (meters, before world_scale).
-    bool item_in_hand = false;
-    Mat4 item;
+    // Hytale's first-person arms and held item; hidden when false.
+    bool show_arms = false;
     // Smooths small, quick wobbles out of Hytale's camera position (bobbing,
     // sway), while still following walking, jumping and falling.
     bool steady = true;

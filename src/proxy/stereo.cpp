@@ -715,10 +715,11 @@ void compute_eyes(const Mono& mono) {
         eye.view = inverse_rigid(to_camera(g_setup.head * g_setup.eye_to_head[e], body));
         eye.projection = eye_projection(g_setup.headset_projection[e], mono.projection);
         const Mat4 fp_projection = eye_projection(g_setup.headset_projection[e], mono.fp_projection);
-        if (g_setup.item_in_hand) {
-            // The first-person item is drawn in Hytale's view space with this
-            // matrix alone, so the controller's placement goes in here too.
-            eye.fp_projection = fp_projection * eye.view * to_camera(g_setup.item, body);
+        if (!g_setup.show_arms) {
+            // Everything drawn with this matrix (both arms and the held item)
+            // lands at w = 0, which the GPU clips away.
+            eye.fp_projection = Mat4{};
+            for (int r = 0; r < 4; ++r) eye.fp_projection.at(r, r) = 0;
         } else {
             Mat4 eye_from_head = inverse_rigid(g_setup.eye_to_head[e]);
             for (int r = 0; r < 3; ++r) eye_from_head.at(r, 3) *= s;

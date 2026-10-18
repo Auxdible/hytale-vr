@@ -16,6 +16,7 @@
 #include "gl_hooks.h"
 #include "input.h"
 #include "log.h"
+#include "plugin_bridge.h"
 #include "sdl_hooks.h"
 #include "stereo.h"
 #include "vr_scene.h"
@@ -40,11 +41,6 @@ std::atomic<bool> g_recenter{false};
 std::atomic<bool> g_menu_button{false};
 // Lining up the held item: the item goes back in front of your face, you put
 // your hand where it is and squeeze a grip, and that's remembered.
-std::atomic<bool> g_align_requested{false};
-bool g_aligning = false;
-std::mutex g_grip_mutex;
-bool g_grip_ready = false;
-float g_new_grip[12] = {};
 ::vr::TrackedDevicePose_t g_poses[::vr::k_unMaxTrackedDeviceCount];
 Mat4 g_hmd;
 bool g_hmd_valid = false;
@@ -233,6 +229,44 @@ void stick(::vr::VRActionHandle_t action, float& x, float& y) {
 }
 
 float g_hand_speed[2] = {};  // meters per second, this frame
+
+// The Hytale VR server plugin, when it's installed on the world you're in. It
+// lands swings where your hand is, without Hytale's click and swing animation.
+PluginBridge& plugin() {
+    static PluginBridge* bridge = new PluginBridge("hytale-vr");  // never torn down inside DllMain
+    return *bridge;
+}
+std::atomic<bool> g_plugin_connected{false};
+
+void poll_plugin() {
+    const bool was = plugin().connected();
+    for (const std::string& line : plugin().poll(GetTickCount64()))
+        if (line != "HIT miss") logf("Plugin: %s", line.c_str());
+    const bool now = plugin().connected();
+    if (now != was) logf(now ? "Connected to the Hytale VR server plugin" : "Lost the Hytale VR server plugin");
+    g_plugin_connected = now;
+}
+
+// Sends a swing from the hand to the plugin: where the hand is from your eyes
+// and where it points, turned into Hytale's world axes, plus Hytale's own look
+// direction so the plugin can check the axes match. False when there's no plugin.
+bool send_swing(int hand, float speed, float world_scale) {
+    const HandView& view = g_view.hands[hand];
+    Mat4 engine_view;
+    Vec3 look, engine_position;
+    if (!plugin().connected() || !view.valid || !g_hmd_valid ||
+        !stereo::engine_camera(engine_view, look, engine_position))
+        return false;
+    const Mat4 turn = rotation_y(g_yaw_offset);
+    const Vec3 offset =
+        transform_direction(turn, position_of(view.pose) - position_of(g_hmd)) * world_scale;
+    const Vec3 direction = transform_direction(turn, transform_direction(view.pose, {0, 0, -1}));
+    HandRay ray;
+    ray.origin[0] = offset.x, ray.origin[1] = offset.y, ray.origin[2] = offset.z;
+    ray.direction[0] = direction.x, ray.direction[1] = direction.y, ray.direction[2] = direction.z;
+    const float look_axes[3] = {look.x, look.y, look.z};
+    return plugin().send_line(format_swing_message(hand, ray, speed, look_axes));
+}
 float g_motion = 0;          // 0..1: how hard the stick is moving or smoothly turning you
 float g_vignette = 0;        // eased toward g_motion
 
@@ -300,6 +334,7 @@ void handle_events() {
 
 void controls(const FrameContext& context, float dt) {
     const Settings& s = *context.settings;
+    poll_plugin();
     for (HandView& hand : g_view.hands) hand.laser = hand.hovering = false;
     g_view.dot = false;
     g_motion = 0;
@@ -377,7 +412,8 @@ void controls(const FrameContext& context, float dt) {
         if (g_swing.armed && speed > s.swing_speed && g_swing.cooldown <= 0) {
             g_swing.armed = false;
             g_swing.cooldown = 0.3f;
-            g_swing.click_frames = 3;  // long enough for Hytale to see the press
+            if (!send_swing(attack_hand, speed, s.world_scale))
+                g_swing.click_frames = 3;  // long enough for Hytale to see the press
             if (g_actions.haptic[attack_hand])
                 ::vr::VRInput()->TriggerHapticVibrationAction(g_actions.haptic[attack_hand], 0, 0.04f, 120.0f, 0.6f,
                                                             ::vr::k_ulInvalidInputValueHandle);
@@ -395,33 +431,6 @@ void controls(const FrameContext& context, float dt) {
             if (triggers[hand]->pressed && g_actions.haptic[hand])
                 ::vr::VRInput()->TriggerHapticVibrationAction(g_actions.haptic[hand], 0, 0.012f, 200.0f, 0.3f,
                                                             ::vr::k_ulInvalidInputValueHandle);
-    }
-
-    if (g_align_requested.exchange(false)) {
-        g_aligning = true;
-        logf("Lining up the held item: waiting for a grip squeeze");
-    }
-    const bool was_aligning = g_aligning;  // its grip squeeze doesn't reach Hytale
-    {
-        const int item_hand = s.left_handed ? 0 : 1;
-        const HandView& hand = g_view.hands[item_hand];
-        const bool squeeze = boolean(g_actions.hotbar_next).pressed || boolean(g_actions.crouch).pressed;
-        if (g_aligning && squeeze && hand.valid && g_hmd_valid && !context.menu_open) {
-            // Hytale's first-person view sits on your head right now; keep that
-            // spot, but carried by the hand from here on.
-            const Mat4 grip = inverse_rigid(hand.pose) * g_hmd;
-            {
-                std::lock_guard lock(g_grip_mutex);
-                for (int r = 0; r < 3; ++r)
-                    for (int c = 0; c < 4; ++c) g_new_grip[r * 4 + c] = grip.at(r, c);
-                g_grip_ready = true;
-            }
-            g_aligning = false;
-            logf("Held item lined up with the %s hand", item_hand ? "right" : "left");
-            if (g_actions.haptic[item_hand])
-                ::vr::VRInput()->TriggerHapticVibrationAction(g_actions.haptic[item_hand], 0, 0.08f, 120.0f, 0.7f,
-                                                            ::vr::k_ulInvalidInputValueHandle);
-        }
     }
 
     const bool play = !context.menu_open;
@@ -460,11 +469,11 @@ void controls(const FrameContext& context, float dt) {
         input::key(s.key_sprint, sprint);
         input::key(225, shift);
     }
-    input::key(s.key_crouch, play && ((boolean(g_actions.crouch).down && !was_aligning) || g_crouch.down));
+    input::key(s.key_crouch, play && (boolean(g_actions.crouch).down || g_crouch.down));
     input::key(s.key_inventory, play && boolean(g_actions.inventory).down);
     input::key(41 /* Escape */, play && boolean(g_actions.back).down);
     // In the world the right grip interacts (opens benches, doors, chests).
-    input::key(s.key_interact, play && !pointer_mode && !was_aligning && boolean(g_actions.hotbar_next).down);
+    input::key(s.key_interact, play && !pointer_mode && boolean(g_actions.hotbar_next).down);
     // A hotbar slot touched last frame: tap its number key.
     if (g_touch.key) {
         input::key(g_touch.key, play && g_touch.press_frames > 0);
@@ -554,14 +563,7 @@ std::string headset_name() {
 void recenter() { g_recenter = true; }
 void force_world() { g_force_world = true; }
 bool take_menu_button() { return g_menu_button.exchange(false); }
-void align_item() { g_align_requested = true; }
-bool take_item_grip(float rows[12]) {
-    std::lock_guard lock(g_grip_mutex);
-    if (!g_grip_ready) return false;
-    for (int i = 0; i < 12; ++i) rows[i] = g_new_grip[i];
-    g_grip_ready = false;
-    return true;
-}
+bool plugin_connected() { return g_plugin_connected; }
 
 void begin_frame(const FrameContext& context) {
     g_context = context;
@@ -839,22 +841,7 @@ void prepare_world(const Settings& s, bool showed_world) {
     setup.no_occlusion = s.no_occlusion;
     setup.steady = s.steady_view;
     setup.lift = g_crouch.lift;
-    // The held item: Hytale's first-person view, moved so its grip point sits
-    // in the attack hand and points where the controller points.
-    const HandView& item_hand = g_view.hands[s.left_handed ? 0 : 1];
-    setup.item_in_hand = s.item_in_hand && item_hand.valid && !g_aligning;
-    if (setup.item_in_hand) {
-        const float pi = 3.14159265f;
-        const Mat4 palm = translation({0, -0.025f, 0.07f});  // from the controller's tip pose back to the palm
-        const Mat4 grip = rotation_x(s.item_pitch * pi / 180.0f) * translation(Vec3{} - Vec3{s.item_x, s.item_y, s.item_z});
-        Mat4 hold = palm * grip;
-        if (s.item_aligned) {
-            hold = Mat4{};
-            for (int r = 0; r < 3; ++r)
-                for (int c = 0; c < 4; ++c) hold.at(r, c) = s.item_grip[r * 4 + c];
-        }
-        setup.item = rotation_y(g_yaw_offset) * translation(Vec3{} - g_neutral) * item_hand.pose * hold;
-    }
+    setup.show_arms = s.show_arms;
     stereo::set_eyes(setup);
 }
 

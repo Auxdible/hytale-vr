@@ -31,11 +31,7 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings);
 void recenter();
 void force_world();  // treat the current scene as a world now
 bool take_menu_button();  // the controller's menu button was pressed
-// Line up the held item: it goes back in front of your face until a grip is
-// squeezed with your hand where it shows, then follows the hand from there.
-void align_item();
-// The new hand-to-item transform once lined up (rows of a 3x4 matrix).
-bool take_item_grip(float rows[12]);
+bool plugin_connected();  // the Hytale VR server plugin is answering
 
 
 }  // namespace hvr::session

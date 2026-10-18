@@ -5,9 +5,15 @@
 - Interact (F) is on the right grip in the world, for workbenches, doors and
   chests. The right stick flicked up or down picks the previous or next
   hotbar slot (and touching the hotbar still works).
-- Line up held item (World tab, Hands): the held item goes back in front of
-  your face; put your controller where its handle is and squeeze a grip, and
-  it follows that hand from there. Replaces guessing with the sliders.
+- Hytale's first-person arms and held item are hidden in VR. They move as one
+  piece glued to your head, so no placement put the item in your hand; your
+  gray controller hands are what you hit with. "Show Hytale's arms and held
+  item" (World tab) brings them back. The item sliders and Line up held item
+  are gone.
+- The Hytale VR server plugin (HytaleVR.jar) is back and the installer puts it
+  in Hytale's Mods folder. With it on, a swing hits whatever your hand moves
+  through, with Hytale's own damage and block rules and no swing animation.
+  Without it, a swing is still a left click.
 - Touch a slot on the hotbar over your hand with your other controller's tip
   to pick it, with a buzz.
 - A light tick in your hand when you pull a trigger in the world.

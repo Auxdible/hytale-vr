@@ -229,14 +229,6 @@ void before_swap(HDC dc) {
     }
     census::frame_boundary();
     if (!g_started) start();
-    {
-        float grip[12];
-        if (session::take_item_grip(grip)) {
-            for (int i = 0; i < 12; ++i) g_settings.item_grip[i] = grip[i];
-            g_settings.item_aligned = true;
-            settings_changed();
-        }
-    }
 
     HWND hwnd = WindowFromDC(dc);
     sdl::install();

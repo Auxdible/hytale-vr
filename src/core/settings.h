@@ -38,15 +38,9 @@ struct Settings {
     float vignette = 0.5f;          // comfort: how much the edges darken while the stick moves or turns you (0 = off)
 
     // Hands
-    bool item_in_hand = true;       // Hytale's held item and arm follow the right controller
-    float item_pitch = -15.0f;      // degrees the item tilts relative to the controller
-    float item_x = 0.30f;           // where the item's grip sits in Hytale's first-person view (meters)
-    float item_y = -0.32f;
-    float item_z = -0.48f;
-    // Set by "Line up held item": from the controller to Hytale's first-person
-    // view, rows of a 3x4 matrix (meters). Used instead of the sliders when set.
-    bool item_aligned = false;
-    float item_grip[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    // Hytale's own first-person arms and held item. They are glued to your
+    // head as one piece, so they stay hidden unless you want them back.
+    bool show_arms = false;
     bool hotbar_on_hand = true;     // the hotbar floats over the left controller
     float hotbar_width = 0.22f;     // meters
     float hotbar_left = 0.31f;      // where the hotbar is in Hytale's HUD, as fractions of the window
