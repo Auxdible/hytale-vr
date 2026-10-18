@@ -150,7 +150,8 @@ struct UniformPatch {
 
 struct ProgramInfo {
     bool queried = false;
-    GLint fp_model = -1;  // uModelMatrix in a first-person program
+    bool first_person = false;  // compiled with FIRST_PERSON_VIEW (arms and held items)
+    GLint node_block = -1;      // uboNodeBlock: the model's bones
     GLint scene_block = -1;
     GLint scene_binding = -1;
     GLint scene_size = 0;
@@ -202,6 +203,7 @@ std::map<std::pair<GLuint, GLintptr>, EyeUbo> g_eye_ubos;
 std::atomic<DWORD> g_render_thread{0};
 bool g_wanted = false;
 EyeSetup g_setup;
+Vec3 g_view_offset;  // body offset from the camera, last frame
 int g_setup_frame = -100;
 int g_frame = 0;
 bool g_failed_frame = false;
@@ -570,6 +572,7 @@ ProgramInfo& program_info(GLuint program) {
     for (GLint i = 0; i < blocks; ++i) {
         char name[128] = {};
         glr.glGetActiveUniformBlockName(program, static_cast<GLuint>(i), sizeof(name), nullptr, name);
+        if (std::strcmp(name, "uboNodeBlock") == 0) info.node_block = i;
         if (std::strcmp(name, "uboSceneDataBlock") != 0) continue;
         info.scene_block = i;
         glr.glGetActiveUniformBlockiv(program, static_cast<GLuint>(i), gl::UNIFORM_BLOCK_BINDING, &info.scene_binding);
@@ -577,7 +580,7 @@ ProgramInfo& program_info(GLuint program) {
     }
     {
         std::lock_guard lock(g_relink_mutex);
-        if (g_fp_programs.count(program)) info.fp_model = glr.glGetUniformLocation(program, "uModelMatrix");
+        info.first_person = g_fp_programs.count(program) > 0;
     }
     GLint uniforms = 0;
     glr.glGetProgramiv(program, gl::ACTIVE_UNIFORMS, &uniforms);
@@ -664,6 +667,10 @@ Mat4 to_camera(Mat4 m, Vec3 body) {
 // Where the view sits instead of Hytale's camera: a filter that follows the
 // camera's steady motion (level plus velocity, so walking doesn't lag) and
 // smooths out what wobbles around it. Updated once a frame.
+// How far the steady view may sit from Hytale's camera. Further than this and
+// your hands and hits visibly land away from where you see them.
+constexpr float kSteadyReach = 0.12f;
+
 struct Steady {
     bool valid = false;
     int frame = -1;
@@ -702,8 +709,8 @@ Vec3 steady_offset(const Vec3& camera) {
     Vec3 offset = g_steady.level - camera;
     const float away = length(offset);
     g_stats.smoothed_max = std::fmax(g_stats.smoothed_max, away);
-    if (away > 0.35f) {
-        offset = offset * (0.35f / away);
+    if (away > kSteadyReach) {
+        offset = offset * (kSteadyReach / away);
         g_steady.level = camera + offset;
     }
     return offset;
@@ -716,6 +723,7 @@ void compute_eyes(const Mono& mono) {
     const Vec3 body = g_setup.world_locked
                           ? Vec3{g_setup.anchor.x - mono.camera.x, g_setup.lift, g_setup.anchor.z - mono.camera.z}
                           : Vec3{g_setup.anchor.x + steady.x, g_setup.lift + steady.y, g_setup.anchor.z + steady.z};
+    g_view_offset = body;
     const Mat4 mono_vp_inverse = inverse(mono.projection * mono.view);
     const Mat4 mono_view_inverse = inverse_rigid(mono.view);
     for (int e = 0; e < 2; ++e) {
@@ -723,7 +731,7 @@ void compute_eyes(const Mono& mono) {
         eye.view = inverse_rigid(to_camera(g_setup.head * g_setup.eye_to_head[e], body));
         eye.projection = eye_projection(g_setup.headset_projection[e], mono.projection);
         const Mat4 fp_projection = eye_projection(g_setup.headset_projection[e], mono.fp_projection);
-        if (!g_setup.show_arms && !g_setup.item_in_hand) {
+        if (!g_setup.show_arms) {
             // Everything drawn with this matrix lands at w = 0, which the GPU clips away.
             eye.fp_projection = Mat4{};
             for (int r = 0; r < 4; ++r) eye.fp_projection.at(r, r) = 0;
@@ -1123,6 +1131,8 @@ bool active() {
 
 GLuint hud_fbo_this_frame() { return g_composited ? g_hud.fbo() : 0; }
 
+Vec3 view_offset() { return g_view_offset; }
+
 bool engine_camera(Mat4& view, Vec3& forward, Vec3& position) {
     if (!g_mono.valid) return false;
     position = g_mono.camera;
@@ -1332,53 +1342,6 @@ void on_shader_source(GLuint shader, const std::string& source) {
         g_fp_shaders.erase(shader);
 }
 
-// Hytale draws its arms and held items one model at a time with the camera as
-// the origin. An arm's matrix sits at the origin; an item's is pushed out to
-// where it shows in front of you (to the left for the off hand). Items keep
-// their own angle and animation, scaled down and carried by the hand.
-bool first_person_model(GLuint program, GLint location, const GLfloat* value, GLfloat out[16]) {
-    if (!g_wanted || !value || location < 0 || !on_render_thread()) return false;
-    if (g_setup.show_arms && !g_setup.item_in_hand) return false;
-    const ProgramInfo& info = program_info(program);
-    if (info.fp_model < 0 || location != info.fp_model) return false;
-    const Mat4 original = mat_at(value);
-    const Vec3 anchor = position_of(original);
-    const float away = std::sqrt(anchor.x * anchor.x + anchor.y * anchor.y + anchor.z * anchor.z);
-    const bool item = away > 0.005f && away < 4.0f;
-    static int logged = 0;
-    static DWORD last_log = 0;
-    const DWORD now = GetTickCount();
-    if (logged < 12 || now - last_log > 10000) {
-        ++logged;
-        last_log = now;
-        const float size = std::sqrt(original.at(0, 0) * original.at(0, 0) + original.at(1, 0) * original.at(1, 0) +
-                                     original.at(2, 0) * original.at(2, 0));
-        logf("First person model in program %u at (%.3f %.3f %.3f) size %.4f: %s", program, anchor.x, anchor.y,
-             anchor.z, size, item ? "item" : "arm");
-    }
-    if (!item) {
-        if (g_setup.show_arms) return false;
-        std::memset(out, 0, sizeof(float) * 16);  // every vertex at w = 0, clipped away
-        return true;
-    }
-    if (!g_setup.item_in_hand) return false;
-    const int side = anchor.x < 0 ? 0 : 1;
-    if (!g_setup.hand_valid[side]) {
-        std::memset(out, 0, sizeof(float) * 16);
-        return true;
-    }
-    const Mat4& grip = g_setup.hand_grip[side];
-    Mat4 moved;
-    for (int r = 0; r < 3; ++r)
-        for (int c = 0; c < 3; ++c) {
-            float v = 0;
-            for (int k = 0; k < 3; ++k) v += grip.at(r, k) * original.at(k, c);
-            moved.at(r, c) = v * g_setup.item_size;
-        }
-    for (int r = 0; r < 3; ++r) moved.at(r, 3) = grip.at(r, 3) * g_setup.world_scale;
-    std::memcpy(out, moved.m, sizeof(moved.m));
-    return true;
-}
 
 void on_uniform_block_binding(GLuint program, GLuint index, GLuint binding) {
     if (!on_render_thread()) return;
@@ -1546,9 +1509,43 @@ bool skip_draw(GLenum mode) {
     return true;
 }
 
+// Hytale draws first person as several models (arm, sleeves, gloves, the held
+// item...) that share one model matrix; each has its own bones. Which one is
+// the held item isn't known yet, so a frame every few seconds logs what tells
+// them apart.
+void note_first_person_draw(GLsizei count) {
+    static int log_frame = -1, logged = 0;
+    static DWORD next = 0;
+    const ProgramInfo& info = program_info(t.program);
+    if (!info.first_person) return;
+    if (log_frame != g_frame) {
+        const DWORD now = GetTickCount();
+        if (now < next) return;
+        next = now + 5000;
+        log_frame = g_frame;
+        logged = 0;
+    }
+    if (logged >= 24) return;
+    ++logged;
+    GLint binding = -1, vao = 0;
+    if (info.node_block >= 0)
+        glr.glGetActiveUniformBlockiv(t.program, static_cast<GLuint>(info.node_block), gl::UNIFORM_BLOCK_BINDING,
+                                      &binding);
+    glr.glGetIntegerv(gl::VERTEX_ARRAY_BINDING, &vao);
+    UboBinding nodes;
+    if (binding >= 0 && binding < kUboIndices) nodes = t.ubo[binding];
+    float root[16] = {};
+    if (nodes.buffer && glr.has_dsa) glr.glGetNamedBufferSubData(nodes.buffer, nodes.offset, sizeof(root), root);
+    logf("First person draw %d (frame %d, program %u): %d indices, %lld bytes of bones, vao %d, textures %u %u %u, "
+         "root bone at (%.1f %.1f %.1f)",
+         logged, g_frame, t.program, count, static_cast<long long>(nodes.size), vao, t.tex2d[0], t.tex2d[1], t.tex2d[2],
+         root[12], root[13], root[14]);
+}
+
 bool draw_begin(GLenum mode, GLsizei count) {
     g_pending = Pending{};
     if (!active()) return false;
+    if (t.program) note_first_person_draw(count);
     // Simulation passes (transform feedback with rasterizing off) must run once.
     if (mode == gl::POINTS && cap_enabled(0x8C89 /* RASTERIZER_DISCARD */)) return false;
     Pending& p = g_pending;

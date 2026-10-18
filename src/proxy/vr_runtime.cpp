@@ -247,8 +247,8 @@ void poll_plugin() {
     g_plugin_connected = now;
 }
 
-// Sends a swing from the hand to the plugin: where the hand is from your eyes
-// and where it points, turned into Hytale's world axes, plus Hytale's own look
+// Sends a swing from the hand to the plugin: where the hand is from Hytale's
+// camera (exactly where the view draws it) and where it points, turned into Hytale's world axes, plus Hytale's own look
 // direction so the plugin can check the axes match. False when there's no plugin.
 bool send_swing(int hand, float speed, float world_scale) {
     const HandView& view = g_view.hands[hand];
@@ -258,8 +258,8 @@ bool send_swing(int hand, float speed, float world_scale) {
         !stereo::engine_camera(engine_view, look, engine_position))
         return false;
     const Mat4 turn = rotation_y(g_yaw_offset);
-    const Vec3 offset =
-        transform_direction(turn, position_of(view.pose) - position_of(g_hmd)) * world_scale;
+    const Vec3 offset = transform_direction(turn, position_of(view.pose) - g_neutral) * world_scale +
+                        stereo::view_offset();
     const Vec3 direction = transform_direction(turn, transform_direction(view.pose, {0, 0, -1}));
     HandRay ray;
     ray.origin[0] = offset.x, ray.origin[1] = offset.y, ray.origin[2] = offset.z;
@@ -842,15 +842,6 @@ void prepare_world(const Settings& s, bool showed_world) {
     setup.steady = s.steady_view;
     setup.lift = g_crouch.lift;
     setup.show_arms = s.show_arms;
-    // Held items: each hand's grip relative to the headset, from the
-    // controller's tip back to the palm and tipped by item_tilt.
-    setup.item_in_hand = s.item_in_hand;
-    setup.item_size = s.item_size;
-    const Mat4 palm = translation({0, -0.025f, 0.07f}) * rotation_x(-s.item_tilt * 3.14159265f / 180.0f);
-    for (int hand = 0; hand < 2; ++hand) {
-        setup.hand_valid[hand] = g_view.hands[hand].valid && g_hmd_valid;
-        if (setup.hand_valid[hand]) setup.hand_grip[hand] = inverse_rigid(g_hmd) * g_view.hands[hand].pose * palm;
-    }
     stereo::set_eyes(setup);
 }
 

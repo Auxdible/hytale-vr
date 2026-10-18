@@ -5,12 +5,15 @@
 - Interact (F) is on the right grip in the world, for workbenches, doors and
   chests. The right stick flicked up or down picks the previous or next
   hotbar slot (and touching the hotbar still works).
-- Your held item is drawn in your hand: Hytale's own model of it, picked
-  out of its first-person view one model at a time and carried by the
-  controller (an off-hand item goes in your left hand). Hytale's arms, which
-  were glued to your head, are hidden. Item size and Item tilt in the World
-  tab adjust the fit; "Show Hytale's arms" brings the arms back. This replaces
-  moving the whole first-person view and Line up held item.
+- Hytale's first-person arms and held item are hidden in VR: Hytale draws
+  them as several models sharing one placement glued to your head, so moving
+  that placement moved both arms at once. "Show Hytale's arms and held item"
+  (World tab) brings them back. The log now describes each first-person model
+  every few seconds, to find which one is the held item.
+- Swings through the plugin start where your hand shows in the world, not
+  where it is from your headset, and the steady view stays within 12 cm of
+  Hytale's camera (it reached 58 cm while walking at low frame rates), so hits
+  land where you swing.
 - The Hytale VR server plugin (HytaleVR.jar) is back and the installer puts it
   in Hytale's Mods folder. With it on, a swing hits whatever your hand moves
   through, with Hytale's own damage and block rules and no swing animation.

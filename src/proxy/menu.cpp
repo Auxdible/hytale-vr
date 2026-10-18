@@ -258,13 +258,8 @@ void tab_world(Settings& s) {
     hint(app::render_status().c_str());
     ImGui::Spacing();
     ImGui::TextUnformatted("Hands");
-    changed |= ImGui::Checkbox("Held item in your hand", &s.item_in_hand);
-    if (s.item_in_hand) {
-        changed |= slider("Item size", &s.item_size, 0.05f, 1.0f, "%.2fx");
-        changed |= slider("Item tilt", &s.item_tilt, -90.0f, 90.0f, "%.0f deg");
-    }
-    changed |= ImGui::Checkbox("Show Hytale's arms", &s.show_arms);
-    hint("Hytale's arms are stuck to your head in VR, so they're off by default.");
+    changed |= ImGui::Checkbox("Show Hytale's arms and held item", &s.show_arms);
+    hint("They're stuck to your head as one piece in VR, so they're off by default. Your gray hands are where you hit.");
     hint(session::plugin_connected()
              ? "Server plugin connected: swings hit where your hand is, with no swing animation."
              : "Server plugin not connected: swings are a left click. It's installed for single player worlds.");
