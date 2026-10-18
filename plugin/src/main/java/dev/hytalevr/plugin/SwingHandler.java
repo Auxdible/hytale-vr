@@ -119,6 +119,8 @@ final class SwingHandler {
 
     /** How far Hytale's own interactions reach along the look, in blocks. */
     static final double AIM_REACH = 5.0;
+    /** How far ahead a drawn bow's line is traced, in blocks. */
+    static final double BOW_REACH = 64.0;
 
     /**
      * What the hand's ray reaches and what's held: "distance kind [x y z]",
@@ -142,12 +144,14 @@ final class SwingHandler {
         final double[] offset = mapping.apply(aim.origin());
         final double[] direction = mapping.apply(aim.direction());
         final double ox = eye.x + offset[0], oy = eye.y + offset[1], oz = eye.z + offset[2];
+        // A bow reaches much further than a hand.
+        final double reach = kind.equals("bow") ? BOW_REACH : AIM_REACH;
         double best = Double.POSITIVE_INFINITY;
         double inside = Double.NaN;  // a point inside what's hit, along the ray
 
-        final Vector3d middle = new Vector3d(ox + direction[0] * AIM_REACH * 0.5,
-                oy + direction[1] * AIM_REACH * 0.5, oz + direction[2] * AIM_REACH * 0.5);
-        for (Ref<EntityStore> candidate : TargetUtil.getAllEntitiesInSphere(middle, AIM_REACH * 0.5 + 2.0, store)) {
+        final Vector3d middle = new Vector3d(ox + direction[0] * reach * 0.5,
+                oy + direction[1] * reach * 0.5, oz + direction[2] * reach * 0.5);
+        for (Ref<EntityStore> candidate : TargetUtil.getAllEntitiesInSphere(middle, reach * 0.5 + 2.0, store)) {
             if (candidate == null || !candidate.isValid() || candidate.getIndex() == player.getIndex()) continue;
             final TransformComponent transform = store.getComponent(candidate, TransformComponent.getComponentType());
             final BoundingBox bounds = store.getComponent(candidate, BoundingBox.getComponentType());
@@ -158,7 +162,7 @@ final class SwingHandler {
             final double[] hi = {position.x + box.max.x, position.y + box.max.y, position.z + box.max.z};
             final double t = RayMath.rayBoxEntry(ox, oy, oz, direction[0], direction[1], direction[2],
                     lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
-            if (!Double.isNaN(t) && t <= AIM_REACH && t < best) {
+            if (!Double.isNaN(t) && t <= reach && t < best) {
                 best = t;
                 inside = middleOf(t, RayMath.rayBoxExit(ox, oy, oz, direction[0], direction[1], direction[2],
                         lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]));
@@ -167,7 +171,7 @@ final class SwingHandler {
 
         final Vector3i block = TargetUtil.getTargetBlock(world.getChunkStore(),
                 (blockId, fluidId) -> blockId != BlockType.EMPTY_ID,
-                ox, oy, oz, direction[0], direction[1], direction[2], AIM_REACH);
+                ox, oy, oz, direction[0], direction[1], direction[2], reach);
         if (block != null) {
             final double t = RayMath.rayBoxEntry(ox, oy, oz, direction[0], direction[1], direction[2],
                     block.x, block.y, block.z, block.x + 1, block.y + 1, block.z + 1);
