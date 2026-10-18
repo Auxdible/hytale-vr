@@ -545,7 +545,7 @@ bool build_arm(const std::vector<Node>& nodes, int side, const Image& tex, Arm& 
     }
     if (points.empty()) return false;
 
-    // Palm: the middle of the hand's blocks, or the tip end of the arm.
+    // Palm: the middle of the hand's blocks, or the far end of the arm.
     const V3 shoulder = nodes[root].world.p;
     V3 lo{1e9, 1e9, 1e9}, hi{-1e9, -1e9, -1e9};
     const auto grow = [&](V3 p) {
