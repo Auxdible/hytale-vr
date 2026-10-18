@@ -46,6 +46,8 @@ struct Settings {
     float item_size = 0.7f;         // of Hytale's first-person size
     float item_turn = 180.0f;       // degrees it turns about the controller's up axis
     float item_tilt = 30.0f;        // degrees the item tips forward from the controller
+    bool character_arms = true;     // your character's forearms and hands from Hytale's files, not blocky hands
+    float arm_size = 1.0f;          // of your character's size in the world
     bool hotbar_on_hand = true;     // the hotbar floats over the left controller
     float hotbar_width = 0.22f;     // meters
     float hotbar_left = 0.31f;      // where the hotbar is in Hytale's HUD, as fractions of the window

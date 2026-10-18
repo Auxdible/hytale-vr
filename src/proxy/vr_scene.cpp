@@ -3,6 +3,7 @@
 #include <cmath>
 #include <vector>
 
+#include "avatar.h"
 #include "log.h"
 
 namespace hvr {
@@ -24,7 +25,7 @@ void main() {
 )";
 
 // Modes: 0 screen, 1 solid, 2 floor, 3 sky, 4 screen glow, 5 pointer dot, 6 HUD (premultiplied),
-// 7 vignette (vWorld.xy is the offset from the view's center in clip units).
+// 7 vignette (vWorld.xy is the offset from the view's center in clip units), 8 character skin.
 const char* kFragment = R"(#version 330 core
 in vec2 vUv;
 in vec3 vWorld;
@@ -69,6 +70,12 @@ void main() {
         oColor = vec4(uColor.rgb, glow);
     } else if (uMode == 6) {
         oColor = texture(uTex, vUv);
+    } else if (uMode == 8) {
+        vec4 skin = texture(uTex, vUv);
+        if (skin.a < 0.5) discard;
+        vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+        float light = 0.62 + 0.38 * abs(dot(n, normalize(vec3(0.35, 1.0, 0.45))));
+        oColor = vec4(skin.rgb * light, 1.0);
     } else if (uMode == 7) {
         float r = length(vWorld.xy);
         oColor = vec4(0.0, 0.0, 0.0, uColor.a * smoothstep(0.45, 1.05, r));
@@ -219,6 +226,43 @@ bool Scene::init() {
     glr.glEnableVertexAttribArray(1);
     glr.glVertexAttribPointer(1, 2, gl::FLOAT, gl::FALSE_, sizeof(Vertex), reinterpret_cast<void*>(3 * sizeof(float)));
     glr.glBindVertexArray(0);
+    avatar::start_loading();
+    return true;
+}
+
+// Your character's arms go to the GPU once they've loaded.
+bool Scene::upload_arms() {
+    if (arm_vao_) return true;
+    const avatar::Model* model = avatar::ready();
+    if (!model) return false;
+    std::vector<avatar::Vertex> vertices;
+    for (int side = 0; side < 2; ++side) {
+        arm_first_[side] = static_cast<int>(vertices.size());
+        arm_count_[side] = static_cast<int>(model->arms[side].vertices.size());
+        vertices.insert(vertices.end(), model->arms[side].vertices.begin(), model->arms[side].vertices.end());
+    }
+    glr.glGenTextures(1, &arm_texture_);
+    glr.glBindTexture(gl::TEXTURE_2D, arm_texture_);
+    glr.glTexImage2D(gl::TEXTURE_2D, 0, static_cast<GLint>(gl::RGBA8), static_cast<GLsizei>(model->width),
+                     static_cast<GLsizei>(model->height), 0, gl::RGBA, gl::UNSIGNED_BYTE, model->rgba.data());
+    glr.glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, static_cast<GLint>(gl::NEAREST));
+    glr.glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, static_cast<GLint>(gl::NEAREST));
+    glr.glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, static_cast<GLint>(gl::CLAMP_TO_EDGE));
+    glr.glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, static_cast<GLint>(gl::CLAMP_TO_EDGE));
+    glr.glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAX_LEVEL, 0);
+    glr.glGenVertexArrays(1, &arm_vao_);
+    glr.glBindVertexArray(arm_vao_);
+    glr.glGenBuffers(1, &arm_vbo_);
+    glr.glBindBuffer(gl::ARRAY_BUFFER, arm_vbo_);
+    glr.glBufferData(gl::ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(avatar::Vertex)),
+                     vertices.data(), 0x88E4 /* STATIC_DRAW */);
+    glr.glEnableVertexAttribArray(0);
+    glr.glVertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE_, sizeof(avatar::Vertex), nullptr);
+    glr.glEnableVertexAttribArray(1);
+    glr.glVertexAttribPointer(1, 2, gl::FLOAT, gl::FALSE_, sizeof(avatar::Vertex),
+                              reinterpret_cast<void*>(3 * sizeof(float)));
+    glr.glBindVertexArray(vao_);
+    logf("Character arms ready: %d and %d triangles", arm_count_[0] / 3, arm_count_[1] / 3);
     return true;
 }
 
@@ -228,6 +272,7 @@ void Scene::destroy() {
     screen_fbo_ = screen_texture_ = 0;
     width_ = height_ = 0;
     program_ = vao_ = vbo_ = 0;  // freed with the context
+    arm_vao_ = arm_vbo_ = arm_texture_ = 0;
 }
 
 void Scene::capture_window(int width, int height, GLuint source_fbo) {
@@ -283,19 +328,31 @@ void Scene::draw_hands(const Mat4& vp, const SceneView& scene) {
     for (int side = 0; side < 2; ++side) {
         const HandView& hand = scene.hands[side];
         if (!hand.valid) continue;
-        // A blocky hand in Hytale's style, closed around where a held item
-        // sits: fist, thumb and sleeve cuff, around the palm.
-        const float skin[4] = {0.87f, 0.67f, 0.53f, 1.0f};
-        const float thumb_skin[4] = {0.80f, 0.60f, 0.47f, 1.0f};
-        const float sleeve[4] = {0.30f, 0.33f, 0.42f, 1.0f};
-        const float mirror = side == 0 ? -1.0f : 1.0f;
         const Mat4 palm = hand.pose * translation({0, -0.025f, 0.07f});
-        draw(kCubeFirst, kCubeCount, vp, palm * translation({0, -0.005f, 0}) * hvr::scale({0.075f, 0.085f, 0.085f}), 1,
-             skin);
-        draw(kCubeFirst, kCubeCount, vp,
-             palm * translation({-0.042f * mirror, 0.02f, -0.02f}) * hvr::scale({0.022f, 0.03f, 0.045f}), 1, thumb_skin);
-        draw(kCubeFirst, kCubeCount, vp, palm * translation({0, -0.005f, 0.07f}) * hvr::scale({0.07f, 0.08f, 0.06f}), 1,
-             sleeve);
+        if (scene.character_arms && upload_arms() && arm_count_[side] > 0) {
+            // Your character's forearm and hand, palm on the grip, arm back along the controller.
+            GLint texture = 0;
+            glr.glGetIntegerv(gl::TEXTURE_BINDING_2D, &texture);
+            glr.glBindTexture(gl::TEXTURE_2D, arm_texture_);
+            glr.glBindVertexArray(arm_vao_);
+            const float k = scene.arm_scale;
+            draw(arm_first_[side], arm_count_[side], vp, palm * hvr::scale({k, k, k}), 8, nullptr);
+            glr.glBindVertexArray(vao_);
+            glr.glBindTexture(gl::TEXTURE_2D, static_cast<GLuint>(texture));
+        } else {
+            // A blocky hand in Hytale's style, closed around where a held item
+            // sits: fist, thumb and sleeve cuff, around the palm.
+            const float skin[4] = {0.87f, 0.67f, 0.53f, 1.0f};
+            const float thumb_skin[4] = {0.80f, 0.60f, 0.47f, 1.0f};
+            const float sleeve[4] = {0.30f, 0.33f, 0.42f, 1.0f};
+            const float mirror = side == 0 ? -1.0f : 1.0f;
+            draw(kCubeFirst, kCubeCount, vp, palm * translation({0, -0.005f, 0}) * hvr::scale({0.075f, 0.085f, 0.085f}), 1,
+                 skin);
+            draw(kCubeFirst, kCubeCount, vp,
+                 palm * translation({-0.042f * mirror, 0.02f, -0.02f}) * hvr::scale({0.022f, 0.03f, 0.045f}), 1, thumb_skin);
+            draw(kCubeFirst, kCubeCount, vp, palm * translation({0, -0.005f, 0.07f}) * hvr::scale({0.07f, 0.08f, 0.06f}), 1,
+                 sleeve);
+        }
         if (!hand.laser) continue;
         const Vec3 origin = position_of(hand.pose);
         const Vec3 forward = normalize(transform_direction(hand.pose, {0, 0, -1}));

@@ -342,6 +342,8 @@ void controls(const FrameContext& context, float dt) {
     const Settings& s = *context.settings;
     poll_plugin();
     for (HandView& hand : g_view.hands) hand.laser = hand.hovering = false;
+    g_view.character_arms = s.character_arms;
+    g_view.arm_scale = s.arm_size / (32.0f * std::max(s.world_scale, 0.1f));
     g_view.dot = false;
     g_motion = 0;
     if (!g_actions.ready) return;

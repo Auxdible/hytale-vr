@@ -5,6 +5,11 @@
 - Interact (F) is on the right grip in the world, for workbenches, doors and
   chests. The right stick flicked up or down picks the previous or next
   hotbar slot (and touching the hotbar still works).
+- Each controller shows your character's own forearm and hand, built from
+  Hytale's player model in Assets.zip and colored with the skin Hytale saved
+  for you (Your character's arms, World tab; Arm size adjusts it). Hytale's
+  first-person arms aren't used for this. If the files can't be read, the log
+  says why and the blocky hands below are used instead.
 - Each controller shows a blocky hand (fist, thumb and sleeve cuff) in place
   of the gray block, and Hytale's own model of your held item sits in the
   right one (Held item in your hand, World tab). Hytale's first-person arms

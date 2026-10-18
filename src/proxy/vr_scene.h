@@ -27,6 +27,9 @@ struct SceneView {
     Mat4 hotbar_model;
     float hotbar_uv[4] = {0, 0, 1, 1};  // u, v of the bottom-left corner, then width, height
     float vignette = 0;  // 0..1: how dark the edges of the view are (comfort while moving)
+    // Your character's arms on the controllers (else blocky hands), and meters per model unit.
+    bool character_arms = true;
+    float arm_scale = 1.0f / 32.0f;
 };
 
 class EyeTarget {
@@ -63,6 +66,9 @@ private:
     GLuint program_ = 0, vao_ = 0, vbo_ = 0;
     GLint u_mvp_ = -1, u_model_ = -1, u_mode_ = -1, u_color_ = -1, u_eye_ = -1, u_tex_ = -1, u_size_ = -1, u_uv_ = -1;
     GLuint screen_fbo_ = 0, screen_texture_ = 0;
+    bool upload_arms();
+    GLuint arm_vao_ = 0, arm_vbo_ = 0, arm_texture_ = 0;
+    int arm_first_[2] = {}, arm_count_[2] = {};
     int width_ = 0, height_ = 0;
     Vec3 eye_;
 };

@@ -24,6 +24,8 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("item_scale", s.item_size);  // "item_size" held 1.0 before it was too big
     visit("item_turn", s.item_turn);
     visit("item_tilt", s.item_tilt);
+    visit("character_arms", s.character_arms);
+    visit("arm_size", s.arm_size);
     visit("hotbar_on_hand", s.hotbar_on_hand);
     visit("hotbar_width", s.hotbar_width);
     visit("hotbar_left", s.hotbar_left);
@@ -115,6 +117,7 @@ void clamp(Settings& s) {
     s.item_size = std::clamp(s.item_size, 0.2f, 2.0f);
     s.item_tilt = std::clamp(s.item_tilt, -90.0f, 90.0f);
     s.item_turn = std::clamp(s.item_turn, -180.0f, 180.0f);
+    s.arm_size = std::clamp(s.arm_size, 0.4f, 2.0f);
     s.turn_mode = std::clamp(s.turn_mode, 0, 1);
     s.snap_degrees = std::clamp(s.snap_degrees, 10.0f, 90.0f);
     s.smooth_speed = std::clamp(s.smooth_speed, 30.0f, 360.0f);

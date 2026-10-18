@@ -52,6 +52,7 @@ set_target_properties(openvr_api PROPERTIES
 # The opengl32.dll that Hytale loads from its own folder.
 add_library(hytalevr_proxy SHARED
     src/proxy/app.cpp
+    src/proxy/avatar.cpp
     src/proxy/census.cpp
     src/proxy/gl_api.cpp
     src/proxy/gl_hooks.cpp
@@ -75,7 +76,7 @@ target_compile_definitions(hytalevr_proxy PRIVATE
     _CRT_SECURE_NO_WARNINGS
 )
 target_compile_options(hytalevr_proxy PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4 /permissive- /EHsc /utf-8>)
-target_link_libraries(hytalevr_proxy PRIVATE hvr_core minhook imgui openvr_api user32 gdi32 shell32 ws2_32 delayimp)
+target_link_libraries(hytalevr_proxy PRIVATE hvr_core minhook imgui openvr_api user32 gdi32 gdiplus ole32 shell32 ws2_32 delayimp)
 # openvr_api.dll lives in the HytaleVR folder and is loaded by full path first.
 target_link_options(hytalevr_proxy PRIVATE /DELAYLOAD:openvr_api.dll)
 
