@@ -337,7 +337,8 @@ GLuint ensure_twin(GLuint texture) {
     if (!info) return 0;
     if (info->twin && (info->frame_checked == g_frame || layout_fresh(info->frame_checked, info->epoch_checked)))
         return info->twin;
-    if (!info->twin && info->twin_failed) return 0;
+    // A copy that failed is tried again once Hytale resizes the texture.
+    if (!info->twin && info->twin_failed && layout_fresh(info->frame_checked, info->epoch_checked)) return 0;
     info->frame_checked = g_frame;
     info->epoch_checked = g_layout_epoch;
     const GLenum target = texture_target(texture);
@@ -352,9 +353,17 @@ GLuint ensure_twin(GLuint texture) {
         glr.glDeleteTextures(1, &info->twin);
         info->twin = 0;
     }
-    if (width <= 0 || height <= 0 || depth <= 0 || info->twin_failed) return 0;
+    if (width <= 0 || height <= 0 || depth <= 0) return 0;
+    if (info->twin_failed && info->width == width && info->height == height && info->depth == depth &&
+        info->format == format)
+        return 0;
+    info->twin_failed = false;
+    // Resizing level 0 leaves the old, bigger mip levels behind; a full chain
+    // for the new size is all storage can hold.
+    int max_levels = 1;
+    for (int size = width > height ? width : height; size > 1; size /= 2) ++max_levels;
     int levels = 1;
-    while (levels < 16 && texture_level_param(texture, target, levels, gl::TEXTURE_WIDTH) > 0) ++levels;
+    while (levels < max_levels && texture_level_param(texture, target, levels, gl::TEXTURE_WIDTH) > 0) ++levels;
 
     // Read the sampling parameters from the original, then build the copy.
     const GLenum params[] = {gl::TEXTURE_MIN_FILTER, gl::TEXTURE_MAG_FILTER, gl::TEXTURE_WRAP_S, gl::TEXTURE_WRAP_T,
@@ -387,6 +396,10 @@ GLuint ensure_twin(GLuint texture) {
     if (error != 0) {
         glr.glDeleteTextures(1, &twin);
         info->twin_failed = true;
+        info->width = width;
+        info->height = height;
+        info->depth = depth;
+        info->format = format;
         logf("Stereo: couldn't copy texture %u (%dx%d format 0x%X, error 0x%X)", texture, width, height, format, error);
         return 0;
     }

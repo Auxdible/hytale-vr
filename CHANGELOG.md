@@ -10,6 +10,9 @@
   that placement moved both arms at once. "Show Hytale's arms and held item"
   (World tab) brings them back. The log now describes each first-person model
   every few seconds, to find which one is the held item.
+- Fixed the headset going black after lowering Sharpness: the right eye's
+  copies of Hytale's targets asked for more mip levels than the smaller size
+  allows, and a failed copy was never retried.
 - Swings through the plugin start where your hand shows in the world, not
   where it is from your headset, and the steady view stays within 12 cm of
   Hytale's camera (it reached 58 cm while walking at low frame rates), so hits
