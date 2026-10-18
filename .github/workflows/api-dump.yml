@@ -1,0 +1,28 @@
+name: API dump
+on:
+  push:
+    branches: [claude/api-dump]
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.1.0'
+      - name: Dump Hytale server API
+        run: |
+          gradle -p plugin compileJava --no-daemon -q || true
+          JAR=$(find ~/.gradle -name 'Server-*.jar' ! -name '*sources*' | head -1)
+          echo "JAR=$JAR"
+          unzip -Z1 "$JAR" | grep '\.class$' | grep -v '\$' > classes.txt
+          wc -l classes.txt
+          echo "=== matching classes"
+          grep -iE 'projectile|consum|placeblock|blockplace|interaction/.*(Place|Use|Consume|Charge|Launch|Projectile)|arrow|bow|food|eat|ItemUtil|InteractionType|InteractionManager' classes.txt | head -300
+          for c in com.hypixel.hytale.server.core.asset.type.item.config.Item com.hypixel.hytale.server.core.util.TargetUtil com.hypixel.hytale.server.core.inventory.ItemStack; do
+            echo "=== $c"; javap -cp "$JAR" -public "$c" | head -200
+          done
