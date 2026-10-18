@@ -394,6 +394,12 @@ bool hand_pose(int hand, Mat4& pose) {
     return true;
 }
 
+// Both hands on a weapon or tool (see two_hand_grip).
+bool g_two_hands = false;
+bool g_two_hand_near = false;  // your other hand is close enough to the handle to take hold
+Pressed g_off_trigger;          // the other hand's trigger, this frame
+float g_two_hand_sign = 1;  // +1 when the other hand took hold above your grip, -1 below
+
 // Swing to hit: a fast flick of the attack hand clicks once. With an item in
 // each hand (two daggers), either hand's flick does.
 struct Swing {
@@ -546,6 +552,10 @@ void controls(const FrameContext& context, float dt) {
     }
     bool primary = (s.left_handed ? left_trigger.down : right_trigger.down) || g_swing.click_frames > 0;
     bool use = s.left_handed ? right_trigger.down : left_trigger.down;
+    // The other hand's trigger takes hold of a two-handed item instead of using.
+    g_off_trigger = s.left_handed ? right_trigger : left_trigger;
+    const bool two_hand_trigger = g_two_hands || (g_two_hand_near && g_off_trigger.pressed);
+    if (two_hand_trigger) use = false;
     const bool in_world = g_world_frame && !pointer_mode && !context.menu_open && context.game_relative;
     const int holder = item_hand(s);
     if (in_world && g_held_kind == "bow") {
@@ -591,7 +601,7 @@ void controls(const FrameContext& context, float dt) {
     }
     if (in_world && g_held_kind != "bow") {
         if ((s.left_handed ? left_trigger : right_trigger).pressed) g_taps.primary = 4;
-        if ((s.left_handed ? right_trigger : left_trigger).pressed) g_taps.use = 4;
+        if ((s.left_handed ? right_trigger : left_trigger).pressed && !two_hand_trigger) g_taps.use = 4;
         primary = primary || g_taps.primary > 0;
         use = use || g_taps.use > 0;
     } else {
@@ -919,20 +929,20 @@ void place_hud(const Settings& s, bool force) {
 // and fired with the trigger, not drawn like a bow.
 bool aimed_kind() { return g_held_kind == "crossbow" || g_held_kind == "gun"; }
 
-// Both hands on a weapon or tool: with your other hand on its handle (above
-// or below your grip), the item points along the line between your hands.
-bool g_two_hands = false;
-float g_two_hand_sign = 1;  // +1 when the other hand took hold above your grip, -1 below
 // Hytale's first-person shaders scale clip-space z by this.
 constexpr float kFirstPersonDepth = 0.55f;
 
+// Both hands on a weapon or tool: hold your other hand's trigger on its handle
+// (above or below your grip) and the item points along the line between your hands.
+
 void two_hand_grip(const Settings& s, stereo::EyeSetup& setup, int main) {
     const int off = 1 - main;
+    g_view.hands[0].glow = g_view.hands[1].glow = 0;
     const bool can = s.two_hand_grip && s.hytale_hand &&
                      (g_held_kind == "weapon" || g_held_kind == "tool" || aimed_kind()) &&
                      !stereo::offhand_item() && setup.grip_valid[main] && setup.grip_valid[off];
     if (!can) {
-        g_two_hands = false;
+        g_two_hands = g_two_hand_near = false;
         return;
     }
     const Mat4& grip = setup.grip[main];
@@ -942,18 +952,23 @@ void two_hand_grip(const Settings& s, stereo::EyeSetup& setup, int main) {
     const float along = dot(to_other, axis);
     const float away = length(to_other - axis * along);
     const float reach = 0.6f * s.item_size;
-    // Easy to take hold of and hard to lose: about a fist's width around the
-    // handle, and loose while held so moving your hands doesn't let go.
-    // Once held, it stays held however you turn it, until your hands come apart.
-    const float apart = length(to_other);
-    const bool on_handle = g_two_hands ? apart > 0.04f && apart < reach + 0.25f
-                                       : std::fabs(along) > 0.04f && std::fabs(along) < reach && away < 0.14f;
-    if (on_handle && !g_two_hands) g_two_hand_sign = along > 0 ? 1.0f : -1.0f;
-    if (on_handle && !g_two_hands && g_actions.haptic[off])
-        ::vr::VRInput()->TriggerHapticVibrationAction(g_actions.haptic[off], 0, 0.04f, 120.0f, 0.4f,
+    // Your other hand near the handle lights up; holding its trigger there
+    // takes hold, and letting go of the trigger lets go of the item.
+    const bool near = std::fabs(along) > 0.04f && std::fabs(along) < reach && away < 0.12f;
+    if (near && !g_two_hand_near && !g_two_hands && g_actions.haptic[off])
+        ::vr::VRInput()->TriggerHapticVibrationAction(g_actions.haptic[off], 0, 0.015f, 160.0f, 0.25f,
                                                     ::vr::k_ulInvalidInputValueHandle);
-    g_two_hands = on_handle;
-    if (!g_two_hands) return;
+    g_two_hand_near = near;
+    if (!g_two_hands && near && g_off_trigger.pressed) {
+        g_two_hands = true;
+        g_two_hand_sign = along > 0 ? 1.0f : -1.0f;
+        if (g_actions.haptic[off])
+            ::vr::VRInput()->TriggerHapticVibrationAction(g_actions.haptic[off], 0, 0.04f, 120.0f, 0.5f,
+                                                        ::vr::k_ulInvalidInputValueHandle);
+    }
+    if (g_two_hands && !g_off_trigger.down) g_two_hands = false;
+    g_view.hands[off].glow = g_two_hands ? 1.0f : near ? 0.5f : 0.0f;
+    if (!g_two_hands || length(to_other) < 0.03f) return;
     // Up the item from the lower hand through the upper one, still turned as your main hand turns it.
     const Vec3 z = normalize(to_other * g_two_hand_sign);
     const Vec3 old_x = transform_direction(grip, {1, 0, 0});
@@ -1146,6 +1161,7 @@ void prepare_world(const Settings& s, bool showed_world) {
     setup.held = g_held_kind == "bow"     ? stereo::EyeSetup::Held::Bow
                  : g_held_kind == "food"  ? stereo::EyeSetup::Held::Food
                  : g_held_kind == "block" ? stereo::EyeSetup::Held::Block
+                 : g_held_kind == "crossbow" ? stereo::EyeSetup::Held::Crossbow
                  : aimed_kind()           ? stereo::EyeSetup::Held::Aimed
                                           : stereo::EyeSetup::Held::Other;
     const float degrees = 3.14159265f / 180.0f;
@@ -1181,10 +1197,13 @@ void prepare_world(const Settings& s, bool showed_world) {
             // Pointed ahead along your hand, held by its grip like a pistol: barrel
             // where the controller points, its grip or stock side down.
             if (aimed_kind()) {
-                Mat4 point_ahead;
-                point_ahead.at(0, 0) = 0, point_ahead.at(1, 0) = -1, point_ahead.at(2, 0) = 0;
-                point_ahead.at(0, 1) = -1, point_ahead.at(1, 1) = 0, point_ahead.at(2, 1) = 0;
-                point_ahead.at(0, 2) = 0, point_ahead.at(1, 2) = 0, point_ahead.at(2, 2) = -1;
+                // A crossbow's limbs go out to the sides instead.
+                Mat4 point_ahead = rotation_x(3.14159265f);
+                if (g_held_kind != "crossbow") {
+                    point_ahead.at(0, 0) = 0, point_ahead.at(1, 0) = -1, point_ahead.at(2, 0) = 0;
+                    point_ahead.at(0, 1) = -1, point_ahead.at(1, 1) = 0, point_ahead.at(2, 1) = 0;
+                    point_ahead.at(0, 2) = 0, point_ahead.at(1, 2) = 0, point_ahead.at(2, 2) = -1;
+                }
                 setup.grip[hand] = setup.palm[hand] * translation(point) * rotation_x(-s.grip_tilt * degrees) *
                                    rotation_y(s.grip_turn * degrees) * point_ahead;
             }

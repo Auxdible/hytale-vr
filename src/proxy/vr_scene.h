@@ -16,6 +16,7 @@ struct HandView {
     bool laser = false;
     float laser_length = 0;
     bool hovering = false;  // laser is on the screen
+    float glow = 0;         // lit up: 0.5 near a handle it can take hold of, 1 holding it
 };
 
 struct SceneView {

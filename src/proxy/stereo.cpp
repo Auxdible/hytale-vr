@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -11,6 +12,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "../core/stereo_math.h"
@@ -1756,12 +1758,16 @@ ItemShape learn_item_shape() {
         if (e[i] > e[a]) a = i;
     int b = (a + 1) % 3;
     if (e[(a + 2) % 3] > e[b]) b = (a + 2) % 3;
+    const float c[3] = {center.x, center.y, center.z}, avg[3] = {mean.x, mean.y, mean.z};
+    // A crossbow can be wider (its limbs) than long; its stock runs the way
+    // its parts sit lopsided, toward the limbs at the front.
+    const bool crossbow = g_setup.held == EyeSetup::Held::Crossbow;
+    if (crossbow && e[b] > 0 && std::fabs(avg[b] - c[b]) / e[b] > std::fabs(avg[a] - c[a]) / e[a]) std::swap(a, b);
     const float length = e[a];
     if (length < 2.0f) return shape;  // too small to tell (a single part)
-    const float c[3] = {center.x, center.y, center.z}, avg[3] = {mean.x, mean.y, mean.z};
     // The handle starts nearest the item's own origin; the head is the far end.
     Vec3 u{}, v{};
-    (&u.x)[a] = c[a] >= 0 ? 1.0f : -1.0f;
+    (&u.x)[a] = crossbow ? (avg[a] >= c[a] ? 1.0f : -1.0f) : c[a] >= 0 ? 1.0f : -1.0f;
     // The head sticks out the side where its parts crowd.
     (&v.x)[b] = avg[b] >= c[b] ? 1.0f : -1.0f;
     // A bow's parts crowd on its belly, so that side faces away and the string comes to you.
@@ -1776,7 +1782,7 @@ ItemShape learn_item_shape() {
     using Held = EyeSetup::Held;
     const Held held = g_setup.held;
     if (held == Held::Other) grip = center - u * (length * 0.3f);  // a fifth of the way up from the handle's end
-    if (held == Held::Aimed) grip = center - u * (length * 0.2f);
+    if (held == Held::Aimed || held == Held::Crossbow) grip = center - u * (length * 0.2f);
     // Slender food (meat on a bone, a fish) is held by its end like a handle; round food sits on your hand.
     shape.slender = length >= 1.6f * std::max(e[b], 0.5f);
     if (held == Held::Food && shape.slender) grip = center - u * (length * 0.35f);  // behind the middle, like a pistol grip or stock
@@ -1790,7 +1796,7 @@ ItemShape learn_item_shape() {
     logf("Hands: item (%d indices, %zu parts) %.0f units long along %c, held %s%s", g_draw_indices, parts.size(), length,
          "xyz"[a],
          held == Held::Other || (held == Held::Food && shape.slender) ? "near the handle's end"
-        : held == Held::Aimed                                         ? "pointing ahead"
+        : held == Held::Aimed || held == Held::Crossbow               ? "pointing ahead"
                                                                       : "by the middle",
          how ? " (turned around in the menu)" : "");
     return shape;

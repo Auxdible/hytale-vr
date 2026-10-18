@@ -387,7 +387,9 @@ void Scene::draw_hands(const Mat4& vp, const SceneView& scene) {
         const HandView& hand = scene.hands[side];
         if (!hand.valid) continue;
         const Mat4 palm = hand.pose * translation(kPalm);
-        glr.glUniform1f(u_light_, scene.light);
+        // Lit up when it can take hold of a handle, brighter while it does.
+        const float glow = 1.0f + 0.9f * hand.glow;
+        glr.glUniform1f(u_light_, scene.light * glow);
         if (scene.character_arms && upload_arms() && arm_count_[side] > 0) {
             // Your character's forearm and hand, palm on the grip, arm back along the controller.
             GLint texture = 0;
@@ -401,7 +403,7 @@ void Scene::draw_hands(const Mat4& vp, const SceneView& scene) {
         } else {
             // A blocky hand in Hytale's style, closed around where a held item
             // sits: fist, thumb and sleeve cuff, around the palm.
-            const float l = scene.light;
+            const float l = scene.light * glow;
             const float skin[4] = {0.87f * l, 0.67f * l, 0.53f * l, 1.0f};
             const float thumb_skin[4] = {0.80f * l, 0.60f * l, 0.47f * l, 1.0f};
             const float sleeve[4] = {0.30f * l, 0.33f * l, 0.42f * l, 1.0f};

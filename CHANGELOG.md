@@ -11,9 +11,12 @@
 - Tabbed out on the desktop, the controllers still play Hytale: keys and
   clicks go straight into the game, and it isn't told it lost focus.
 - With a dagger in each hand, a swing of either hand attacks.
-- Two-handed holds take hold more easily (about a fist's width around the
-  handle) and stay held however you turn the item until your hands come apart.
-  Crossbows and guns can be held in both hands too.
+- Two-handed holds: bring your other hand to the handle of a weapon, tool,
+  crossbow or gun and it lights up (with a tick); hold that hand's trigger to
+  take hold, and the item points along the line between your hands. Let go of
+  the trigger to let go. While held, that trigger doesn't use or place.
+- Crossbows lie flat with their limbs out to the sides and the stock along
+  your hand, even when the limbs are wider than the stock is long.
 - Crossbows, guns, the hookshot and the like aren't drawn like a bow anymore:
   they point where your hand points, held by the grip, and the trigger fires
   them (reloading is Hytale's own). Server plugin 1.3.2 tells them apart and
