@@ -860,10 +860,15 @@ void prepare_world(const Settings& s, bool showed_world) {
     const int grip_hand = s.left_handed ? 0 : 1;
     setup.hytale_hand = s.hytale_hand;
     setup.item_size = s.item_size;
-    setup.grip_valid = g_view.hands[grip_hand].valid && g_hmd_valid;
-    if (setup.grip_valid)
-        setup.grip = inverse_rigid(g_hmd) * g_view.hands[grip_hand].pose * translation({0, -0.025f, 0.07f}) *
-                     rotation_x(-s.item_tilt * 3.14159265f / 180.0f);
+    setup.item_hand = grip_hand;
+    const float degrees = 3.14159265f / 180.0f;
+    for (int hand = 0; hand < 2; ++hand) {
+        setup.grip_valid[hand] = g_view.hands[hand].valid && g_hmd_valid;
+        if (!setup.grip_valid[hand]) continue;
+        // The off hand mirrors the item hand's turn and tilt.
+        setup.grip[hand] = inverse_rigid(g_hmd) * g_view.hands[hand].pose * translation({0, -0.025f, 0.07f}) *
+                           rotation_x(-s.item_tilt * degrees) * rotation_y(s.item_turn * degrees);
+    }
     for (int hand = 0; hand < 2; ++hand) g_view.hands[hand].hide_model = s.hytale_hand && hand == grip_hand && g_world_frame;
     stereo::set_eyes(setup);
 }

@@ -262,6 +262,7 @@ void tab_world(Settings& s) {
     if (s.hytale_hand) {
         changed |= slider("Item size", &s.item_size, 0.2f, 2.0f, "%.2fx");
         changed |= slider("Item tilt", &s.item_tilt, -90.0f, 90.0f, "%.0f deg");
+        changed |= slider("Item turn", &s.item_turn, -180.0f, 180.0f, "%.0f deg");
     } else {
         changed |= ImGui::Checkbox("Show Hytale's arms and held item", &s.show_arms);
         hint("Stuck to your head as one piece in VR, so they're off by default.");

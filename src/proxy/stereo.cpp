@@ -1631,6 +1631,7 @@ bool draw_begin(GLenum mode, GLsizei count) {
 struct FirstPersonPiece {
     int checked = -1000;  // frame
     bool behind = false;
+    bool left = false;  // left of the camera: the other arm
 };
 std::unordered_map<GLint, FirstPersonPiece> g_fp_pieces;  // by vertex array
 Mat4 g_hand_frame;
@@ -1643,23 +1644,27 @@ bool arm_shaped(const Mat4& m, float size) {
            std::fabs(m.at(2, 2) + size) < slack;
 }
 
-// Whether a piece's root bone sits behind Hytale's first-person camera, where
-// it's never seen. Checked now and then per piece, as it reads the GPU's copy.
-bool behind_camera(const ProgramInfo& info, const Mat4& model) {
+// Where a piece's root bone sits in Hytale's first-person view: behind the
+// camera (never seen), or left of it (the other arm). Checked now and then per
+// piece, as it reads the GPU's copy.
+const FirstPersonPiece& piece_place(const ProgramInfo& info, const Mat4& model) {
     GLint vao = 0;
     glr.glGetIntegerv(gl::VERTEX_ARRAY_BINDING, &vao);
     FirstPersonPiece& piece = g_fp_pieces[vao];
-    if (g_frame - piece.checked < 20) return piece.behind;
+    if (g_frame - piece.checked < 20) return piece;
     piece.checked = g_frame;
     GLint binding = -1;
     if (info.node_block >= 0)
         glr.glGetActiveUniformBlockiv(t.program, static_cast<GLuint>(info.node_block), gl::UNIFORM_BLOCK_BINDING,
                                       &binding);
-    if (binding < 0 || binding >= kUboIndices || !t.ubo[binding].buffer || !glr.has_dsa) return piece.behind = false;
+    piece.behind = piece.left = false;
+    if (binding < 0 || binding >= kUboIndices || !t.ubo[binding].buffer || !glr.has_dsa) return piece;
     float root[16] = {};
     glr.glGetNamedBufferSubData(t.ubo[binding].buffer, t.ubo[binding].offset, sizeof(root), root);
-    const float z = model.at(2, 0) * root[12] + model.at(2, 1) * root[13] + model.at(2, 2) * root[14] + model.at(2, 3);
-    return piece.behind = z > 0;
+    const Vec3 at = position_of(model * translation({root[12], root[13], root[14]}));
+    piece.behind = at.z > 0;
+    piece.left = at.x < 0;
+    return piece;
 }
 
 bool move_first_person() {
@@ -1672,25 +1677,31 @@ bool move_first_person() {
                                  model.at(2, 0) * model.at(2, 0));
     Mat4 moved;
     for (float& v : moved.m) v = 0;  // hidden: every vertex at w = 0, clipped away
-    if (g_setup.grip_valid && size > 0) {
+    int side = g_setup.item_hand;
+    if (size > 0) {
         bool show = true;
         Mat4 hand;
-        if (!arm_shaped(model, size)) {
+        const FirstPersonPiece* piece = arm_shaped(model, size) ? &piece_place(info, model) : nullptr;
+        if (!piece) {
             // The held item: its own frame is the hand's.
             hand = model;
             for (int r = 0; r < 3; ++r)
                 for (int c = 0; c < 3; ++c) hand.at(r, c) /= size;
             g_hand_frame = hand;
             g_hand_frame_at = g_frame;
-        } else if (behind_camera(info, model)) {
+        } else if (piece->behind) {
             show = false;
+        } else if (piece->left) {
+            // The other arm, when Hytale raises it: onto the other controller.
+            side = 1 - g_setup.item_hand;
+            hand = translation({-0.3f, -0.35f, -0.5f});
         } else if (g_frame - g_hand_frame_at <= 3) {
             hand = g_hand_frame;
         } else {
             hand = translation({0.3f, -0.35f, -0.5f});  // empty hand: about where Hytale shows it
         }
-        if (show) {
-            Mat4 grip = g_setup.grip;
+        if (show && g_setup.grip_valid[side]) {
+            Mat4 grip = g_setup.grip[side];
             for (int r = 0; r < 3; ++r) grip.at(r, 3) *= g_setup.world_scale;
             const float k = g_setup.item_size;
             moved = grip * scale({k, k, k}) * inverse_rigid(hand) * model;

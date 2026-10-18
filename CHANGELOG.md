@@ -8,8 +8,10 @@
 - Hytale's own hand and held item are on your controller (World tab, on),
   replacing the gray stick on that hand. First person is several models: the
   held item's placement is taken as the hand's, and the arm's pieces move
-  with it; pieces Hytale keeps behind the camera stay hidden. Item size and
-  Item tilt adjust the fit. Off, "Show Hytale's arms and held item" brings back
+  with it; pieces Hytale keeps behind the camera stay hidden, and the other
+  arm, when Hytale raises it, goes on your other controller. Item size, Item
+  tilt and Item turn adjust the fit (turned 180 degrees and at 0.7x by
+  default, from testing). Off, "Show Hytale's arms and held item" brings back
   the old view stuck to your head.
 - With the server plugin connected, Aim with your hand is set aside and Hytale
   aims with your head: Hytale only draws what its camera faces, so pointing

@@ -43,7 +43,8 @@ struct Settings {
     bool show_arms = false;
     // Hytale's own hand and held item, carried by your controller instead.
     bool hytale_hand = true;
-    float item_size = 1.0f;         // of Hytale's first-person size
+    float item_size = 0.7f;         // of Hytale's first-person size
+    float item_turn = 180.0f;       // degrees it turns about the controller's up axis
     float item_tilt = 30.0f;        // degrees the item tips forward from the controller
     bool hotbar_on_hand = true;     // the hotbar floats over the left controller
     float hotbar_width = 0.22f;     // meters

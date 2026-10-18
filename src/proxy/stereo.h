@@ -35,8 +35,9 @@ struct EyeSetup {
     // Hytale's hand and held item carried by a controller instead: its grip
     // relative to the headset (meters), and how big they're drawn.
     bool hytale_hand = false;
-    bool grip_valid = false;
-    Mat4 grip;
+    bool grip_valid[2] = {};
+    Mat4 grip[2];  // [0] left hand
+    int item_hand = 1;
     float item_size = 1;
     // Smooths small, quick wobbles out of Hytale's camera position (bobbing,
     // sway), while still following walking, jumping and falling.
