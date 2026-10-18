@@ -545,7 +545,7 @@ bool build_arm(const std::vector<Node>& nodes, int side, const Image& tex, Arm& 
     }
     if (points.empty()) return false;
 
-    // Palm: the middle of the hand's blocks, or the far end of the arm.
+    // Palm: the middle of the hand's blocks, or the tip end of the arm.
     const V3 shoulder = nodes[root].world.p;
     V3 lo{1e9, 1e9, 1e9}, hi{-1e9, -1e9, -1e9};
     const auto grow = [&](V3 p) {
@@ -557,10 +557,10 @@ bool build_arm(const std::vector<Node>& nodes, int side, const Image& tex, Arm& 
         for (V3 p : hand_points) grow(p);
         palm = (lo + hi) * 0.5;
     } else {
-        V3 far = shoulder;
+        V3 tip = shoulder;
         for (V3 p : points)
-            if (dot(p - shoulder, p - shoulder) > dot(far - shoulder, far - shoulder)) far = p;
-        const V3 along = unit(far - shoulder);
+            if (dot(p - shoulder, p - shoulder) > dot(tip - shoulder, tip - shoulder)) tip = p;
+        const V3 along = unit(tip - shoulder);
         double reach = 0;
         for (V3 p : points) reach = std::max(reach, dot(p - shoulder, along));
         int count = 0;
