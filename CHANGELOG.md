@@ -2,6 +2,12 @@
 
 ## 2.3.2
 
+- Touch a slot on the hotbar over your hand with your other controller's tip
+  to pick it, with a buzz.
+- A light tick in your hand when you pull a trigger in the world.
+- Steadier laser: small hand tremor is smoothed out of the cursor, quick
+  moves go straight through, and it holds still as you pull the trigger so
+  clicks land where you aimed.
 - Seated (World tab, off): for playing sitting down. Leaning doesn't crouch
   or walk your character.
 - In menus (chests, furnaces, inventory) the right grip holds Shift, for

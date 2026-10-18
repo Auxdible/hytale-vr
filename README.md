@@ -69,6 +69,7 @@ puts it back.
 | Y | VR menu |
 | Left grip | Crouch (or crouch for real) |
 | Right grip | Next hotbar slot (Shift in menus) |
+| Touch the hotbar | Pick that slot |
 | Right stick click | Recenter |
 
 Bindings can be changed in SteamVR's controller settings.

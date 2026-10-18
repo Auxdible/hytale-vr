@@ -4,6 +4,7 @@
 
 #include <openvr.h>
 
+#include <algorithm>
 #include <atomic>
 #include <bit>
 #include <cmath>
@@ -47,6 +48,11 @@ float g_scroll = 0;
 bool g_was_hovering = false;
 bool g_pointer_was_active = false;
 float g_last_warp_x = -1, g_last_warp_y = -1;
+// The laser's spot on the screen, steadied: small hand tremor is smoothed
+// out, quick moves go straight through, and it holds still for a moment as
+// you pull the trigger so clicks land where you aimed.
+float g_steady_u = -1, g_steady_v = -1;
+float g_click_hold = 0;
 FrameContext g_context;  // from begin_frame, used at the end of the frame
 
 // World view
@@ -255,6 +261,13 @@ struct Crouch {
     float lift = 0;       // what the view is lifted by now
 } g_crouch;
 
+// Touching a hotbar slot with the other hand picks it (number keys 1-9).
+struct HotbarTouch {
+    int slot = -1;        // the slot being touched now
+    int key = 0;          // the number key being pressed for it
+    int press_frames = 0;
+} g_touch;
+
 Vec3 g_anchor_head{0, 1.6f, 0};
 Vec3 g_anchor_forward{0, 0, -1};
 
@@ -308,10 +321,25 @@ void controls(const FrameContext& context, float dt) {
         if (hit.hit) {
             hovering = pointer.hovering = true;
             g_view.dot = true;
-            g_view.dot_u = hit.u;
-            g_view.dot_v = hit.v;
-            const float x = hit.u * static_cast<float>(context.window_points_w);
-            const float y = hit.v * static_cast<float>(context.window_points_h);
+            const bool click = boolean(g_actions.primary).pressed || boolean(g_actions.secondary).pressed;
+            if (click) g_click_hold = 0.12f;
+            g_click_hold = std::fmax(0.0f, g_click_hold - dt);
+            if (g_steady_u < 0 || !g_was_hovering) {
+                g_steady_u = hit.u;
+                g_steady_v = hit.v;
+            } else if (g_click_hold <= 0) {
+                // Faster moves follow more closely (a simple speed-adaptive filter).
+                const float du = hit.u - g_steady_u, dv = hit.v - g_steady_v;
+                const float speed = std::sqrt(du * du + dv * dv) / std::fmax(dt, 1e-3f);  // screen widths per second
+                const float tau = 0.06f / (1.0f + 12.0f * speed);
+                const float a = 1.0f - std::exp(-dt / tau);
+                g_steady_u += du * a;
+                g_steady_v += dv * a;
+            }
+            g_view.dot_u = g_steady_u;
+            g_view.dot_v = g_steady_v;
+            const float x = g_steady_u * static_cast<float>(context.window_points_w);
+            const float y = g_steady_v * static_cast<float>(context.window_points_h);
             if (s.controller_input && input::target_focused() &&
                 (std::fabs(x - g_last_warp_x) > 0.5f || std::fabs(y - g_last_warp_y) > 0.5f)) {
                 sdl::warp_mouse(x, y);
@@ -353,6 +381,14 @@ void controls(const FrameContext& context, float dt) {
     }
     input::mouse_button(1, (s.left_handed ? left_trigger.down : right_trigger.down) || g_swing.click_frames > 0);
     input::mouse_button(3, s.left_handed ? right_trigger.down : left_trigger.down);
+    // A light tick in the hand as you break or place in the world.
+    if (g_world_frame && !pointer_mode && !context.menu_open) {
+        const Pressed* triggers[2] = {&left_trigger, &right_trigger};
+        for (int hand = 0; hand < 2; ++hand)
+            if (triggers[hand]->pressed && g_actions.haptic[hand])
+                ::vr::VRInput()->TriggerHapticVibrationAction(g_actions.haptic[hand], 0, 0.012f, 200.0f, 0.3f,
+                                                            ::vr::k_ulInvalidInputValueHandle);
+    }
 
     const bool play = !context.menu_open;
     float mx, my;
@@ -394,6 +430,15 @@ void controls(const FrameContext& context, float dt) {
     input::key(s.key_inventory, play && boolean(g_actions.inventory).down);
     input::key(41 /* Escape */, play && boolean(g_actions.back).down);
     if (play && !pointer_mode && boolean(g_actions.hotbar_next).pressed) input::wheel(-1);
+    // A hotbar slot touched last frame: tap its number key.
+    if (g_touch.key) {
+        input::key(g_touch.key, play && g_touch.press_frames > 0);
+        if (g_touch.press_frames > 0) {
+            --g_touch.press_frames;
+        } else {
+            g_touch.key = 0;
+        }
+    }
 
     float lx, ly;
     stick(g_actions.look, lx, ly);
@@ -560,6 +605,25 @@ void place_hotbar(const Settings& s) {
     m.at(0, 2) = back.x, m.at(1, 2) = back.y, m.at(2, 2) = back.z;
     m.at(0, 3) = at.x, m.at(1, 3) = at.y, m.at(2, 3) = at.z;
     g_view.hotbar_model = m * hvr::scale({s.hotbar_width, s.hotbar_width / aspect, 1});
+
+    // A fingertip (the other controller's tip) within a few centimeters of a slot picks it.
+    const int finger_hand = s.left_handed ? 0 : 1;
+    const HandView& finger = g_view.hands[finger_hand];
+    int slot = -1;
+    if (finger.valid && g_context.game_relative && !g_context.menu_open) {
+        const Vec3 local = transform_point(inverse(g_view.hotbar_model), position_of(finger.pose));
+        if (std::fabs(local.z) < 0.04f && std::fabs(local.x) <= 0.5f && std::fabs(local.y) <= 0.8f)
+            slot = std::clamp(static_cast<int>((local.x + 0.5f) * 9.0f), 0, 8);
+    }
+    if (slot >= 0 && slot != g_touch.slot) {
+        if (g_touch.key) input::key(g_touch.key, false);  // sliding across: let go of the last one
+        g_touch.key = 30 + slot;  // SDL scancodes for 1-9
+        g_touch.press_frames = 3;
+        if (g_actions.haptic[finger_hand])
+            ::vr::VRInput()->TriggerHapticVibrationAction(g_actions.haptic[finger_hand], 0, 0.02f, 160.0f, 0.4f,
+                                                        ::vr::k_ulInvalidInputValueHandle);
+    }
+    g_touch.slot = slot;
 }
 
 // The HUD floats ahead of you and catches up when you look well away.
