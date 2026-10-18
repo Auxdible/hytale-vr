@@ -952,14 +952,14 @@ void two_hand_grip(const Settings& s, stereo::EyeSetup& setup, int main) {
     const float along = dot(to_other, axis);
     const float away = length(to_other - axis * along);
     const float reach = 0.6f * s.item_size;
-    // Your other hand near the handle lights up; holding its trigger there
+    // Your other hand in_reach the handle lights up; holding its trigger there
     // takes hold, and letting go of the trigger lets go of the item.
-    const bool near = std::fabs(along) > 0.04f && std::fabs(along) < reach && away < 0.12f;
-    if (near && !g_two_hand_near && !g_two_hands && g_actions.haptic[off])
+    const bool in_reach = std::fabs(along) > 0.04f && std::fabs(along) < reach && away < 0.12f;
+    if (in_reach && !g_two_hand_near && !g_two_hands && g_actions.haptic[off])
         ::vr::VRInput()->TriggerHapticVibrationAction(g_actions.haptic[off], 0, 0.015f, 160.0f, 0.25f,
                                                     ::vr::k_ulInvalidInputValueHandle);
-    g_two_hand_near = near;
-    if (!g_two_hands && near && g_off_trigger.pressed) {
+    g_two_hand_near = in_reach;
+    if (!g_two_hands && in_reach && g_off_trigger.pressed) {
         g_two_hands = true;
         g_two_hand_sign = along > 0 ? 1.0f : -1.0f;
         if (g_actions.haptic[off])
@@ -967,7 +967,7 @@ void two_hand_grip(const Settings& s, stereo::EyeSetup& setup, int main) {
                                                         ::vr::k_ulInvalidInputValueHandle);
     }
     if (g_two_hands && !g_off_trigger.down) g_two_hands = false;
-    g_view.hands[off].glow = g_two_hands ? 1.0f : near ? 0.5f : 0.0f;
+    g_view.hands[off].glow = g_two_hands ? 1.0f : in_reach ? 0.5f : 0.0f;
     if (!g_two_hands || length(to_other) < 0.03f) return;
     // Up the item from the lower hand through the upper one, still turned as your main hand turns it.
     const Vec3 z = normalize(to_other * g_two_hand_sign);
