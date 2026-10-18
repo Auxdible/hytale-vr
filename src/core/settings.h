@@ -49,6 +49,7 @@ struct Settings {
     float item_tilt = 30.0f;        // degrees the item tips forward from the controller
     float grip_tilt = 0.0f;         // with your character's arms: degrees the item leans forward (+) or back
     float grip_turn = 0.0f;         // and degrees it turns about its own length
+    float bow_grip = 0.35f;         // meters from a bow's end to where your hand holds it
     bool character_arms = true;     // your character's forearms and hands from Hytale's files, not blocky hands
     bool aim_actions_by_hand = true;  // placing, using and shooting go where your hand points (needs the plugin for its target)
     bool target_line = true;        // a line from your hand to what you'll interact with (needs the plugin)

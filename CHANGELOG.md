@@ -5,7 +5,7 @@
 - Held items sit steady in your grip, through your closed fingers where
   your character holds things, and they don't wobble with Hytale's
   animations. They stand up out of the fist, leaning a little forward, with
-  the head or blade facing ahead. A bow is held by its middle. Item lean and
+  the head or blade facing ahead. A bow is held by its middle (Bow grip adjusts where). Item lean and
   Item turn (World tab) adjust how they sit. Food sits on top of your hand.
 - Between clicks, Hytale's camera leans toward what your hand points at
   (up to about 15 degrees off your gaze), so its block outline sits under

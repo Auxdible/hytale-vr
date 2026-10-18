@@ -1110,7 +1110,7 @@ void prepare_world(const Settings& s, bool showed_world) {
             setup.grip[hand] = setup.palm[hand] * translation(point) *
                                rotation_x((-120.0f - s.grip_tilt) * degrees) * rotation_z((90.0f + s.grip_turn) * degrees);
             // A bow is held by its middle, not its end.
-            if (g_held_kind == "bow") setup.grip[hand] = setup.grip[hand] * translation({0, 0, -0.2f * s.item_size});
+            if (g_held_kind == "bow") setup.grip[hand] = setup.grip[hand] * translation({0, 0, -s.bow_grip * s.item_size});
             // Food sits on top of your hand, not through your fingers.
             if (g_held_kind == "food")
                 setup.grip[hand] = setup.palm[hand] * translation(point + Vec3{0, 0.06f * s.item_size, 0}) *
