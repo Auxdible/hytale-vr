@@ -280,12 +280,22 @@ void Scene::draw_hands(const Mat4& vp, const SceneView& scene) {
     glr.glDepthMask(1);
     glr.glEnable(gl::BLEND);
     glr.glBlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
-    for (const HandView& hand : scene.hands) {
+    for (int side = 0; side < 2; ++side) {
+        const HandView& hand = scene.hands[side];
         if (!hand.valid) continue;
-        const float body[4] = {0.32f, 0.34f, 0.38f, 1.0f};
-        if (!hand.hide_model)
-            draw(kCubeFirst, kCubeCount, vp,
-                 hand.pose * translation({0, -0.01f, 0.05f}) * hvr::scale({0.035f, 0.03f, 0.11f}), 1, body);
+        // A blocky hand in Hytale's style, closed around where a held item
+        // sits: fist, thumb and sleeve cuff, around the palm.
+        const float skin[4] = {0.87f, 0.67f, 0.53f, 1.0f};
+        const float thumb_skin[4] = {0.80f, 0.60f, 0.47f, 1.0f};
+        const float sleeve[4] = {0.30f, 0.33f, 0.42f, 1.0f};
+        const float mirror = side == 0 ? -1.0f : 1.0f;
+        const Mat4 palm = hand.pose * translation({0, -0.025f, 0.07f});
+        draw(kCubeFirst, kCubeCount, vp, palm * translation({0, -0.005f, 0}) * hvr::scale({0.075f, 0.085f, 0.085f}), 1,
+             skin);
+        draw(kCubeFirst, kCubeCount, vp,
+             palm * translation({-0.042f * mirror, 0.02f, -0.02f}) * hvr::scale({0.022f, 0.03f, 0.045f}), 1, thumb_skin);
+        draw(kCubeFirst, kCubeCount, vp, palm * translation({0, -0.005f, 0.07f}) * hvr::scale({0.07f, 0.08f, 0.06f}), 1,
+             sleeve);
         if (!hand.laser) continue;
         const Vec3 origin = position_of(hand.pose);
         const Vec3 forward = normalize(transform_direction(hand.pose, {0, 0, -1}));

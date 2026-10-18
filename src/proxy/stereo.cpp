@@ -1619,52 +1619,19 @@ bool draw_begin(GLenum mode, GLsizei count) {
     return true;
 }
 
-// --- Hytale's hand and item on the controller ---
+// --- Hytale's held item in the hand ---
 //
 // First person is several models drawn one after another: the arm's pieces
 // share one uModelMatrix (a 1/64 scale turned to face the camera), and the
-// held item gets its own, placed where the hand holds it. Taking the item's
-// matrix as the hand's frame, every piece is moved by grip * inverse(hand),
-// so the item lands in the controller and the arm comes along attached to it.
-// Pieces Hytale keeps behind the camera (the other arm, the body) stay hidden.
+// held item gets its own. The item is drawn at the controller's grip, at its
+// own model scale; the arm's pieces are hidden, since the hands are ours.
 
-struct FirstPersonPiece {
-    int checked = -1000;  // frame
-    bool behind = false;
-    bool left = false;  // left of the camera: the other arm
-};
-std::unordered_map<GLint, FirstPersonPiece> g_fp_pieces;  // by vertex array
-Mat4 g_hand_frame;
-int g_hand_frame_at = -1000;
 GLint g_fp_moved_location = -1;
 
 bool arm_shaped(const Mat4& m, float size) {
     const float slack = size * 0.1f;
     return std::fabs(m.at(0, 0) + size) < slack && std::fabs(m.at(1, 1) - size) < slack &&
            std::fabs(m.at(2, 2) + size) < slack;
-}
-
-// Where a piece's root bone sits in Hytale's first-person view: behind the
-// camera (never seen), or left of it (the other arm). Checked now and then per
-// piece, as it reads the GPU's copy.
-const FirstPersonPiece& piece_place(const ProgramInfo& info, const Mat4& model) {
-    GLint vao = 0;
-    glr.glGetIntegerv(gl::VERTEX_ARRAY_BINDING, &vao);
-    FirstPersonPiece& piece = g_fp_pieces[vao];
-    if (g_frame - piece.checked < 20) return piece;
-    piece.checked = g_frame;
-    GLint binding = -1;
-    if (info.node_block >= 0)
-        glr.glGetActiveUniformBlockiv(t.program, static_cast<GLuint>(info.node_block), gl::UNIFORM_BLOCK_BINDING,
-                                      &binding);
-    piece.behind = piece.left = false;
-    if (binding < 0 || binding >= kUboIndices || !t.ubo[binding].buffer || !glr.has_dsa) return piece;
-    float root[16] = {};
-    glr.glGetNamedBufferSubData(t.ubo[binding].buffer, t.ubo[binding].offset, sizeof(root), root);
-    const Vec3 at = position_of(model * translation({root[12], root[13], root[14]}));
-    piece.behind = at.z > 0;
-    piece.left = at.x < 0;
-    return piece;
 }
 
 bool move_first_person() {
@@ -1677,35 +1644,12 @@ bool move_first_person() {
                                  model.at(2, 0) * model.at(2, 0));
     Mat4 moved;
     for (float& v : moved.m) v = 0;  // hidden: every vertex at w = 0, clipped away
-    int side = g_setup.item_hand;
-    if (size > 0) {
-        bool show = true;
-        Mat4 hand;
-        const FirstPersonPiece* piece = arm_shaped(model, size) ? &piece_place(info, model) : nullptr;
-        if (!piece) {
-            // The held item: its own frame is the hand's.
-            hand = model;
-            for (int r = 0; r < 3; ++r)
-                for (int c = 0; c < 3; ++c) hand.at(r, c) /= size;
-            g_hand_frame = hand;
-            g_hand_frame_at = g_frame;
-        } else if (piece->behind) {
-            show = false;
-        } else if (piece->left) {
-            // The other arm, when Hytale raises it: onto the other controller.
-            side = 1 - g_setup.item_hand;
-            hand = translation({-0.3f, -0.35f, -0.5f});
-        } else if (g_frame - g_hand_frame_at <= 3) {
-            hand = g_hand_frame;
-        } else {
-            hand = translation({0.3f, -0.35f, -0.5f});  // empty hand: about where Hytale shows it
-        }
-        if (show && g_setup.grip_valid[side]) {
-            Mat4 grip = g_setup.grip[side];
-            for (int r = 0; r < 3; ++r) grip.at(r, 3) *= g_setup.world_scale;
-            const float k = g_setup.item_size;
-            moved = grip * scale({k, k, k}) * inverse_rigid(hand) * model;
-        }
+    const int side = g_setup.item_hand;
+    if (size > 0 && !arm_shaped(model, size) && g_setup.grip_valid[side]) {
+        Mat4 grip = g_setup.grip[side];
+        for (int r = 0; r < 3; ++r) grip.at(r, 3) *= g_setup.world_scale;
+        const float k = size * g_setup.item_size;
+        moved = grip * scale({k, k, k});
     }
     glr.glUniformMatrix4fv(info.model_matrix, 1, gl::FALSE_, moved.m);
     g_fp_moved_location = info.model_matrix;

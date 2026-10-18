@@ -258,7 +258,7 @@ void tab_world(Settings& s) {
     hint(app::render_status().c_str());
     ImGui::Spacing();
     ImGui::TextUnformatted("Hands");
-    changed |= ImGui::Checkbox("Hytale's hand and item on your controller", &s.hytale_hand);
+    changed |= ImGui::Checkbox("Held item in your hand", &s.hytale_hand);
     if (s.hytale_hand) {
         changed |= slider("Item size", &s.item_size, 0.2f, 2.0f, "%.2fx");
         changed |= slider("Item tilt", &s.item_tilt, -90.0f, 90.0f, "%.0f deg");

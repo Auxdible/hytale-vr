@@ -869,7 +869,6 @@ void prepare_world(const Settings& s, bool showed_world) {
         setup.grip[hand] = inverse_rigid(g_hmd) * g_view.hands[hand].pose * translation({0, -0.025f, 0.07f}) *
                            rotation_x(-s.item_tilt * degrees) * rotation_y(s.item_turn * degrees);
     }
-    for (int hand = 0; hand < 2; ++hand) g_view.hands[hand].hide_model = s.hytale_hand && hand == grip_hand && g_world_frame;
     stereo::set_eyes(setup);
 }
 
