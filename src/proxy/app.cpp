@@ -184,9 +184,10 @@ void tune_hytale(const char* when) {
         const std::wstring path = base + name;
         std::string json;
         if (!read_file(path, json)) continue;
-        const std::vector<std::string> changed = tune_hytale_settings(json);
+        // The field of view only for players who start in VR: it changes how Hytale looks on a monitor too.
+        const std::vector<std::string> changed = tune_hytale_settings(json, g_settings.vr_enabled);
         if (changed.empty()) {
-            if (std::strcmp(when, "start") == 0) logf("Hytale's view bobbing and camera shake are already off (%ls)", path.c_str());
+            if (std::strcmp(when, "start") == 0) logf("Hytale's settings are already set for VR (%ls)", path.c_str());
             return;
         }
         // Keep the player's original once, before the first change.
@@ -198,7 +199,7 @@ void tune_hytale(const char* when) {
         std::string list;
         for (const std::string& key : changed) list += (list.empty() ? "" : ", ") + key;
         if (write_file(path, json))
-            logf("Turned off in Hytale's settings at %s (takes effect when Hytale next starts): %s", when, list.c_str());
+            logf("Set for VR in Hytale's settings at %s (takes effect when Hytale next starts): %s", when, list.c_str());
         else
             logf("Couldn't write Hytale's settings at %ls", path.c_str());
         return;

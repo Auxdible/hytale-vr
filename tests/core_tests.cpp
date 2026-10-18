@@ -1,6 +1,7 @@
 // Tests for the platform-free parts of the VR runtime.
 #include "../src/core/controls.h"
 #include "../src/core/hytale_settings.h"
+#include "../src/core/light_fix.h"
 #include "../src/core/settings.h"
 #include "../src/core/stereo_math.h"
 #include "../src/core/vrmath.h"
@@ -70,6 +71,25 @@ void test_stick() {
                       "\"CameraShakeEffect\" : false, \"FirstPersonCameraShakeIntensity\": 0}, \"Other\": true}",
               "comfort settings rewritten in place");
         check(tune_hytale_settings(json).empty(), "already tuned settings stay as they are");
+        std::string fov = "{\"FieldOfView\": 70, \"SprintFovEffect\": true, \"SprintFieldOfView\": 80, \"fov\": 1.2}";
+        check(tune_hytale_settings(fov, true).size() == 2, "field of view and sprint zoom changed");
+        check(fov == "{\"FieldOfView\": 110, \"SprintFovEffect\": false, \"SprintFieldOfView\": 80, \"fov\": 1.2}",
+              "field of view raised, radians and sprint left alone");
+    }
+    {
+        std::string shader =
+            "#version 410 core\nuniform isampler3D uLightGridTexture;\n"
+            "void fetchClusterData(vec2 screenUV, float depthVS, isampler3D lightGridTexture, float r, out int i)\n{\n"
+            "    i = 0;\n}\n"
+            "vec3 computeClusteredLighting(vec3 positionVS, int n, int i, float t)\n{\n    return positionVS;\n}\n";
+        check(add_light_fix(shader), "light cluster shader rewritten");
+        check(shader.find("uniform mat4 hvrCameraProjection;\nvoid fetchClusterData") != std::string::npos &&
+                  shader.find("{\n    if (hvrLightFix > 0.5) {") != std::string::npos &&
+                  shader.find("{\n    if (hvrLightFix > 0.5) positionVS") != std::string::npos,
+              "light fix goes into both functions");
+        check(!add_light_fix(shader), "light fix only once");
+        std::string plain = "#version 410 core\nvoid main() {}\n";
+        check(!add_light_fix(plain) && plain == "#version 410 core\nvoid main() {}\n", "other shaders untouched");
     }
     MoveKeys idle = stick_to_keys(0.05f, 0.1f, 0.18f);
     check(!idle.forward && !idle.back && !idle.left && !idle.right, "deadzone holds nothing");

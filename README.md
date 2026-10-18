@@ -15,11 +15,12 @@ shader mods do, and adds an in-game VR menu.
   you look (or where your other hand points), crouching in your room crouches
   your character, and Aim with your hand (optional) has Hytale aim where the
   right controller points. Optional room-scale: the view stays put while your
-  character steps after your head. Set Hytale's field of view to its maximum.
+  character steps after your head.
 - **Comfort.** Steady view smooths Hytale's camera sway out of what you see,
   the edges darken while the stick moves or turns you, and Hytale's own view
-  bobbing and camera shake are switched off in its settings file for you (the
-  original is kept as `HytaleVR\hytale_settings_before_vr.json`).
+  bobbing, camera shake and sprint zoom are switched off, and its field of view
+  raised, in its settings file for you (the original is kept as
+  `HytaleVR\hytale_settings_before_vr.json`).
 - **Sharpness (experimental).** The Sharpness slider in the World tab has
   Hytale draw at more than its window size. Lens shape draws in the headset
   lens's nearly square shape instead of the monitor's, for the same number of

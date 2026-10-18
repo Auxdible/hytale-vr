@@ -239,8 +239,9 @@ void tab_world(Settings& s) {
     hint("Darkens the edges while the stick moves or turns you. 0 turns it off.");
     changed |= ImGui::Checkbox("Steady view", &s.steady_view);
     hint("Smooths Hytale's camera sway out of the view while you walk.");
-    changed |= ImGui::Checkbox("Turn off Hytale's view bobbing and camera shake", &s.tune_hytale);
-    hint("Set in Hytale's own settings file when it starts and closes; takes effect from the next start.");
+    changed |= ImGui::Checkbox("Set Hytale's settings for VR", &s.tune_hytale);
+    hint("View bobbing, camera shake and sprint zoom off, and (with Start in VR) field of view 110. Set in "
+         "Hytale's own settings file when it starts and closes; takes effect from the next start.");
     ImGui::TextUnformatted("The stick walks where");
     ImGui::SameLine();
     changed |= ImGui::RadioButton("you look", &s.move_with, 0);

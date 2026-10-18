@@ -132,7 +132,11 @@ std::unordered_map<GLuint, FboInfo> g_fbos;
 
 // --- Programs ---
 
-enum class PatchKind { Projection, InvProjection, View, Reproject, ViewProjection, Corners };
+enum class PatchKind {
+    Projection, InvProjection, View, Reproject, ViewProjection, Corners,
+    // Our own light-fix uniforms (see core/light_fix.h).
+    LightFix, EyeToCamera, EyeProjection, CameraProjection,
+};
 
 struct UniformPatch {
     PatchKind kind;
@@ -593,6 +597,10 @@ ProgramInfo& program_info(GLuint program) {
             {"uViewProjectionMatrix", PatchKind::ViewProjection, gl::FLOAT_MAT4, 1},
             {"uSunMVPMatrix", PatchKind::ViewProjection, gl::FLOAT_MAT4, 1},
             {"uFarCorners", PatchKind::Corners, gl::FLOAT_VEC3, 4},
+            {"hvrLightFix", PatchKind::LightFix, gl::FLOAT, 1},
+            {"hvrEyeToCamera", PatchKind::EyeToCamera, gl::FLOAT_MAT4, 1},
+            {"hvrEyeProjection", PatchKind::EyeProjection, gl::FLOAT_MAT4, 1},
+            {"hvrCameraProjection", PatchKind::CameraProjection, gl::FLOAT_MAT4, 1},
         };
         for (const Known& k : known) {
             if (std::strcmp(name, k.name) != 0 || type != k.type || size != k.size) continue;
@@ -600,7 +608,7 @@ ProgramInfo& program_info(GLuint program) {
             patch.kind = k.kind;
             patch.location = glr.glGetUniformLocation(program, k.name);
             patch.count = k.size;
-            patch.floats_each = k.type == gl::FLOAT_MAT4 ? 16 : 3;
+            patch.floats_each = k.type == gl::FLOAT_MAT4 ? 16 : (k.type == gl::FLOAT ? 1 : 3);
             if (patch.location >= 0) info.patches.push_back(patch);
         }
     }
@@ -880,6 +888,10 @@ void set_patches(ProgramInfo& info, int eye) {
             glr.glUniform3fv(patch.location, 4, values);
             continue;
         }
+        if (patch.kind == PatchKind::LightFix) {
+            glr.glUniform1f(patch.location, 1.0f);
+            continue;
+        }
         const Mat4 x = mat_at(patch.mono);
         Mat4 value = x;
         switch (patch.kind) {
@@ -900,6 +912,15 @@ void set_patches(ProgramInfo& info, int eye) {
                 if (!is_perspective(x)) continue;
                 value = e.mvp_fix * x;
                 break;
+            case PatchKind::EyeToCamera:
+                value = inverse_rigid(e.view_fix);
+                break;
+            case PatchKind::EyeProjection:
+                value = e.projection;
+                break;
+            case PatchKind::CameraProjection:
+                value = g_mono.projection;
+                break;
             default:
                 continue;
         }
@@ -911,6 +932,8 @@ void restore_patches(ProgramInfo& info) {
     for (UniformPatch& patch : info.patches) {
         if (patch.floats_each == 16)
             glr.glUniformMatrix4fv(patch.location, patch.count, gl::FALSE_, patch.mono);
+        else if (patch.floats_each == 1)
+            glr.glUniform1f(patch.location, patch.mono[0]);
         else
             glr.glUniform3fv(patch.location, patch.count, patch.mono);
     }

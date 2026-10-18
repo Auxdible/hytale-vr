@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstring>
 
+#include "../core/light_fix.h"
 #include "census.h"
 #include "gl_api.h"
 #include "internal.h"
@@ -112,6 +113,24 @@ std::atomic<bool> g_force_vsync_off{false};
 
 void APIENTRY hook_glShaderSource(GLuint shader, GLsizei count, const GLchar* const* strings, const GLint* lengths) {
     if (WATCHING) census::on_shader_source(shader, count, strings, lengths);
+    if (WATCHING && strings && count > 0) {
+        // Lit shaders get their light lookups fixed for the eyes (off until stereo turns it on).
+        std::string source;
+        for (GLsizei i = 0; i < count; ++i) {
+            if (!strings[i]) continue;
+            if (lengths && lengths[i] >= 0)
+                source.append(strings[i], static_cast<size_t>(lengths[i]));
+            else
+                source.append(strings[i]);
+        }
+        if (add_light_fix(source)) {
+            static std::atomic<int> logged{0};
+            if (logged++ == 0) logf("Stereo: fixing clustered lights in Hytale's lit shaders");
+            const GLchar* text = source.c_str();
+            real_glShaderSource(shader, 1, &text, nullptr);
+            return;
+        }
+    }
     real_glShaderSource(shader, count, strings, lengths);
 }
 void APIENTRY hook_glAttachShader(GLuint program, GLuint shader) {

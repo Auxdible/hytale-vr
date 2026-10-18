@@ -2,6 +2,11 @@
 
 ## 2.3.2
 
+- Lights (torches, glowing blocks) no longer go missing or show up in the wrong
+  spots in 3D. Hytale sorts its lights into a grid over its own camera's view;
+  each eye now looks lights up through that camera's view instead of its own.
+  Lights outside Hytale's own view still can't be found, so the field of view
+  is raised too (below).
 - Less wobble while moving. Hytale's camera is turned to follow your head by
   sending it mouse motion; that correction now closes less of the gap each
   frame (the camera answers a frame or two late, and closing half of it
@@ -11,8 +16,10 @@
   (World tab), even while Hytale's camera is still catching up.
 - Steady view (World tab, on): smooths Hytale's camera sway out of the view
   while following walking, jumping and falling.
-- Hytale's own view bobbing and camera shake are turned off for you (World
-  tab, on): set in Hytale's settings file when it starts and again as it
+- Hytale's own settings are set for VR (World tab, on): view bobbing, camera
+  shake and the sprint zoom off, and, if VR starts with Hytale, field of view
+  raised to 110 so Hytale draws what the headset's wider eyes see. Set in
+  Hytale's settings file when it starts and again as it
   closes, so they're off from the next start. The original file is kept once
   as HytaleVR\hytale_settings_before_vr.json.
 - Crouch for real (World tab, on): crouching in your room holds Hytale's
