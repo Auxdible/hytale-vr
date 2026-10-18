@@ -80,6 +80,7 @@ void on_bind_framebuffer(GLenum target, GLuint framebuffer);
 void on_use_program(GLuint program);
 void on_link(GLuint program);
 void on_shader_source(GLuint shader, const std::string& source);
+void on_model_matrix(GLuint program, GLint location, const GLfloat* value);  // untransposed 4x4
 void on_uniform_block_binding(GLuint program, GLuint index, GLuint binding);
 void on_bind_buffer(GLenum target, GLuint buffer);
 void on_bind_buffer_range(GLenum target, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size);

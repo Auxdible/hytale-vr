@@ -363,6 +363,8 @@ void record_matrix(GLuint program, GLint location, GLsizei count, GLboolean tran
 }
 void APIENTRY hook_glUniformMatrix4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat* value) {
     real_glUniformMatrix4fv(location, count, transpose, value);
+    if (WATCHING && stereo::wanted() && count == 1 && !transpose)
+        stereo::on_model_matrix(stereo::current_program(), location, value);
     if (WATCHING && stereo::wanted()) record_matrix(stereo::current_program(), location, count, transpose, value);
 }
 void APIENTRY hook_glUniform3fv(GLint location, GLsizei count, const GLfloat* value) {
@@ -372,6 +374,7 @@ void APIENTRY hook_glUniform3fv(GLint location, GLsizei count, const GLfloat* va
 void APIENTRY hook_glProgramUniformMatrix4fv(GLuint program, GLint location, GLsizei count, GLboolean transpose,
                                              const GLfloat* value) {
     real_glProgramUniformMatrix4fv(program, location, count, transpose, value);
+    if (WATCHING && stereo::wanted() && count == 1 && !transpose) stereo::on_model_matrix(program, location, value);
     if (WATCHING && stereo::wanted()) record_matrix(program, location, count, transpose, value);
 }
 void APIENTRY hook_glProgramUniform3fv(GLuint program, GLint location, GLsizei count, const GLfloat* value) {

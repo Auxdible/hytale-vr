@@ -152,6 +152,7 @@ struct ProgramInfo {
     bool queried = false;
     bool first_person = false;  // compiled with FIRST_PERSON_VIEW (arms and held items)
     GLint node_block = -1;      // uboNodeBlock: the model's bones
+    GLint model_matrix = -1;    // uModelMatrix
     GLint scene_block = -1;
     GLint scene_binding = -1;
     GLint scene_size = 0;
@@ -162,6 +163,7 @@ std::mutex g_relink_mutex;
 std::vector<GLuint> g_relinked;  // programs linked again since we looked at them
 std::unordered_set<GLuint> g_fp_shaders;   // shaders compiled with FIRST_PERSON_VIEW on
 std::unordered_set<GLuint> g_fp_programs;  // programs linked from one
+float g_fp_model[16] = {};                 // the last uModelMatrix set in a first-person program
 
 // --- SceneData buffers ---
 
@@ -594,6 +596,7 @@ ProgramInfo& program_info(GLuint program) {
     {
         std::lock_guard lock(g_relink_mutex);
         info.first_person = g_fp_programs.count(program) > 0;
+        if (info.first_person) info.model_matrix = glr.glGetUniformLocation(program, "uModelMatrix");
     }
     GLint uniforms = 0;
     glr.glGetProgramiv(program, gl::ACTIVE_UNIFORMS, &uniforms);
@@ -1347,6 +1350,12 @@ void on_link(GLuint program) {
         if (g_fp_shaders.count(shaders[i])) g_fp_programs.insert(program);
 }
 
+void on_model_matrix(GLuint program, GLint location, const GLfloat* value) {
+    if (!value || location < 0 || !on_render_thread()) return;
+    const ProgramInfo& info = program_info(program);
+    if (info.first_person && location == info.model_matrix) std::memcpy(g_fp_model, value, sizeof(g_fp_model));
+}
+
 void on_shader_source(GLuint shader, const std::string& source) {
     std::lock_guard lock(g_relink_mutex);
     if (source.find("#define FIRST_PERSON_VIEW 1") != std::string::npos)
@@ -1547,12 +1556,18 @@ void note_first_person_draw(GLsizei count) {
     glr.glGetIntegerv(gl::VERTEX_ARRAY_BINDING, &vao);
     UboBinding nodes;
     if (binding >= 0 && binding < kUboIndices) nodes = t.ubo[binding];
-    float root[16] = {};
-    if (nodes.buffer && glr.has_dsa) glr.glGetNamedBufferSubData(nodes.buffer, nodes.offset, sizeof(root), root);
+    static float bones[16 * 32];
+    std::memset(bones, 0, sizeof(bones));
+    const GLsizeiptr bytes = nodes.size > 0 && nodes.size < static_cast<GLsizeiptr>(sizeof(bones)) ? nodes.size : 64;
+    if (nodes.buffer && glr.has_dsa) glr.glGetNamedBufferSubData(nodes.buffer, nodes.offset, bytes, bones);
+    const float* root = bones;
+    const float* last = bones + 16 * (bytes / 64 - 1);
+    const float* m = g_fp_model;
     logf("First person draw %d (frame %d, program %u): %d indices, %lld bytes of bones, vao %d, textures %u %u %u, "
-         "root bone at (%.1f %.1f %.1f)",
+         "root bone at (%.1f %.1f %.1f), last bone at (%.1f %.1f %.1f), model x (%.4f %.4f %.4f) y (%.4f %.4f %.4f) z (%.4f %.4f %.4f) at "
+         "(%.3f %.3f %.3f)",
          logged, g_frame, t.program, count, static_cast<long long>(nodes.size), vao, t.tex2d[0], t.tex2d[1], t.tex2d[2],
-         root[12], root[13], root[14]);
+         root[12], root[13], root[14], last[12], last[13], last[14], m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10], m[12], m[13], m[14]);
 }
 
 bool draw_begin(GLenum mode, GLsizei count) {
