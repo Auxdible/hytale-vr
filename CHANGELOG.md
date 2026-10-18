@@ -23,8 +23,8 @@
   aims them as far as a bow.
 - Spin held item and Swap its ends (World tab) fix the odd item held the
   wrong way round, like some shovels and scythes; it's remembered for that
-  item (by its model's size and number of parts, so one fix doesn't turn
-  other items of the same size).
+  item (by its number of parts and length, so one fix turns all of that item and
+  no other).
 - Bows face the right way: the string toward you.
 - With an item in each hand (two daggers, say), each one goes in its own
   hand instead of both in one.

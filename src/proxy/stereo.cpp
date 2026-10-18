@@ -1766,9 +1766,9 @@ ItemShape learn_item_shape() {
     if (crossbow && e[b] > 0 && std::fabs(avg[b] - c[b]) / e[b] > std::fabs(avg[a] - c[a]) / e[a]) std::swap(a, b);
     const float length = e[a];
     if (length < 2.0f) return shape;  // too small to tell (a single part)
-    // Many items share an index count, so the number of parts goes in too.
-    shape.id = static_cast<int>((static_cast<unsigned>(g_draw_indices) * 131u + static_cast<unsigned>(parts.size())) &
-                                0x7fffffffu);
+    // By its parts and length, the same for each of the meshes an item is
+    // drawn in (index counts like 144 are shared by most items).
+    shape.id = static_cast<int>(parts.size()) * 1000 + static_cast<int>(std::lround(length)) % 1000;
     if (shape.id == 0) shape.id = 1;
     // The handle starts nearest the item's own origin; the head is the far end.
     Vec3 u{}, v{};
