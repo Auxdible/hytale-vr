@@ -11,10 +11,20 @@ shader mods do, and adds an in-game VR menu.
   draws each frame once per eye, so you see real 3D around you. Your head aims,
   the right stick turns you (snap or smooth), and the HUD floats on a panel in
   front of you. Your held item follows your right controller, the hotbar sits
-  over your left hand, and swinging the controller hits. Optional room-scale: the view stays put while your character
-  steps after your head. Set Hytale's field of view to its maximum. The
-  Sharpness slider in the World tab (experimental) has Hytale draw at more than
-  its window size for a sharper picture.
+  over your left hand, and swinging the controller hits. The stick walks where
+  you look (or where your other hand points), crouching in your room crouches
+  your character, and Aim with your hand (optional) has Hytale aim where the
+  right controller points. Optional room-scale: the view stays put while your
+  character steps after your head. Set Hytale's field of view to its maximum.
+- **Comfort.** Steady view smooths Hytale's camera sway out of what you see,
+  the edges darken while the stick moves or turns you, and Hytale's own view
+  bobbing and camera shake are switched off in its settings file for you (the
+  original is kept as `HytaleVR\hytale_settings_before_vr.json`).
+- **Sharpness (experimental).** The Sharpness slider in the World tab has
+  Hytale draw at more than its window size. Lens shape draws in the headset
+  lens's nearly square shape instead of the monitor's, for the same number of
+  pixels: sharper up and down, with menus laid out taller and the monitor view
+  squeezed while it's on.
 - **Hytale on a big screen in VR** for everything else (main menu, loading), in
   a dark room with a floor.
 - **Laser pointer.** Point at the screen and pull the trigger to click.
@@ -24,8 +34,8 @@ shader mods do, and adds an in-game VR menu.
 
 ## What's next
 
-- Hands: Hytale's first-person arms and held item on your controllers, and
-  swinging to hit. For now they stay in front of your face.
+- Tuning the hands from testing: where the held item sits in your grip, and
+  where the hotbar is cut from the HUD.
 - Polish from testing: performance, transparency (water, glass) in the right
   eye, and the HUD layout.
 
@@ -56,7 +66,7 @@ puts it back.
 | B | Back (Esc) |
 | X | Inventory |
 | Y | VR menu |
-| Left grip | Crouch |
+| Left grip | Crouch (or crouch for real) |
 | Right grip | Next hotbar slot |
 | Right stick click | Recenter |
 
@@ -80,12 +90,19 @@ copied per eye with the headset's view and projection, plus the loose camera
 uniforms some passes use. The final composite into the window also goes to the
 right eye's texture, and what Hytale draws after it (HUD and menus) is copied
 onto a transparent panel. Mouse motion sent through SDL keeps Hytale's own
-camera pointed where your head is, so aiming and culling follow you.
+camera pointed where your head is (or your hand, with Aim with your hand), so
+aiming and culling follow you. That correction closes part of the gap each
+frame and learns the mouse's speed over many frames, so a camera that answers
+late or bobs while walking can't make it sway. The stick's push is turned into
+Hytale's camera facing before it becomes movement keys, so you walk where you
+look even while the camera catches up.
 
 Files at runtime, next to `HytaleClient.exe`:
 
 - `opengl32.dll`, Hytale VR itself
 - `HytaleVR\settings.ini`, written by the menu
+- `HytaleVR\hytale_settings_before_vr.json`, Hytale's settings from before
+  view bobbing and camera shake were turned off
 - `HytaleVR\logs\hytalevr.log`, the session log
 - `HytaleVR\logs\renderer_*.txt` and `HytaleVR\logs\shaders\`, from the renderer log
 
