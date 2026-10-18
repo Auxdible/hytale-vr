@@ -107,6 +107,16 @@ inline Mat4 rotation_x(float radians) {
     return r;
 }
 
+inline Mat4 rotation_z(float radians) {
+    Mat4 r;
+    const float c = std::cos(radians), s = std::sin(radians);
+    r.at(0, 0) = c;
+    r.at(0, 1) = -s;
+    r.at(1, 0) = s;
+    r.at(1, 1) = c;
+    return r;
+}
+
 inline Mat4 scale(Vec3 s) {
     Mat4 r;
     r.at(0, 0) = s.x;

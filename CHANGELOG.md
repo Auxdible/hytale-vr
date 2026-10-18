@@ -2,10 +2,11 @@
 
 ## 2.3.2
 
-- Held items now use Hytale's own first-person pose, moved onto your
-  controller. Swords and picks stand up out of your fist instead of running
-  along your arm. Bows, blocks and food sit where Hytale's hand holds them,
-  and swings, bow draws and eating keep Hytale's motion.
+- Held items sit steady in your grip and stand upright out of your fist
+  (swords and picks no longer run along your arm), and they don't wobble
+  with Hytale's walking or swing animations. A bow is held by its middle.
+- Your arms are rebuilt when you change your avatar: the new skin and
+  clothes show within a couple of seconds, with no restart.
 - First-person pieces Hytale draws while your hand is empty (sleeves, a
   cape) are hidden after a moment, so they no longer float on your hand.
   This needs the server plugin.

@@ -910,11 +910,25 @@ void load() {
 
 void start_loading() {
     if (g_started.exchange(true)) return;
+    // Loads now, and again whenever Hytale saves a changed skin (you edited
+    // your avatar). Replaced models are kept: the renderer may still be drawing one.
     std::thread([] {
-        try {
-            load();
-        } catch (const std::exception& e) {
-            logf("Character: loading failed: %s", e.what());
+        std::wstring loaded;
+        for (;;) {
+            std::wstring skin = latest_skin_file();
+            std::error_code error;
+            if (!skin.empty())
+                skin += L"|" + std::to_wstring(std::filesystem::last_write_time(skin, error).time_since_epoch().count());
+            if (skin != loaded) {
+                if (!loaded.empty()) logf("Character: your skin changed; rebuilding the arms");
+                loaded = skin;
+                try {
+                    load();
+                } catch (const std::exception& e) {
+                    logf("Character: loading failed: %s", e.what());
+                }
+            }
+            Sleep(2000);
         }
     }).detach();
 }

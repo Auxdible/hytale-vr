@@ -238,9 +238,17 @@ bool Scene::init() {
 
 // Your character's arms go to the GPU once they've loaded.
 bool Scene::upload_arms() {
-    if (arm_vao_) return true;
     const avatar::Model* model = avatar::ready();
+    if (arm_vao_ && model == arm_model_) return true;
     if (!model) return false;
+    if (arm_vao_) {
+        // A new model (you changed your avatar): replace the old one.
+        glr.glDeleteVertexArrays(1, &arm_vao_);
+        glr.glDeleteBuffers(1, &arm_vbo_);
+        glr.glDeleteTextures(1, &arm_texture_);
+        arm_vao_ = arm_vbo_ = arm_texture_ = 0;
+    }
+    arm_model_ = model;
     std::vector<avatar::Vertex> vertices;
     for (int side = 0; side < 2; ++side) {
         arm_first_[side] = static_cast<int>(vertices.size());
@@ -279,6 +287,7 @@ void Scene::destroy() {
     width_ = height_ = 0;
     program_ = vao_ = vbo_ = 0;  // freed with the context
     arm_vao_ = arm_vbo_ = arm_texture_ = 0;
+    arm_model_ = nullptr;
     light_fbo_ = light_texture_ = light_pbo_ = 0;
     light_pending_ = false;
 }

@@ -1050,6 +1050,13 @@ void prepare_world(const Settings& s, bool showed_world) {
         // The off hand mirrors the item hand's turn and tilt.
         setup.palm[hand] = inverse_rigid(g_hmd) * g_view.hands[hand].pose * translation(kPalm);
         setup.grip[hand] = setup.palm[hand] * rotation_x(-s.item_tilt * degrees) * rotation_y(s.item_turn * degrees);
+        if (s.character_arms) {
+            // Upright out of the fist: the item's length (its +Z) up and a
+            // little forward along your thumb, its head or blade facing ahead.
+            setup.grip[hand] = setup.palm[hand] * rotation_x(-120.0f * degrees) * rotation_z(90.0f * degrees);
+            // A bow is held by its middle, not its end.
+            if (g_held_kind == "bow") setup.grip[hand] = setup.grip[hand] * translation({0, 0, -0.2f * s.item_size});
+        }
     }
     // With your character's arms, the item goes where its hand holds it.
     const avatar::Model* character = s.character_arms ? avatar::ready() : nullptr;

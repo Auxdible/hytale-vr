@@ -80,6 +80,7 @@ private:
     GLuint screen_fbo_ = 0, screen_texture_ = 0;
     bool upload_arms();
     GLuint arm_vao_ = 0, arm_vbo_ = 0, arm_texture_ = 0;
+    const void* arm_model_ = nullptr;  // the character model on the GPU
     int arm_first_[2] = {}, arm_count_[2] = {};
     GLuint light_fbo_ = 0, light_texture_ = 0, light_pbo_ = 0;
     bool light_pending_ = false;

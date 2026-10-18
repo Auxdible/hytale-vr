@@ -153,6 +153,7 @@ constexpr GLenum VENDOR = 0x1F00, RENDERER = 0x1F01, VERSION = 0x1F02, SHADING_L
     X(void, glUniform4f, (GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3))                   \
     X(void, glUniformMatrix4fv, (GLint location, GLsizei count, GLboolean transpose, const GLfloat* value))  \
     X(void, glGenVertexArrays, (GLsizei n, GLuint * arrays))                                                 \
+    X(void, glDeleteVertexArrays, (GLsizei n, const GLuint* arrays))                                         \
     X(void, glBindVertexArray, (GLuint array))                                                               \
     X(void, glGenBuffers, (GLsizei n, GLuint * buffers))                                                     \
     X(void, glBindBuffer, (GLenum target, GLuint buffer))                                                    \
