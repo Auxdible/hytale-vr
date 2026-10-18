@@ -27,6 +27,7 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("grip_tilt", s.grip_tilt);
     visit("grip_turn", s.grip_turn);
     visit("bow_grip_offset", s.bow_grip);
+    visit("hands_share_depth", s.hands_share_depth);
     visit("character_arms", s.character_arms);
     visit("target_line", s.target_line);
     visit("aim_actions_by_hand", s.aim_actions_by_hand);

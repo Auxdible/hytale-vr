@@ -449,7 +449,7 @@ void Scene::draw_hands(const Mat4& vp, const SceneView& scene) {
 }
 
 void Scene::render_overlay(GLuint fbo, int width, int height, const Mat4& projection, const Mat4& view,
-                           const SceneView& scene, GLuint hud_texture) {
+                           const SceneView& scene, GLuint hud_texture, const HandDepth* depth) {
     if (!program_ || !fbo) return;
     glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, fbo);
     glr.glViewport(0, 0, width, height);
@@ -484,7 +484,33 @@ void Scene::render_overlay(GLuint fbo, int width, int height, const Mat4& projec
             glr.glUniform4f(u_uv_, 0, 0, 1, 1);
         }
     }
-    draw_hands(vp, scene);
+    // In Hytale's depth where it drew the held item, so the item and your
+    // hand cover each other properly; else on top of everything.
+    bool shared = false;
+    if (depth && depth->fbo && depth_ok_) {
+        for (int i = 0; i < 8 && glr.glGetError() != 0; ++i) {
+        }
+        glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, depth->fbo);
+        glr.glBlitFramebuffer(0, 0, depth->width, depth->height, 0, 0, width, height, gl::DEPTH_BUFFER_BIT, gl::NEAREST);
+        const GLenum error = glr.glGetError();
+        glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, fbo);
+        if (error) {
+            depth_ok_ = false;
+            logf("Hands: couldn't copy Hytale's depth (GL error 0x%x, %dx%d to %dx%d); hands stay on top", error,
+                 depth->width, depth->height, width, height);
+            glr.glDepthMask(1);
+            glr.glClear(gl::DEPTH_BUFFER_BIT);
+        } else {
+            shared = true;
+        }
+    }
+    GLint old_func = 0;
+    if (shared) {
+        glr.glGetIntegerv(gl::DEPTH_FUNC, &old_func);
+        glr.glDepthFunc(static_cast<GLenum>(depth->depth_func));
+    }
+    draw_hands(shared ? depth->view_projection : vp, scene);
+    if (shared) glr.glDepthFunc(static_cast<GLenum>(old_func));
     if (scene.vignette > 0.01f) {
         // Centered on straight ahead, which isn't the middle of an off-center eye image.
         const float cx = -projection.at(0, 2), cy = -projection.at(1, 2);

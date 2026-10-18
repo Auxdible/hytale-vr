@@ -69,6 +69,14 @@ struct FrameResult {
     GLuint hud_texture = 0;
     GLuint hud_fbo = 0;
     int width = 0, height = 0;
+    // Where Hytale drew the held item this frame, per eye, so your hands can
+    // be drawn in the same depth: its framebuffer and size, the depth test it
+    // used, and the projection (from the head, world units) it was drawn with.
+    bool item_depth = false;
+    GLuint item_fbo[2] = {};
+    int item_width = 0, item_height = 0;
+    GLint item_depth_func = 0;
+    Mat4 item_projection[2];
 };
 FrameResult end_frame(int window_w, int window_h);
 // The HUD target for the menu to draw into this frame (0 when not stereo).

@@ -1193,8 +1193,19 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
         if (g_view.target)
             g_view.target_point = origin + direction * (g_aim_distance / std::max(settings.world_scale, 0.1f));
         for (int eye = 0; eye < 2; ++eye) {
+            // Your hands in Hytale's own depth for the held item, so they and the item cover each other.
+            Scene::HandDepth depth;
+            const bool share = settings.hands_share_depth && world.item_depth && g_hmd_valid;
+            if (share) {
+                const float ws = settings.world_scale;
+                depth.fbo = world.item_fbo[eye];
+                depth.width = world.item_width;
+                depth.height = world.item_height;
+                depth.depth_func = world.item_depth_func;
+                depth.view_projection = world.item_projection[eye] * scale({ws, ws, ws}) * inverse_rigid(g_hmd);
+            }
             g_scene.render_overlay(world.eye_fbo[eye], world.width, world.height, eye_projection_near(eye), eye_view(eye),
-                                   g_view, world.hud_texture);
+                                   g_view, world.hud_texture, share ? &depth : nullptr);
             submit_world(eye, world.eye_fbo[eye], world.width, world.height);
             g_last_world_texture[eye] = world.eye_texture[eye];
         }

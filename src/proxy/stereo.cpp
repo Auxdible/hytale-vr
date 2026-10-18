@@ -1158,9 +1158,27 @@ bool engine_camera(Mat4& view, Vec3& forward, Vec3& position) {
     return true;
 }
 
+// Where the held item was drawn this frame (see FrameResult).
+struct ItemTarget {
+    int frame = -1;
+    GLuint fbo[2] = {};
+    int width = 0, height = 0;
+    GLint depth_func = 0;
+} g_item_target;
+
 FrameResult end_frame(int window_w, int window_h) {
     g_render_thread = GetCurrentThreadId();
     FrameResult result;
+    if (g_item_target.frame == g_frame && g_item_target.fbo[0] && g_item_target.fbo[1] && g_eye_valid) {
+        result.item_depth = true;
+        for (int e = 0; e < 2; ++e) {
+            result.item_fbo[e] = g_item_target.fbo[e];
+            result.item_projection[e] = g_eye[e].fp_projection;
+        }
+        result.item_width = g_item_target.width;
+        result.item_height = g_item_target.height;
+        result.item_depth_func = g_item_target.depth_func;
+    }
     if (g_composited && active()) {
         result.stereo = true;
         for (int e = 0; e < 2; ++e) {
@@ -1751,6 +1769,25 @@ bool move_first_person() {
         if (it == g_item_shapes.end()) it = g_item_shapes.emplace(key, learn_item_shape()).first;
         moved = grip * scale({k, k, k});
         if (it->second.known) moved = moved * it->second.hold;
+        // Remember where it's drawn, for the hands to share its depth.
+        if (g_item_target.frame != g_frame) {
+            GLint fb = 0, writes = 0, func = 0;
+            glr.glGetIntegerv(gl::DRAW_FRAMEBUFFER_BINDING, &fb);
+            glr.glGetIntegerv(gl::DEPTH_WRITEMASK, &writes);
+            glr.glGetIntegerv(gl::DEPTH_FUNC, &func);
+            const auto info = g_fbos.find(static_cast<GLuint>(fb));
+            if (fb && writes && cap_enabled(gl::DEPTH_TEST) && info != g_fbos.end() && info->second.twin) {
+                g_item_target.frame = g_frame;
+                g_item_target.fbo[0] = static_cast<GLuint>(fb);
+                g_item_target.fbo[1] = info->second.twin;
+                g_item_target.depth_func = func;
+                g_item_target.width = g_item_target.height = 0;
+                for (const Attachment& a : info->second.attachments)
+                    if (a.point == gl::DEPTH_ATTACHMENT || a.point == gl::DEPTH_STENCIL_ATTACHMENT)
+                        g_item_target.width = a.width, g_item_target.height = a.height;
+                if (!g_item_target.width) g_item_target.frame = -1;
+            }
+        }
     }
     glr.glUniformMatrix4fv(info.model_matrix, 1, gl::FALSE_, moved.m);
     g_fp_moved_location = info.model_matrix;

@@ -63,7 +63,7 @@ constexpr GLenum VIEWPORT = 0x0BA2, SCISSOR_BOX = 0x0C10, CURRENT_PROGRAM = 0x8B
                  DRAW_FRAMEBUFFER_BINDING = 0x8CA6, READ_FRAMEBUFFER_BINDING = 0x8CAA, SAMPLER_BINDING = 0x8919,
                  COLOR_WRITEMASK = 0x0C23, DEPTH_WRITEMASK = 0x0B72, BLEND_SRC_RGB = 0x80C9, BLEND_DST_RGB = 0x80C8,
                  BLEND_SRC_ALPHA = 0x80CB, BLEND_DST_ALPHA = 0x80CA, READ_BUFFER = 0x0C02, DRAW_BUFFER0 = 0x8825,
-                 UNPACK_ALIGNMENT = 0x0CF5;
+                 UNPACK_ALIGNMENT = 0x0CF5, DEPTH_FUNC = 0x0B74, LEQUAL = 0x0203;
 constexpr GLenum COLOR_CLEAR_VALUE = 0x0C22, BLEND_EQUATION_RGB = 0x8009, FUNC_ADD = 0x8006;
 constexpr GLenum TEXTURE_2D_ARRAY = 0x8C1A, TEXTURE_BINDING_2D_ARRAY = 0x8C1D, TEXTURE_DEPTH = 0x8071,
                  TEXTURE_COMPARE_MODE = 0x884C, TEXTURE_COMPARE_FUNC = 0x884D, TEXTURE_BASE_LEVEL = 0x813C,
@@ -92,6 +92,7 @@ constexpr GLenum VENDOR = 0x1F00, RENDERER = 0x1F01, VERSION = 0x1F02, SHADING_L
     X(void, glClear, (GLbitfield mask))                                                                      \
     X(void, glColorMask, (GLboolean r, GLboolean g, GLboolean b, GLboolean a))                               \
     X(void, glDepthMask, (GLboolean flag))                                                                   \
+    X(void, glDepthFunc, (GLenum func))                                                                      \
     X(void, glBlendFunc, (GLenum sfactor, GLenum dfactor))                                                   \
     X(void, glBlendFuncSeparate, (GLenum srgb, GLenum drgb, GLenum sa, GLenum da))                           \
     X(void, glBlendEquation, (GLenum mode))                                                                  \

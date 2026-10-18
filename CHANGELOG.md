@@ -2,6 +2,10 @@
 
 ## 2.3.2
 
+- Your hands are drawn in Hytale's own depth for the held item, so the item
+  sits inside your fingers instead of behind your hand. Turn off Items in
+  front of your hands (World tab) if your hands disappear; the log says
+  "Hands: couldn't copy Hytale's depth" if it can't work on your setup.
 - Held items sit steady in your grip, through your closed fingers where
   your character holds things, and they don't wobble with Hytale's
   animations. They stand up out of the fist, leaning a little forward, with

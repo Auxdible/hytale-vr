@@ -64,8 +64,17 @@ public:
     void render(const EyeTarget& target, const Mat4& projection, const Mat4& view, const SceneView& scene);
     // Over an eye image already drawn by Hytale: the HUD panel (premultiplied
     // texture on scene.screen) and the controllers.
+    // Hytale's depth from where it drew the held item, for the hands to be
+    // drawn in, so the item can be in front of your fingers.
+    struct HandDepth {
+        GLuint fbo = 0;
+        int width = 0, height = 0;
+        GLint depth_func = 0;
+        Mat4 view_projection;  // standing space to that depth's clip space
+    };
     void render_overlay(GLuint fbo, int width, int height, const Mat4& projection, const Mat4& view,
-                        const SceneView& scene, GLuint hud_texture);
+                        const SceneView& scene, GLuint hud_texture,
+                        const HandDepth* depth = nullptr);
     // How bright the middle of an eye image is (0..1, perceived), from a small
     // copy read back a frame later so nothing waits on the GPU. Negative
     // until the first reading arrives.
@@ -76,6 +85,7 @@ private:
     void draw(int first, int count, const Mat4& view_projection, const Mat4& model, int mode, const float color[4]);
 
     GLuint program_ = 0, vao_ = 0, vbo_ = 0;
+    bool depth_ok_ = true;  // sharing Hytale's depth hasn't failed
     GLint u_light_ = -1, u_mvp_ = -1, u_model_ = -1, u_mode_ = -1, u_color_ = -1, u_eye_ = -1, u_tex_ = -1, u_size_ = -1, u_uv_ = -1;
     GLuint screen_fbo_ = 0, screen_texture_ = 0;
     bool upload_arms();
