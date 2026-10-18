@@ -38,6 +38,7 @@ struct EyeSetup {
     bool grip_valid[2] = {};
     Mat4 grip[2];  // [0] left hand
     int item_hand = 1;
+    bool hand_empty = false;  // the server plugin says nothing is held
     float item_size = 1;
     // Your character's hands: each palm from the head (meters), how many
     // meters a model unit is, and where the hand and its item point sit in the

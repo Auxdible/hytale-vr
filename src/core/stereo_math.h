@@ -142,6 +142,7 @@ struct MouseFollower {
     float gain_pitch = -0.0025f;  // radians per count (mouse down looks down)
     float last_yaw = 0, last_pitch = 0, last_error_yaw = 0;
     bool have_last = false;
+    float pull = 0.3f;  // part of the gap closed per frame
     // Learning: what the camera did over a stretch of frames against what was
     // sent, so the camera answering a frame or two late, or bobbing while you
     // walk, can't teach it the wrong gain (or sign).
@@ -193,8 +194,8 @@ struct MouseFollower {
         if (std::fabs(pitch_error) < deadband) pitch_error = 0;
         // Close part of the gap per frame. The camera answers a frame or more
         // late, and closing too much at once overshoots and sways.
-        float x = 0.3f * yaw_error / gain_yaw;
-        float y = 0.3f * pitch_error / gain_pitch;
+        float x = pull * yaw_error / gain_yaw;
+        float y = pull * pitch_error / gain_pitch;
         x = std::fmax(-400.0f, std::fmin(400.0f, x));
         y = std::fmax(-400.0f, std::fmin(400.0f, y));
         out_x = static_cast<int>(std::lround(x));

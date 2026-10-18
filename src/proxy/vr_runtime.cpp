@@ -265,7 +265,12 @@ struct BowDraw {
     bool drawn = false;   // pulled far enough that Hytale is drawing
     float buzz = 0;       // seconds to the next creak in the string hand
 } g_bow;
-bool g_sprinting = false;  // Toggle sprint: on until you stop moving
+bool g_sprinting = false;
+// A quick tap of a trigger still clicks: it's held until Hytale has seen it,
+// after the camera has turned to your hand's target.
+struct Taps {
+    int primary = 0, use = 0;  // frames left to hold each button
+} g_taps;  // Toggle sprint: on until you stop moving
 
 void poll_plugin() {
     const bool was = plugin().connected();
@@ -560,6 +565,14 @@ void controls(const FrameContext& context, float dt) {
     } else {
         g_bow = BowDraw{};
     }
+    if (in_world && g_held_kind != "bow") {
+        if ((s.left_handed ? left_trigger : right_trigger).pressed) g_taps.primary = 4;
+        if ((s.left_handed ? right_trigger : left_trigger).pressed) g_taps.use = 4;
+        primary = primary || g_taps.primary > 0;
+        use = use || g_taps.use > 0;
+    } else {
+        g_taps = Taps{};
+    }
     // Food held up to your mouth is eaten: Hytale's use, held while it's there.
     bool eating = false;
     if (in_world && g_held_kind == "food" && g_view.hands[holder].valid && g_hmd_valid) {
@@ -582,11 +595,15 @@ void controls(const FrameContext& context, float dt) {
                               : direction;
         if (!g_act.aiming) g_act.ready = false, g_act.waited = 0;
         g_act.aiming = true;
-        if (!g_act.pressing && (g_act.ready || ++g_act.waited > 8)) g_act.pressing = true;
+        if (!g_act.pressing && (g_act.ready || ++g_act.waited > 6)) g_act.pressing = true;
     } else {
         g_act = HandAction{};
     }
     const bool through = !g_act.aiming || g_act.pressing;
+    if (through) {
+        if (g_taps.primary > 0) --g_taps.primary;
+        if (g_taps.use > 0) --g_taps.use;
+    }
     input::mouse_button(1, primary && through);
     input::mouse_button(3, (use && through) || eating);
     // A light tick in the hand as you break or place in the world.
@@ -929,6 +946,7 @@ void prepare_world(const Settings& s, bool showed_world) {
             g_act.ready = std::fabs(MouseFollower::wrap(target_yaw - yaw_of(engine_forward))) < 0.05f &&
                           std::fabs(pitch_of(aim) - pitch_of(engine_forward)) < 0.05f;
         int dx = 0, dy = 0;
+        g_follower.pull = g_act.aiming ? 0.6f : 0.3f;  // snappier while an action waits on it
         g_follower.step(yaw_of(engine_forward), pitch_of(engine_forward), target_yaw, pitch_of(aim), dx, dy);
         sdl::inject_mouse_motion(dx, dy);
     } else {
@@ -1024,6 +1042,7 @@ void prepare_world(const Settings& s, bool showed_world) {
     setup.hytale_hand = s.hytale_hand;
     setup.item_size = s.item_size;
     setup.item_hand = grip_hand;
+    setup.hand_empty = g_plugin_connected && g_held_kind == "none";
     const float degrees = 3.14159265f / 180.0f;
     for (int hand = 0; hand < 2; ++hand) {
         setup.grip_valid[hand] = g_view.hands[hand].valid && g_hmd_valid;

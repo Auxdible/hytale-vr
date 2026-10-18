@@ -1641,7 +1641,7 @@ struct FirstPersonBones {
 FirstPersonBones g_bones_now, g_bones_last;
 int g_bone_checks = 3;        // shadow reads checked against the GPU copy
 bool g_bones_from_gpu = false;
-GLsizei g_logged_item = -1;   // the item whose hold was last logged (by index count)
+std::unordered_set<GLsizei> g_logged_items;  // items whose hold was logged (by index count)
 
 bool arm_shaped(const Mat4& m, float size) {
     const float slack = size * 0.1f;
@@ -1747,40 +1747,46 @@ void note_arm_bones(const ProgramInfo& info, const Mat4& model, float size) {
     }
 }
 
-// Where the item goes on your hand, from where it sits on Hytale's.
+// Where the item goes on your hand. Hytale draws first person so the item
+// looks held by a hand reaching forward from the bottom of the screen; that
+// pose, taken about Hytale's own hand, goes on your controller pointing
+// forward. So swords and picks stand up out of your fist, a bow is held where
+// Hytale holds it, and swinging, drawing and eating keep Hytale's motion.
 bool held_on_hand(const Mat4& model, Mat4& moved) {
     const int side = g_setup.item_hand;
-    if (!g_setup.hand_valid || !g_setup.grip_valid[side]) return false;
+    if (!g_setup.grip_valid[side]) return false;
     const FirstPersonBones& bones = g_bones_now.frame == g_frame && !g_bones_now.bones.empty() ? g_bones_now : g_bones_last;
-    if (bones.bones.empty() || bones.size <= 0 || g_frame - bones.frame > 30) return false;
-    const Vec3 origin = position_of(model);
-    const Mat4* nearest = nullptr;
+    // Hytale's hand: the arm bone nearest the item, else the item's own origin.
+    Vec3 hand = position_of(model);
     float best = 1e9f;
-    for (const Mat4& bone : bones.bones) {
-        const float d = length(position_of(bone) - origin);
-        if (d < best) best = d, nearest = &bone;
+    if (!bones.bones.empty() && g_frame - bones.frame <= 30) {
+        for (const Mat4& bone : bones.bones) {
+            const float d = length(position_of(bone) - position_of(model));
+            if (d < best) best = d, hand = position_of(bone);
+        }
     }
-    if (!nearest || best > 40 * bones.size) return false;  // not on a hand: 40 model units away
-    // The item in the bone's own axes, in model units.
-    const float k = 1.0f / bones.size;
-    const Mat4 on_bone = scale({k, k, k}) * inverse_rigid(*nearest) * model;
-    // The bone is the item point when the item sits right on it, else the hand.
-    const float offset = length(position_of(on_bone));
-    const Vec3 point = position_of(g_setup.attachment), hand = position_of(g_setup.hand);
-    const bool on_point = g_setup.attachment_valid && (!g_setup.hand_valid || offset < 0.5f * length(point - hand));
-    const Mat4& frame = on_point ? g_setup.attachment : g_setup.hand;
     Mat4 palm = g_setup.palm[side];
     for (int r = 0; r < 3; ++r) palm.at(r, 3) *= g_setup.world_scale;
-    const float unit = g_setup.arm_unit * g_setup.world_scale * g_setup.item_size;
-    moved = palm * scale({unit, unit, unit}) * frame * on_bone;
-    // A bad read would fling the item away from your hand; keep it in the grip instead.
-    if (length(position_of(moved) - position_of(palm)) > 0.6f * g_setup.world_scale) return false;
-    if (g_draw_indices != g_logged_item) {
-        g_logged_item = g_draw_indices;
-        logf("Hands: item (%d indices) held on %s, %.1f model units from that bone, %zu bones seen", g_draw_indices,
-             on_point ? "the item point" : "the hand", offset, bones.bones.size());
-    }
+    const float k = 0.7f * g_setup.item_size;
+    moved = palm * scale({k, k, k}) * translation(Vec3{} - hand) * model;
+    if (g_logged_items.insert(g_draw_indices).second)
+        logf("Hands: item (%d indices) %.2f from Hytale's hand, %zu bones seen", g_draw_indices,
+             best < 1e8f ? best : -1.0f, bones.bones.size());
     return true;
+}
+
+// Pieces drawn with nothing in your hand (sleeves, a cape) aren't items:
+// they're hidden with the arm once they've been seen for a while.
+std::unordered_map<GLsizei, int> g_empty_hand_draws;
+bool is_worn_piece() {
+    auto it = g_empty_hand_draws.find(g_draw_indices);
+    if (g_setup.hand_empty) {
+        int& frames = g_empty_hand_draws[g_draw_indices];
+        if (frames < 1000) ++frames;
+        if (frames == 60) logf("Hands: hiding a first-person piece of %d indices, drawn with nothing held", g_draw_indices);
+        return frames >= 60;
+    }
+    return it != g_empty_hand_draws.end() && it->second >= 60;
 }
 
 bool move_first_person() {
@@ -1795,7 +1801,9 @@ bool move_first_person() {
     for (float& v : moved.m) v = 0;  // hidden: every vertex at w = 0, clipped away
     const int side = g_setup.item_hand;
     if (is_arm_piece(model, size)) {
-        if (g_setup.hand_valid) note_arm_bones(info, model, size);
+        note_arm_bones(info, model, size);
+    } else if (is_worn_piece()) {
+        // hidden
     } else if (size > 0 && g_setup.grip_valid[side] && !held_on_hand(model, moved)) {
         Mat4 grip = g_setup.grip[side];
         for (int r = 0; r < 3; ++r) grip.at(r, 3) *= g_setup.world_scale;

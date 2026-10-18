@@ -2,6 +2,16 @@
 
 ## 2.3.2
 
+- Held items now use Hytale's own first-person pose, moved onto your
+  controller. Swords and picks stand up out of your fist instead of running
+  along your arm. Bows, blocks and food sit where Hytale's hand holds them,
+  and swings, bow draws and eating keep Hytale's motion.
+- First-person pieces Hytale draws while your hand is empty (sleeves, a
+  cape) are hidden after a moment, so they no longer float on your hand.
+  This needs the server plugin.
+- A quick tap of a trigger now always clicks. The click is held until
+  Hytale has seen it, after its camera turns to where your hand points.
+  The camera also turns twice as fast while it's doing that.
 - Toggle sprint (on by default, World tab): click the left stick once to
   sprint, and you keep sprinting until you stop moving or click again.
 - With the hotbar on your hand, the head HUD no longer shows the hotbar and
