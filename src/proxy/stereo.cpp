@@ -1314,7 +1314,9 @@ void on_use_program(GLuint program) { t.program = program; }
 void on_link(GLuint program) {
     GLuint shaders[8] = {};
     GLsizei count = 0;
-    glr.glGetAttachedShaders(program, 8, &count, shaders);
+    // Programs can link before our GL functions are loaded; never call through a null one.
+    if ((glr.ready || gl_api_init()) && glr.glGetAttachedShaders)
+        glr.glGetAttachedShaders(program, 8, &count, shaders);
     std::lock_guard lock(g_relink_mutex);
     g_relinked.push_back(program);
     g_fp_programs.erase(program);
