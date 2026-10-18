@@ -13,6 +13,7 @@ struct HandView {
     bool laser = false;
     float laser_length = 0;
     bool hovering = false;  // laser is on the screen
+    bool hide_model = false;  // Hytale's own arm is drawn here instead
 };
 
 struct SceneView {

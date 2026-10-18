@@ -35,6 +35,7 @@ struct EyeSetup {
     // Hytale's hand and held item carried by a controller instead: its grip
     // relative to the headset (meters), and how big they're drawn.
     bool hytale_hand = false;
+    bool hytale_arms = false;  // the arm's pieces too, pinned by the hand to each controller
     bool grip_valid[2] = {};
     Mat4 grip[2];  // [0] left hand
     int item_hand = 1;
@@ -113,7 +114,10 @@ void on_blend_func(GLenum src_rgb, GLenum dst_rgb, GLenum src_alpha, GLenum dst_
 bool draw_begin(GLenum mode, GLsizei count);
 // Around each draw: moves a piece of Hytale's first person into the hand (or
 // hides it), and puts Hytale's own matrix back after.
-bool move_first_person();
+// 0: nothing moved; 1: moved; 2: moved, and wants the same draw again for the
+// other hand (mirror_first_person sets it up).
+int move_first_person();
+bool mirror_first_person();
 void restore_first_person();
 // True for draws that should not run at all in VR (Hytale's occluders).
 bool skip_draw(GLenum mode);
