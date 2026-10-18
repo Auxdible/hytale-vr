@@ -2,6 +2,11 @@
 
 ## 2.3.2
 
+- With the hotbar on your hand, the head HUD no longer shows the hotbar and
+  the health bar over it a second time.
+- After your character's arms load, HytaleVR\\logs gets arm_texture.png and
+  arm_left.obj / arm_right.obj: exactly what the arms were built from, for
+  checking the skin texture against Hytale's own.
 - Interact (F) is on the right grip in the world, for workbenches, doors and
   chests. The right stick flicked up or down picks the previous or next
   hotbar slot (and touching the hotbar still works).

@@ -35,6 +35,7 @@ uniform vec4 uColor;
 uniform vec3 uEye;
 uniform vec2 uSize;
 uniform float uLight;
+uniform vec4 uCut;  // a HUD part shown elsewhere: u0, v0, u1, v1
 uniform sampler2D uTex;
 out vec4 oColor;
 
@@ -71,6 +72,7 @@ void main() {
         float glow = exp(-max(d, 0.0) * 5.0) * 0.22;
         oColor = vec4(uColor.rgb, glow);
     } else if (uMode == 6) {
+        if (all(greaterThan(vUv, uCut.xy)) && all(lessThan(vUv, uCut.zw))) discard;
         oColor = texture(uTex, vUv);
     } else if (uMode == 8) {
         vec4 skin = texture(uTex, vUv);
@@ -216,6 +218,7 @@ bool Scene::init() {
     u_size_ = glr.glGetUniformLocation(program_, "uSize");
     u_uv_ = glr.glGetUniformLocation(program_, "uUvRect");
     u_light_ = glr.glGetUniformLocation(program_, "uLight");
+    u_cut_ = glr.glGetUniformLocation(program_, "uCut");
 
     const std::vector<Vertex> vertices = build_geometry();
     glr.glGenVertexArrays(1, &vao_);
@@ -457,6 +460,7 @@ void Scene::render_overlay(GLuint fbo, int width, int height, const Mat4& projec
     glr.glBindSampler(0, 0);
     glr.glUniform1i(u_tex_, 0);
     glr.glUniform4f(u_uv_, 0, 0, 1, 1);
+    glr.glUniform4f(u_cut_, 0, 0, 0, 0);
     glr.glUniform4f(u_color_, 1, 1, 1, 1);
     glr.glUniform3f(u_eye_, scene.eye.x, scene.eye.y, scene.eye.z);
     glr.glBlendEquation(gl::FUNC_ADD);
@@ -467,9 +471,12 @@ void Scene::render_overlay(GLuint fbo, int width, int height, const Mat4& projec
         glr.glDepthMask(0);
         glr.glEnable(gl::BLEND);
         glr.glBlendFuncSeparate(gl::ONE, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
+        // The hotbar and the health over it are on your hand, so not on the HUD too.
+        const float* r = scene.hotbar_uv;
+        if (scene.hotbar) glr.glUniform4f(u_cut_, r[0], r[1], r[0] + r[2], r[1] + r[3]);
         draw(kQuadFirst, kQuadCount, vp, scene.screen.model(), 6, nullptr);
+        glr.glUniform4f(u_cut_, 0, 0, 0, 0);
         if (scene.hotbar) {
-            const float* r = scene.hotbar_uv;
             glr.glUniform4f(u_uv_, r[0], r[1], r[2], r[3]);
             draw(kQuadFirst, kQuadCount, vp, scene.hotbar_model, 6, nullptr);
             glr.glUniform4f(u_uv_, 0, 0, 1, 1);

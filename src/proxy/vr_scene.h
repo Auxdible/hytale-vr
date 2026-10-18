@@ -76,7 +76,7 @@ private:
     void draw(int first, int count, const Mat4& view_projection, const Mat4& model, int mode, const float color[4]);
 
     GLuint program_ = 0, vao_ = 0, vbo_ = 0;
-    GLint u_light_ = -1, u_mvp_ = -1, u_model_ = -1, u_mode_ = -1, u_color_ = -1, u_eye_ = -1, u_tex_ = -1, u_size_ = -1, u_uv_ = -1;
+    GLint u_light_ = -1, u_cut_ = -1, u_mvp_ = -1, u_model_ = -1, u_mode_ = -1, u_color_ = -1, u_eye_ = -1, u_tex_ = -1, u_size_ = -1, u_uv_ = -1;
     GLuint screen_fbo_ = 0, screen_texture_ = 0;
     bool upload_arms();
     GLuint arm_vao_ = 0, arm_vbo_ = 0, arm_texture_ = 0;

@@ -209,6 +209,24 @@ bool decode_png(const std::vector<uint8_t>& bytes, Image& image) {
     return ok;
 }
 
+// Saves an image as a PNG, for checking what the arms were built from.
+bool save_png(const std::wstring& path, uint32_t width, uint32_t height, const std::vector<uint8_t>& rgba) {
+    Gdiplus::Bitmap bitmap(static_cast<INT>(width), static_cast<INT>(height), PixelFormat32bppARGB);
+    Gdiplus::BitmapData data{};
+    Gdiplus::Rect rect(0, 0, static_cast<INT>(width), static_cast<INT>(height));
+    if (bitmap.LockBits(&rect, Gdiplus::ImageLockModeWrite, PixelFormat32bppARGB, &data) != Gdiplus::Ok) return false;
+    for (uint32_t y = 0; y < height; ++y) {
+        uint8_t* row = static_cast<uint8_t*>(data.Scan0) + static_cast<ptrdiff_t>(y) * data.Stride;
+        for (uint32_t x = 0; x < width; ++x) {
+            const uint8_t* in = &rgba[(static_cast<size_t>(y) * width + x) * 4];
+            row[x * 4 + 0] = in[2], row[x * 4 + 1] = in[1], row[x * 4 + 2] = in[0], row[x * 4 + 3] = in[3];
+        }
+    }
+    bitmap.UnlockBits(&data);
+    const CLSID png = {0x557cf406, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}};
+    return bitmap.Save(path.c_str(), &png, nullptr) == Gdiplus::Ok;
+}
+
 // Character Creator textures are greyscale; the gradient (a strip of colors)
 // maps each grey level to the chosen color.
 void apply_gradient(Image& image, const Image& gradient) {
@@ -874,6 +892,16 @@ void load() {
             v.v = (static_cast<float>(tops[static_cast<size_t>(layer)]) + v.v * static_cast<float>(image.height)) /
                   static_cast<float>(height);
         }
+    }
+    // What the arms were built from, next to the log: the texture and each arm as a model.
+    save_png(log_dir() + L"\\arm_texture.png", width, height, result->rgba);
+    for (int side = 0; side < 2; ++side) {
+        std::ofstream obj(log_dir() + (side ? L"\\arm_right.obj" : L"\\arm_left.obj"));
+        const auto& vertices = result->arms[side].vertices;
+        for (const Vertex& v : vertices) obj << "v " << v.x << ' ' << v.y << ' ' << v.z << '\n';
+        for (const Vertex& v : vertices) obj << "vt " << v.u << ' ' << 1.0f - v.v << '\n';
+        for (size_t i = 0; i + 2 < vertices.size(); i += 3)
+            obj << "f " << i + 1 << '/' << i + 1 << ' ' << i + 2 << '/' << i + 2 << ' ' << i + 3 << '/' << i + 3 << '\n';
     }
     g_model.store(result, std::memory_order_release);
 }
