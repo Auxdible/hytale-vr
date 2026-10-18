@@ -9,6 +9,7 @@
 #include <string>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "../core/stereo_math.h"
@@ -149,6 +150,7 @@ struct UniformPatch {
 
 struct ProgramInfo {
     bool queried = false;
+    GLint fp_model = -1;  // uModelMatrix in a first-person program
     GLint scene_block = -1;
     GLint scene_binding = -1;
     GLint scene_size = 0;
@@ -157,6 +159,8 @@ struct ProgramInfo {
 std::unordered_map<GLuint, ProgramInfo> g_programs;
 std::mutex g_relink_mutex;
 std::vector<GLuint> g_relinked;  // programs linked again since we looked at them
+std::unordered_set<GLuint> g_fp_shaders;   // shaders compiled with FIRST_PERSON_VIEW on
+std::unordered_set<GLuint> g_fp_programs;  // programs linked from one
 
 // --- SceneData buffers ---
 
@@ -571,6 +575,10 @@ ProgramInfo& program_info(GLuint program) {
         glr.glGetActiveUniformBlockiv(program, static_cast<GLuint>(i), gl::UNIFORM_BLOCK_BINDING, &info.scene_binding);
         glr.glGetActiveUniformBlockiv(program, static_cast<GLuint>(i), gl::UNIFORM_BLOCK_DATA_SIZE, &info.scene_size);
     }
+    {
+        std::lock_guard lock(g_relink_mutex);
+        if (g_fp_programs.count(program)) info.fp_model = glr.glGetUniformLocation(program, "uModelMatrix");
+    }
     GLint uniforms = 0;
     glr.glGetProgramiv(program, gl::ACTIVE_UNIFORMS, &uniforms);
     for (GLint i = 0; i < uniforms; ++i) {
@@ -715,9 +723,8 @@ void compute_eyes(const Mono& mono) {
         eye.view = inverse_rigid(to_camera(g_setup.head * g_setup.eye_to_head[e], body));
         eye.projection = eye_projection(g_setup.headset_projection[e], mono.projection);
         const Mat4 fp_projection = eye_projection(g_setup.headset_projection[e], mono.fp_projection);
-        if (!g_setup.show_arms) {
-            // Everything drawn with this matrix (both arms and the held item)
-            // lands at w = 0, which the GPU clips away.
+        if (!g_setup.show_arms && !g_setup.item_in_hand) {
+            // Everything drawn with this matrix lands at w = 0, which the GPU clips away.
             eye.fp_projection = Mat4{};
             for (int r = 0; r < 4; ++r) eye.fp_projection.at(r, r) = 0;
         } else {
@@ -1305,8 +1312,70 @@ int window_viewport_width() { return g_window_viewport_w; }
 void on_use_program(GLuint program) { t.program = program; }
 
 void on_link(GLuint program) {
+    GLuint shaders[8] = {};
+    GLsizei count = 0;
+    glr.glGetAttachedShaders(program, 8, &count, shaders);
     std::lock_guard lock(g_relink_mutex);
     g_relinked.push_back(program);
+    g_fp_programs.erase(program);
+    for (GLsizei i = 0; i < count; ++i)
+        if (g_fp_shaders.count(shaders[i])) g_fp_programs.insert(program);
+}
+
+void on_shader_source(GLuint shader, const std::string& source) {
+    std::lock_guard lock(g_relink_mutex);
+    if (source.find("#define FIRST_PERSON_VIEW 1") != std::string::npos)
+        g_fp_shaders.insert(shader);
+    else
+        g_fp_shaders.erase(shader);
+}
+
+// Hytale draws its arms and held items one model at a time with the camera as
+// the origin. An arm's matrix sits at the origin; an item's is pushed out to
+// where it shows in front of you (to the left for the off hand). Items keep
+// their own angle and animation, scaled down and carried by the hand.
+bool first_person_model(GLuint program, GLint location, const GLfloat* value, GLfloat out[16]) {
+    if (!g_wanted || !value || location < 0 || !on_render_thread()) return false;
+    if (g_setup.show_arms && !g_setup.item_in_hand) return false;
+    const ProgramInfo& info = program_info(program);
+    if (info.fp_model < 0 || location != info.fp_model) return false;
+    const Mat4 original = mat_at(value);
+    const Vec3 anchor = position_of(original);
+    const float away = std::sqrt(anchor.x * anchor.x + anchor.y * anchor.y + anchor.z * anchor.z);
+    const bool item = away > 0.005f && away < 4.0f;
+    static int logged = 0;
+    static DWORD last_log = 0;
+    const DWORD now = GetTickCount();
+    if (logged < 12 || now - last_log > 10000) {
+        ++logged;
+        last_log = now;
+        const float size = std::sqrt(original.at(0, 0) * original.at(0, 0) + original.at(1, 0) * original.at(1, 0) +
+                                     original.at(2, 0) * original.at(2, 0));
+        logf("First person model in program %u at (%.3f %.3f %.3f) size %.4f: %s", program, anchor.x, anchor.y,
+             anchor.z, size, item ? "item" : "arm");
+    }
+    if (!item) {
+        if (g_setup.show_arms) return false;
+        std::memset(out, 0, sizeof(float) * 16);  // every vertex at w = 0, clipped away
+        return true;
+    }
+    if (!g_setup.item_in_hand) return false;
+    const int side = anchor.x < 0 ? 0 : 1;
+    if (!g_setup.hand_valid[side]) {
+        std::memset(out, 0, sizeof(float) * 16);
+        return true;
+    }
+    const Mat4& grip = g_setup.hand_grip[side];
+    Mat4 moved;
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c) {
+            float v = 0;
+            for (int k = 0; k < 3; ++k) v += grip.at(r, k) * original.at(k, c);
+            moved.at(r, c) = v * g_setup.item_size;
+        }
+    for (int r = 0; r < 3; ++r) moved.at(r, 3) = grip.at(r, 3) * g_setup.world_scale;
+    std::memcpy(out, moved.m, sizeof(moved.m));
+    return true;
 }
 
 void on_uniform_block_binding(GLuint program, GLuint index, GLuint binding) {

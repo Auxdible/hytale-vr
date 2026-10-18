@@ -30,8 +30,15 @@ struct EyeSetup {
     // while the character catches up; otherwise it's an offset from the camera.
     Vec3 anchor;
     bool world_locked = false;
-    // Hytale's first-person arms and held item; hidden when false.
+    // Hytale's first-person arms; hidden when false.
     bool show_arms = false;
+    // Hytale's held items, each drawn in a hand instead of in front of the
+    // face: the hand's grip relative to the headset (meters), and how big the
+    // item is drawn there. [0] is the left hand.
+    bool item_in_hand = false;
+    bool hand_valid[2] = {};
+    Mat4 hand_grip[2];
+    float item_size = 0.3f;
     // Smooths small, quick wobbles out of Hytale's camera position (bobbing,
     // sway), while still following walking, jumping and falling.
     bool steady = true;
@@ -76,6 +83,10 @@ void on_bind_image_texture(GLuint unit, GLuint texture, GLint level, GLboolean l
 void on_bind_framebuffer(GLenum target, GLuint framebuffer);
 void on_use_program(GLuint program);
 void on_link(GLuint program);
+void on_shader_source(GLuint shader, const std::string& source);
+// Hytale setting a first-person model's matrix: true when out should be used
+// instead (the held item moved into a hand, or an arm hidden).
+bool first_person_model(GLuint program, GLint location, const GLfloat* value, GLfloat out[16]);
 void on_uniform_block_binding(GLuint program, GLuint index, GLuint binding);
 void on_bind_buffer(GLenum target, GLuint buffer);
 void on_bind_buffer_range(GLenum target, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size);

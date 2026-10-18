@@ -123,6 +123,7 @@ void APIENTRY hook_glShaderSource(GLuint shader, GLsizei count, const GLchar* co
             else
                 source.append(strings[i]);
         }
+        stereo::on_shader_source(shader, source);
         if (add_light_fix(source)) {
             static std::atomic<int> logged{0};
             if (logged++ == 0) logf("Stereo: fixing clustered lights in Hytale's lit shaders");
@@ -361,6 +362,12 @@ void record_matrix(GLuint program, GLint location, GLsizei count, GLboolean tran
     }
 }
 void APIENTRY hook_glUniformMatrix4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat* value) {
+    GLfloat moved[16];
+    if (WATCHING && count == 1 && !transpose &&
+        stereo::first_person_model(stereo::current_program(), location, value, moved)) {
+        real_glUniformMatrix4fv(location, 1, transpose, moved);
+        return;
+    }
     real_glUniformMatrix4fv(location, count, transpose, value);
     if (WATCHING && stereo::wanted()) record_matrix(stereo::current_program(), location, count, transpose, value);
 }
@@ -370,6 +377,11 @@ void APIENTRY hook_glUniform3fv(GLint location, GLsizei count, const GLfloat* va
 }
 void APIENTRY hook_glProgramUniformMatrix4fv(GLuint program, GLint location, GLsizei count, GLboolean transpose,
                                              const GLfloat* value) {
+    GLfloat moved[16];
+    if (WATCHING && count == 1 && !transpose && stereo::first_person_model(program, location, value, moved)) {
+        real_glProgramUniformMatrix4fv(program, location, 1, transpose, moved);
+        return;
+    }
     real_glProgramUniformMatrix4fv(program, location, count, transpose, value);
     if (WATCHING && stereo::wanted()) record_matrix(program, location, count, transpose, value);
 }

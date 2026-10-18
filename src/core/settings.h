@@ -38,9 +38,11 @@ struct Settings {
     float vignette = 0.5f;          // comfort: how much the edges darken while the stick moves or turns you (0 = off)
 
     // Hands
-    // Hytale's own first-person arms and held item. They are glued to your
-    // head as one piece, so they stay hidden unless you want them back.
+    // Hytale's own first-person arms, glued to your head; hidden unless wanted.
     bool show_arms = false;
+    bool item_in_hand = true;       // Hytale's held item is drawn in your hand
+    float item_size = 0.30f;        // of its first-person size
+    float item_tilt = 0.0f;         // degrees it tips forward from the controller
     bool hotbar_on_hand = true;     // the hotbar floats over the left controller
     float hotbar_width = 0.22f;     // meters
     float hotbar_left = 0.31f;      // where the hotbar is in Hytale's HUD, as fractions of the window

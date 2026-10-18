@@ -842,6 +842,15 @@ void prepare_world(const Settings& s, bool showed_world) {
     setup.steady = s.steady_view;
     setup.lift = g_crouch.lift;
     setup.show_arms = s.show_arms;
+    // Held items: each hand's grip relative to the headset, from the
+    // controller's tip back to the palm and tipped by item_tilt.
+    setup.item_in_hand = s.item_in_hand;
+    setup.item_size = s.item_size;
+    const Mat4 palm = translation({0, -0.025f, 0.07f}) * rotation_x(-s.item_tilt * 3.14159265f / 180.0f);
+    for (int hand = 0; hand < 2; ++hand) {
+        setup.hand_valid[hand] = g_view.hands[hand].valid && g_hmd_valid;
+        if (setup.hand_valid[hand]) setup.hand_grip[hand] = inverse_rigid(g_hmd) * g_view.hands[hand].pose * palm;
+    }
     stereo::set_eyes(setup);
 }
 
