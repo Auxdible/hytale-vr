@@ -610,7 +610,9 @@ void controls(const FrameContext& context, float dt) {
         const bool fresh = g_plugin_connected && g_aim_distance > 0 && GetTickCount64() - g_aim_at < 500;
         // Look from Hytale's eye into the middle of what the hand's ray hits
         // (the plugin works that out in the world), else along the ray.
-        if (fresh && g_held_kind != "bow" && g_aim_look_valid)
+        // A drawn bow too: the plugin traces the bow's line, and the arrow
+        // leaves from Hytale's eye toward what that line hits.
+        if (fresh && g_aim_look_valid)
             g_act.direction = normalize(transform_direction(rotation_y(-g_yaw_offset), g_aim_look));
         else if (fresh && g_held_kind != "bow")
             g_act.direction = normalize(origin + direction * (g_aim_distance / std::max(s.world_scale, 0.1f)) -

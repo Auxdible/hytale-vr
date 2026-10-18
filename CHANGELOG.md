@@ -52,7 +52,9 @@
   string, pull back (the draw starts once you've pulled about 12 cm) and let
   go to shoot. The arrow flies from your pulling hand through the bow. The
   string hand creaks harder the further you pull, and both hands kick on
-  release. Squeezing the trigger away from the bow does nothing.
+  release. Squeezing the trigger away from the bow does nothing. With the
+  server plugin, arrows fly from Hytale's eye toward whatever the bow's line
+  hits, so they land where the line points (they still drop over distance).
 - Holding food up to your mouth eats it.
 - Fixed the plugin link filling up with unterminated requests, which could
   stall swings and drop the connection.
