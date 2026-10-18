@@ -1649,6 +1649,22 @@ bool arm_shaped(const Mat4& m, float size) {
            std::fabs(m.at(2, 2) + size) < slack;
 }
 
+// The arm's pieces all share one matrix each frame, and come before the
+// item. An item held square to the view looks arm-shaped too; it's told
+// apart by having a matrix of its own, so it isn't hidden with the arm.
+int g_arm_frame = -1000;
+float g_arm_matrix[16] = {};
+
+bool is_arm_piece(const Mat4& model, float size) {
+    if (size <= 0 || !arm_shaped(model, size)) return false;
+    if (g_arm_frame != g_frame) {
+        g_arm_frame = g_frame;
+        std::memcpy(g_arm_matrix, model.m, sizeof(g_arm_matrix));
+        return true;
+    }
+    return std::memcmp(g_arm_matrix, model.m, sizeof(g_arm_matrix)) == 0;
+}
+
 // The current draw's bones, from our copy of the buffer when we keep one,
 // else read back from the GPU.
 bool read_bones(const ProgramInfo& info, std::vector<float>& out) {
@@ -1757,6 +1773,8 @@ bool held_on_hand(const Mat4& model, Mat4& moved) {
     for (int r = 0; r < 3; ++r) palm.at(r, 3) *= g_setup.world_scale;
     const float unit = g_setup.arm_unit * g_setup.world_scale * g_setup.item_size;
     moved = palm * scale({unit, unit, unit}) * frame * on_bone;
+    // A bad read would fling the item away from your hand; keep it in the grip instead.
+    if (length(position_of(moved) - position_of(palm)) > 0.6f * g_setup.world_scale) return false;
     if (g_draw_indices != g_logged_item) {
         g_logged_item = g_draw_indices;
         logf("Hands: item (%d indices) held on %s, %.1f model units from that bone, %zu bones seen", g_draw_indices,
@@ -1776,7 +1794,7 @@ bool move_first_person() {
     Mat4 moved;
     for (float& v : moved.m) v = 0;  // hidden: every vertex at w = 0, clipped away
     const int side = g_setup.item_hand;
-    if (size > 0 && arm_shaped(model, size)) {
+    if (is_arm_piece(model, size)) {
         if (g_setup.hand_valid) note_arm_bones(info, model, size);
     } else if (size > 0 && g_setup.grip_valid[side] && !held_on_hand(model, moved)) {
         Mat4 grip = g_setup.grip[side];
