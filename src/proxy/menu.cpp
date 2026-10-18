@@ -268,7 +268,11 @@ void tab_world(Settings& s) {
     changed |= ImGui::Checkbox("Held item in your hand", &s.hytale_hand);
     if (s.hytale_hand) {
         changed |= slider("Item size", &s.item_size, 0.2f, 2.0f, "%.2fx");
-        if (!s.character_arms) {
+        if (s.character_arms) {
+            changed |= slider("Item lean", &s.grip_tilt, -90.0f, 90.0f, "%.0f deg");
+            changed |= slider("Item turn", &s.grip_turn, -180.0f, 180.0f, "%.0f deg");
+            hint("Lean tips the item forward or back in your fist; turn spins it about its handle.");
+        } else {
             changed |= slider("Item tilt", &s.item_tilt, -90.0f, 90.0f, "%.0f deg");
             changed |= slider("Item turn", &s.item_turn, -180.0f, 180.0f, "%.0f deg");
         }

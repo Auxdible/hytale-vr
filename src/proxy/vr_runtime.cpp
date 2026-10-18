@@ -248,6 +248,10 @@ bool g_plugin_click = false;  // the plugin asked for Hytale's own attack (a wea
 float g_aim_distance = -1;
 uint64_t g_aim_at = 0, g_aim_asked = 0;
 std::string g_held_kind = "none";
+// From the plugin: where Hytale's camera should look (its own axes) to hit
+// the middle of what the hand's ray reaches.
+Vec3 g_aim_look;
+bool g_aim_look_valid = false;
 // Hytale's interactions go along its camera, so while you use something the
 // camera turns to what your hand points at, and the click waits for it.
 struct HandAction {
@@ -280,11 +284,22 @@ void poll_plugin() {
             continue;
         }
         if (line.rfind("AIM ", 0) == 0) {
-            // "AIM <distance|none> <kind>"
+            // "AIM <distance|none> <kind> [<x> <y> <z>]"
             const size_t kind = line.find(' ', 4);
             const std::string distance = line.substr(4, kind == std::string::npos ? std::string::npos : kind - 4);
             g_aim_distance = distance == "none" ? -1.0f : std::strtof(distance.c_str(), nullptr);
-            const std::string held = kind == std::string::npos ? "item" : line.substr(kind + 1);
+            const size_t look = kind == std::string::npos ? std::string::npos : line.find(' ', kind + 1);
+            const std::string held = kind == std::string::npos ? "item"
+                                     : line.substr(kind + 1, look == std::string::npos ? std::string::npos : look - kind - 1);
+            g_aim_look_valid = false;
+            if (look != std::string::npos) {
+                char* end = nullptr;
+                const char* at = line.c_str() + look;
+                g_aim_look.x = std::strtof(at, &end);
+                g_aim_look.y = std::strtof(end, &end);
+                g_aim_look.z = std::strtof(end, &end);
+                g_aim_look_valid = length(g_aim_look) > 0.5f;
+            }
             if (held != g_held_kind) logf("Plugin: holding a %s", held.c_str());
             g_held_kind = held;
             g_aim_at = GetTickCount64();
@@ -588,14 +603,18 @@ void controls(const FrameContext& context, float dt) {
                      action_ray(s, drawing, origin, direction);
     if (act) {
         const bool fresh = g_plugin_connected && g_aim_distance > 0 && GetTickCount64() - g_aim_at < 500;
-        // Aim from your eyes at the spot the hand's ray reaches, else along the ray.
-        g_act.direction = fresh && g_held_kind != "bow"
-                              ? normalize(origin + direction * (g_aim_distance / std::max(s.world_scale, 0.1f)) -
-                                          position_of(g_hmd))
-                              : direction;
+        // Look from Hytale's eye into the middle of what the hand's ray hits
+        // (the plugin works that out in the world), else along the ray.
+        if (fresh && g_held_kind != "bow" && g_aim_look_valid)
+            g_act.direction = normalize(transform_direction(rotation_y(-g_yaw_offset), g_aim_look));
+        else if (fresh && g_held_kind != "bow")
+            g_act.direction = normalize(origin + direction * (g_aim_distance / std::max(s.world_scale, 0.1f)) -
+                                        position_of(g_hmd));
+        else
+            g_act.direction = direction;
         if (!g_act.aiming) g_act.ready = false, g_act.waited = 0;
         g_act.aiming = true;
-        if (!g_act.pressing && (g_act.ready || ++g_act.waited > 6)) g_act.pressing = true;
+        if (!g_act.pressing && (g_act.ready || ++g_act.waited > 10)) g_act.pressing = true;
     } else {
         g_act = HandAction{};
     }
@@ -943,8 +962,8 @@ void prepare_world(const Settings& s, bool showed_world) {
         const Vec3 aim = g_act.aiming ? g_act.direction : by_hand ? transform_direction(aim_hand.pose, {0, 0, -1}) : forward;
         const float target_yaw = MouseFollower::wrap(yaw_of(aim) + g_yaw_offset);
         if (g_act.aiming)
-            g_act.ready = std::fabs(MouseFollower::wrap(target_yaw - yaw_of(engine_forward))) < 0.05f &&
-                          std::fabs(pitch_of(aim) - pitch_of(engine_forward)) < 0.05f;
+            g_act.ready = std::fabs(MouseFollower::wrap(target_yaw - yaw_of(engine_forward))) < 0.02f &&
+                          std::fabs(pitch_of(aim) - pitch_of(engine_forward)) < 0.02f;
         int dx = 0, dy = 0;
         g_follower.pull = g_act.aiming && !g_act.pressing ? 0.6f : 0.3f;  // snappier while a click waits on it
         g_follower.step(yaw_of(engine_forward), pitch_of(engine_forward), target_yaw, pitch_of(aim), dx, dy);
@@ -1049,13 +1068,6 @@ void prepare_world(const Settings& s, bool showed_world) {
         // The off hand mirrors the item hand's turn and tilt.
         setup.palm[hand] = inverse_rigid(g_hmd) * g_view.hands[hand].pose * translation(kPalm);
         setup.grip[hand] = setup.palm[hand] * rotation_x(-s.item_tilt * degrees) * rotation_y(s.item_turn * degrees);
-        if (s.character_arms) {
-            // Upright out of the fist: the item's length (its +Z) up and a
-            // little forward along your thumb, its head or blade facing ahead.
-            setup.grip[hand] = setup.palm[hand] * rotation_x(-120.0f * degrees) * rotation_z(90.0f * degrees);
-            // A bow is held by its middle, not its end.
-            if (g_held_kind == "bow") setup.grip[hand] = setup.grip[hand] * translation({0, 0, -0.2f * s.item_size});
-        }
     }
     // With your character's arms, the item goes where its hand holds it.
     const avatar::Model* character = s.character_arms ? avatar::ready() : nullptr;
@@ -1066,6 +1078,20 @@ void prepare_world(const Settings& s, bool showed_world) {
         setup.attachment_valid = arm.has_attachment && !arm.vertices.empty();
         std::memcpy(setup.hand.m, arm.hand, sizeof(arm.hand));
         std::memcpy(setup.attachment.m, arm.attachment, sizeof(arm.attachment));
+        // The item goes through your closed fingers, where your character holds
+        // things (its item point), upright out of the fist and leaning a little
+        // forward, its head or blade facing ahead.
+        for (int hand = 0; hand < 2; ++hand) {
+            if (!setup.grip_valid[hand]) continue;
+            const avatar::Arm& held = character->arms[hand];
+            const Vec3 point = held.has_attachment ? Vec3{held.attachment[12], held.attachment[13], held.attachment[14]} *
+                                                         g_view.arm_scale
+                                                   : Vec3{};
+            setup.grip[hand] = setup.palm[hand] * translation(point) *
+                               rotation_x((-120.0f - s.grip_tilt) * degrees) * rotation_z((90.0f + s.grip_turn) * degrees);
+            // A bow is held by its middle, not its end.
+            if (g_held_kind == "bow") setup.grip[hand] = setup.grip[hand] * translation({0, 0, -0.2f * s.item_size});
+        }
     }
     stereo::set_eyes(setup);
 }

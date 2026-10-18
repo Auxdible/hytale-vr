@@ -2,9 +2,15 @@
 
 ## 2.3.2
 
-- Held items sit steady in your grip and stand upright out of your fist
-  (swords and picks no longer run along your arm), and they don't wobble
-  with Hytale's walking or swing animations. A bow is held by its middle.
+- Held items sit steady in your grip, through your closed fingers where
+  your character holds things, and they don't wobble with Hytale's
+  animations. They stand up out of the fist, leaning a little forward, with
+  the head or blade facing ahead. A bow is held by its middle. Item lean and
+  Item turn (World tab) adjust how they sit.
+- Breaking, placing and using hit what the line points at, not the block
+  behind it. The server plugin (1.3.1) now works out the way to look from
+  Hytale's eye into the middle of the targeted block or mob, and the click
+  waits until the camera is within about a degree of it.
 - Your arms are rebuilt when you change your avatar: the new skin and
   clothes show within a couple of seconds, with no restart.
 - A quick tap of a trigger now always clicks. The click is held until

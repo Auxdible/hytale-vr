@@ -39,6 +39,21 @@ public final class RayMath {
         return Math.max(near, 0);
     }
 
+    /**
+     * Distance along a ray to where it leaves an axis-aligned box, or NaN when
+     * it misses the box.
+     */
+    public static double rayBoxExit(double ox, double oy, double oz,
+                                    double dx, double dy, double dz,
+                                    double minX, double minY, double minZ,
+                                    double maxX, double maxY, double maxZ) {
+        // Leaving the box forward is entering it backward from far along the ray.
+        final double reach = 1e4;
+        final double back = rayBoxEntry(ox + dx * reach, oy + dy * reach, oz + dz * reach, -dx, -dy, -dz,
+                minX, minY, minZ, maxX, maxY, maxZ);
+        return Double.isNaN(back) ? Double.NaN : reach - back;
+    }
+
     /** Returns the vector scaled to unit length, or null when it has no direction. */
     public static double[] normalize(double x, double y, double z) {
         final double length = Math.sqrt(x * x + y * y + z * z);

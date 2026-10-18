@@ -21,6 +21,12 @@ class RayMathTest {
     }
 
     @Test
+    void leavesBoxOnFarSide() {
+        assertEquals(3.0, RayMath.rayBoxExit(0, 0.5, 0, 0, 0, -1, -0.5, 0, -3, 0.5, 1, -2), 1e-6);
+        assertTrue(Double.isNaN(RayMath.rayBoxExit(5, 0.5, 0, 0, 0, -1, -0.5, 0, -3, 0.5, 1, -2)));
+    }
+
+    @Test
     void insideBoxIsZero() {
         assertEquals(0.0, RayMath.rayBoxEntry(0, 0.5, -2.5, 1, 0, 0, -0.5, 0, -3, 0.5, 1, -2), 1e-9);
     }

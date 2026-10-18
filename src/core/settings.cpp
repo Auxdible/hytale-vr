@@ -24,6 +24,8 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("held_item_size", s.item_size);  // "item_scale" was for the item without a hand to hold it
     visit("item_turn", s.item_turn);
     visit("item_tilt", s.item_tilt);
+    visit("grip_tilt", s.grip_tilt);
+    visit("grip_turn", s.grip_turn);
     visit("character_arms", s.character_arms);
     visit("target_line", s.target_line);
     visit("aim_actions_by_hand", s.aim_actions_by_hand);
@@ -120,6 +122,8 @@ void clamp(Settings& s) {
     s.item_size = std::clamp(s.item_size, 0.2f, 2.0f);
     s.item_tilt = std::clamp(s.item_tilt, -90.0f, 90.0f);
     s.item_turn = std::clamp(s.item_turn, -180.0f, 180.0f);
+    s.grip_tilt = std::clamp(s.grip_tilt, -90.0f, 90.0f);
+    s.grip_turn = std::clamp(s.grip_turn, -180.0f, 180.0f);
     s.arm_size = std::clamp(s.arm_size, 0.4f, 2.0f);
     s.turn_mode = std::clamp(s.turn_mode, 0, 1);
     s.snap_degrees = std::clamp(s.snap_degrees, 10.0f, 90.0f);

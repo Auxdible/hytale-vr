@@ -121,10 +121,10 @@ final class SwingHandler {
     static final double AIM_REACH = 5.0;
 
     /**
-     * What the hand's ray reaches and what's held: "distance kind", where the
-     * distance is to the first mob or block in reach (or "none") and the kind
-     * is weapon, tool, bow, food, block, item or none. Must run on the
-     * player's world thread.
+     * What the hand's ray reaches and what's held: "distance kind [x y z]",
+     * where the distance is to the first mob or block in reach (or "none"),
+     * the kind is weapon, tool, bow, food, block, item or none, and x y z is
+     * the way to look from the eye to hit it. Must run on the player's world thread.
      */
     static String aim(PlayerRef playerRef, World world, AimMessage aim) {
         final Ref<EntityStore> player = playerRef.getReference();
@@ -143,6 +143,7 @@ final class SwingHandler {
         final double[] direction = mapping.apply(aim.direction());
         final double ox = eye.x + offset[0], oy = eye.y + offset[1], oz = eye.z + offset[2];
         double best = Double.POSITIVE_INFINITY;
+        double inside = Double.NaN;  // a point inside what's hit, along the ray
 
         final Vector3d middle = new Vector3d(ox + direction[0] * AIM_REACH * 0.5,
                 oy + direction[1] * AIM_REACH * 0.5, oz + direction[2] * AIM_REACH * 0.5);
@@ -153,10 +154,15 @@ final class SwingHandler {
             if (transform == null || bounds == null) continue;
             final Vector3d position = transform.getPosition();
             final Box box = bounds.getBoundingBox();
+            final double[] lo = {position.x + box.min.x, position.y + box.min.y, position.z + box.min.z};
+            final double[] hi = {position.x + box.max.x, position.y + box.max.y, position.z + box.max.z};
             final double t = RayMath.rayBoxEntry(ox, oy, oz, direction[0], direction[1], direction[2],
-                    position.x + box.min.x, position.y + box.min.y, position.z + box.min.z,
-                    position.x + box.max.x, position.y + box.max.y, position.z + box.max.z);
-            if (!Double.isNaN(t) && t <= AIM_REACH && t < best) best = t;
+                    lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+            if (!Double.isNaN(t) && t <= AIM_REACH && t < best) {
+                best = t;
+                inside = middleOf(t, RayMath.rayBoxExit(ox, oy, oz, direction[0], direction[1], direction[2],
+                        lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]));
+            }
         }
 
         final Vector3i block = TargetUtil.getTargetBlock(world.getChunkStore(),
@@ -165,10 +171,29 @@ final class SwingHandler {
         if (block != null) {
             final double t = RayMath.rayBoxEntry(ox, oy, oz, direction[0], direction[1], direction[2],
                     block.x, block.y, block.z, block.x + 1, block.y + 1, block.z + 1);
-            if (!Double.isNaN(t) && t < best) best = t;
+            if (!Double.isNaN(t) && t < best) {
+                best = t;
+                inside = middleOf(t, RayMath.rayBoxExit(ox, oy, oz, direction[0], direction[1], direction[2],
+                        block.x, block.y, block.z, block.x + 1, block.y + 1, block.z + 1));
+            }
         }
-        final String distance = Double.isFinite(best) ? String.format(java.util.Locale.ROOT, "%.3f", best) : "none";
-        return distance + " " + kind;
+        if (!Double.isFinite(best)) return "none " + kind;
+        final String distance = String.format(java.util.Locale.ROOT, "%.3f", best);
+        // Hytale acts along its camera, from your eye: the way from the eye to
+        // the middle of what the hand's ray hits, in the client's axes, so the
+        // camera turns to exactly that block or mob (a point on its surface
+        // could graze past it to the next one).
+        final double[] toTarget = RayMath.normalize(ox + direction[0] * inside - eye.x,
+                oy + direction[1] * inside - eye.y, oz + direction[2] * inside - eye.z);
+        if (toTarget == null) return distance + " " + kind;
+        final double[] look = mapping.apply(toTarget);  // the mapping is its own inverse
+        return String.format(java.util.Locale.ROOT, "%s %s %.5f %.5f %.5f", distance, kind, look[0], look[1], look[2]);
+    }
+
+    /** Halfway through what the ray hits, but no deeper than half a block. */
+    private static double middleOf(double entry, double exit) {
+        if (Double.isNaN(exit) || exit <= entry) return entry + 0.05;
+        return Math.min((entry + exit) * 0.5, entry + 0.5);
     }
 
     /** What the VR mod needs to know about the held item to handle it. */
