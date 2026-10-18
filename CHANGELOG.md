@@ -6,7 +6,10 @@
   your character holds things, and they don't wobble with Hytale's
   animations. They stand up out of the fist, leaning a little forward, with
   the head or blade facing ahead. A bow is held by its middle. Item lean and
-  Item turn (World tab) adjust how they sit.
+  Item turn (World tab) adjust how they sit. Food sits on top of your hand.
+- Between clicks, Hytale's camera leans toward what your hand points at
+  (up to about 15 degrees off your gaze), so its block outline sits under
+  your line instead of where you look.
 - Breaking, placing and using hit what the line points at, not the block
   behind it. The server plugin (1.3.1) now works out the way to look from
   Hytale's eye into the middle of the targeted block or mob, and the click
@@ -44,7 +47,8 @@
   hand's line reaches and the click waits for it to arrive (Use and place
   where your hand points, World tab).
 - Bows draw like real ones, as in Vivecraft. The bow goes in your other
-  hand. Bring your main hand to the bow and squeeze its trigger to take the
+  hand. Bring your main hand to the string, just behind the bow hand (within
+  about 20 cm), and squeeze its trigger to take the
   string, pull back (the draw starts once you've pulled about 12 cm) and let
   go to shoot. The arrow flies from your pulling hand through the bow. The
   string hand creaks harder the further you pull, and both hands kick on

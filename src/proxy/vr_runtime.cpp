@@ -556,8 +556,13 @@ void controls(const FrameContext& context, float dt) {
                                                             ::vr::k_ulInvalidInputValueHandle);
         };
         if (bow.valid && string.valid && grab.down) {
-            const float pull = length(position_of(string.pose) - position_of(bow.pose * translation(kPalm)));
-            if (!g_bow.nocked && grab.pressed && pull < 0.15f) {
+            const Vec3 grip = position_of(bow.pose * translation(kPalm));
+            const float pull = length(position_of(string.pose) - grip);
+            // The string sits just behind the bow hand, toward you: take it
+            // anywhere around there.
+            const Vec3 to_you = position_of(g_hmd) - grip;
+            const Vec3 nock = grip + (length(to_you) > 0.01f ? normalize(to_you) * 0.06f : Vec3{});
+            if (!g_bow.nocked && grab.pressed && length(position_of(string.pose) - nock) < 0.2f) {
                 g_bow.nocked = true;
                 buzz(string_hand, 0.02f, 180.0f, 0.5f);
                 buzz(holder, 0.02f, 180.0f, 0.3f);
@@ -959,7 +964,22 @@ void prepare_world(const Settings& s, bool showed_world) {
         // camera faces, so pointing behind you would blank out your view.
         const HandView& aim_hand = g_view.hands[s.left_handed ? 0 : 1];
         const bool by_hand = s.aim_with_hand && aim_hand.valid && !g_plugin_connected;
-        const Vec3 aim = g_act.aiming ? g_act.direction : by_hand ? transform_direction(aim_hand.pose, {0, 0, -1}) : forward;
+        Vec3 aim = g_act.aiming ? g_act.direction : by_hand ? transform_direction(aim_hand.pose, {0, 0, -1}) : forward;
+        // Between clicks the camera leans toward what your hand points at, so
+        // Hytale's outline sits on the block under your line. Only a little
+        // way off your gaze: Hytale draws only what its camera faces.
+        const bool fresh_aim = g_aim_look_valid && GetTickCount64() - g_aim_at < 500;
+        if (!g_act.aiming && !by_hand && s.aim_actions_by_hand && fresh_aim && g_held_kind != "bow") {
+            const Vec3 hand_look = normalize(transform_direction(rotation_y(-g_yaw_offset), g_aim_look));
+            const float limit = 0.26f;  // about 15 degrees
+            const float cosine = std::clamp(dot(hand_look, forward), -1.0f, 1.0f);
+            if (std::acos(cosine) <= limit) {
+                aim = hand_look;
+            } else {
+                const Vec3 side = hand_look - forward * cosine;
+                if (length(side) > 1e-4f) aim = normalize(forward * std::cos(limit) + normalize(side) * std::sin(limit));
+            }
+        }
         const float target_yaw = MouseFollower::wrap(yaw_of(aim) + g_yaw_offset);
         if (g_act.aiming)
             g_act.ready = std::fabs(MouseFollower::wrap(target_yaw - yaw_of(engine_forward))) < 0.02f &&
@@ -1091,6 +1111,10 @@ void prepare_world(const Settings& s, bool showed_world) {
                                rotation_x((-120.0f - s.grip_tilt) * degrees) * rotation_z((90.0f + s.grip_turn) * degrees);
             // A bow is held by its middle, not its end.
             if (g_held_kind == "bow") setup.grip[hand] = setup.grip[hand] * translation({0, 0, -0.2f * s.item_size});
+            // Food sits on top of your hand, not through your fingers.
+            if (g_held_kind == "food")
+                setup.grip[hand] = setup.palm[hand] * translation(point + Vec3{0, 0.06f * s.item_size, 0}) *
+                                   rotation_x(-s.grip_tilt * degrees) * rotation_y(s.grip_turn * degrees);
         }
     }
     stereo::set_eyes(setup);
