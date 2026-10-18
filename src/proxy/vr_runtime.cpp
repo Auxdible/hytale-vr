@@ -34,7 +34,6 @@ HANDLE g_worker = nullptr;
 // Render thread
 Scene g_scene;
 EyeTarget g_eyes[2];
-std::atomic<float> g_lens_aspect{0.0f};
 SceneView g_view;
 bool g_screen_placed = false;
 std::atomic<bool> g_recenter{false};
@@ -91,6 +90,7 @@ bool g_have_jump_check = false;
 float g_frame_dt = 0.011f;
 int g_non_world_frames = 0;
 bool g_snap_armed = true;
+bool g_flick_armed = true;  // right stick up/down picks the hotbar slot in the world
 int g_world_frames = 0;
 
 struct Actions {
@@ -463,7 +463,8 @@ void controls(const FrameContext& context, float dt) {
     input::key(s.key_crouch, play && ((boolean(g_actions.crouch).down && !was_aligning) || g_crouch.down));
     input::key(s.key_inventory, play && boolean(g_actions.inventory).down);
     input::key(41 /* Escape */, play && boolean(g_actions.back).down);
-    if (play && !pointer_mode && !was_aligning && boolean(g_actions.hotbar_next).pressed) input::wheel(-1);
+    // In the world the right grip interacts (opens benches, doors, chests).
+    input::key(s.key_interact, play && !pointer_mode && !was_aligning && boolean(g_actions.hotbar_next).down);
     // A hotbar slot touched last frame: tap its number key.
     if (g_touch.key) {
         input::key(g_touch.key, play && g_touch.press_frames > 0);
@@ -491,6 +492,13 @@ void controls(const FrameContext& context, float dt) {
             g_snap_armed = true;
         }
         g_yaw_offset = MouseFollower::wrap(g_yaw_offset);
+        // Flick up or down for the previous or next hotbar slot.
+        if (std::fabs(ly) > 0.7f && std::fabs(ly) > std::fabs(lx) && g_flick_armed) {
+            input::wheel(ly > 0 ? 1 : -1);
+            g_flick_armed = false;
+        } else if (std::fabs(ly) < 0.35f) {
+            g_flick_armed = true;
+        }
         g_scroll = 0;
     } else if (!pointer_mode) {
         int dx = 0, dy = 0;
@@ -554,7 +562,6 @@ bool take_item_grip(float rows[12]) {
     g_grip_ready = false;
     return true;
 }
-float lens_aspect() { return g_lens_aspect; }
 
 void begin_frame(const FrameContext& context) {
     g_context = context;
@@ -578,7 +585,6 @@ void begin_frame(const FrameContext& context) {
             return;
         }
         logf("Eye targets %ux%u", width, height);
-        if (width && height) g_lens_aspect = static_cast<float>(width) / static_cast<float>(height);
         g_gl_ready = true;
         QueryPerformanceCounter(&g_last_frame);
     }

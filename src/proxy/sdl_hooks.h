@@ -49,11 +49,8 @@ void warp_mouse(float x, float y);
 std::string scancode_name(int scancode);
 // Tells Hytale its window has scale times the pixels it really has (1 = the
 // truth), so it renders sharper; the extra pixels go to a buffer of that size.
-// taller also makes the window that many times taller, in points and pixels,
-// with mouse positions scaled to match.
-void set_render_scale(float scale, float taller = 1.0f);
+void set_render_scale(float scale);
 float render_scale();
-float render_taller();
 // Adds relative mouse motion for Hytale's camera, delivered as an SDL event.
 void inject_mouse_motion(int dx, int dy);
 

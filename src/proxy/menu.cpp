@@ -139,17 +139,15 @@ ImGuiKey imgui_key(int scancode) {
     }
 }
 
-float g_taller = 1.0f;
-
 void feed_input(float points_to_pixels) {
     ImGuiIO& io = ImGui::GetIO();
     for (const sdl::MenuInput& in : sdl::take_menu_input()) {
         switch (in.kind) {
             case sdl::MenuInput::Motion:
-                io.AddMousePosEvent(in.x * points_to_pixels, in.y * points_to_pixels * g_taller);
+                io.AddMousePosEvent(in.x * points_to_pixels, in.y * points_to_pixels);
                 break;
             case sdl::MenuInput::Button: {
-                io.AddMousePosEvent(in.x * points_to_pixels, in.y * points_to_pixels * g_taller);
+                io.AddMousePosEvent(in.x * points_to_pixels, in.y * points_to_pixels);
                 const int button = in.button == 1 ? 0 : (in.button == 3 ? 1 : (in.button == 2 ? 2 : -1));
                 if (button >= 0) io.AddMouseButtonEvent(button, in.down);
                 break;
@@ -257,9 +255,6 @@ void tab_world(Settings& s) {
     changed |= slider("HUD width", &s.hud_width, 0.6f, 6.0f, "%.1f m");
     changed |= slider("World scale", &s.world_scale, 0.25f, 4.0f, "%.2fx");
     changed |= slider("Sharpness", &s.render_scale, 1.0f, 2.5f, "%.2fx window");
-    changed |= ImGui::Checkbox("Lens shape", &s.lens_shape);
-    hint("Draws in the headset lens's shape instead of the monitor's: sharper up and down for the same cost. "
-         "The monitor view looks squeezed while it's on.");
     hint(app::render_status().c_str());
     ImGui::Spacing();
     ImGui::TextUnformatted("Hands");
@@ -482,13 +477,11 @@ void draw_window() {
 }  // namespace
 
 void render(int pixels_w, int pixels_h, float points_to_pixels, unsigned target_fbo, float framebuffer_scale,
-            unsigned extra_fbo, float taller) {
+            unsigned extra_fbo) {
     if (pixels_w <= 0 || pixels_h <= 0) return;
     if (!g_ready) init(pixels_h);
     ImGuiIO& io = ImGui::GetIO();
-    // With Lens shape the menu lays out in Hytale's taller window, like Hytale's own UI.
-    io.DisplaySize = {static_cast<float>(pixels_w), static_cast<float>(pixels_h) * taller};
-    g_taller = taller;
+    io.DisplaySize = {static_cast<float>(pixels_w), static_cast<float>(pixels_h)};
     io.DisplayFramebufferScale = {framebuffer_scale, framebuffer_scale};
     LARGE_INTEGER now, frequency;
     QueryPerformanceCounter(&now);

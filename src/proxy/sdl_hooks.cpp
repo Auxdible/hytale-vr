@@ -30,7 +30,6 @@ bool (*real_GetWindowSizeInPixels)(Window*, int*, int*) = nullptr;
 bool (*real_GetWindowSize)(Window*, int*, int*) = nullptr;
 float (*real_GetWindowPixelDensity)(Window*) = nullptr;
 float (*real_GetWindowDisplayScale)(Window*) = nullptr;
-void (*real_WarpMouseInWindow)(Window*, float, float) = nullptr;
 
 // Called directly
 Window* (*fn_GetKeyboardFocus)() = nullptr;
@@ -71,9 +70,6 @@ bool g_zero_keys[sdl3::SCANCODE_COUNT] = {};
 
 // Render scale: Hytale is told its window has this many times the pixels.
 std::atomic<float> g_render_scale{1.0f};
-// Lens shape: Hytale is also told its window is this many times taller (in
-// points and pixels), so it draws in the headset lens's shape.
-std::atomic<float> g_tall{1.0f};
 std::atomic<bool> g_size_event_pending{false};
 std::atomic<long long> g_size_queries{0}, g_pixel_queries{0}, g_density_queries{0}, g_display_scale_queries{0};
 
@@ -105,24 +101,6 @@ void push_release(uint32_t type, int code) {
 }
 
 int scaled(int size) { return static_cast<int>(static_cast<float>(size) * g_render_scale.load() + 0.5f); }
-int scaled_h(int size) {
-    return static_cast<int>(static_cast<float>(size) * g_render_scale.load() * g_tall.load() + 0.5f);
-}
-int tall(int size) { return static_cast<int>(static_cast<float>(size) * g_tall.load() + 0.5f); }
-bool spoofing() { return g_render_scale.load() != 1.0f || g_tall.load() != 1.0f; }
-
-// Mouse positions in Hytale's taller window.
-void tall_mouse(Event& e) {
-    const float t = g_tall.load();
-    if (t == 1.0f) return;
-    switch (e.type) {
-        case sdl3::MOUSE_MOTION: e.motion.y *= t; break;  // not yrel: that turns the camera
-        case sdl3::MOUSE_BUTTON_DOWN:
-        case sdl3::MOUSE_BUTTON_UP: e.button.y *= t; break;
-        case sdl3::MOUSE_WHEEL: e.wheel.mouse_y *= t; break;
-        default: break;
-    }
-}
 
 // Tells Hytale its window changed size, so it picks up the scaled pixel size.
 void push_size_events() {
@@ -137,11 +115,11 @@ void push_size_events() {
     e.window.timestamp = fn_GetTicksNS ? fn_GetTicksNS() : 0;
     e.window.windowID = id;
     e.window.data1 = points_w;
-    e.window.data2 = tall(points_h);
+    e.window.data2 = points_h;
     fn_PushEvent(&e);
     e.window.type = sdl3::WINDOW_PIXEL_SIZE_CHANGED;
     e.window.data1 = scaled(pixels_w);
-    e.window.data2 = scaled_h(pixels_h);
+    e.window.data2 = scaled(pixels_h);
     fn_PushEvent(&e);
     logf("Told Hytale its window is %dx%d pixels (really %dx%d)", e.window.data1, e.window.data2, pixels_w, pixels_h);
 }
@@ -186,13 +164,9 @@ void record(const MenuInput& input) {
 bool pass(Event& e) {
     if (e.common.reserved == sdl3::kOurEvent) return true;
     const uint32_t type = e.type;
-    if (type == sdl3::WINDOW_PIXEL_SIZE_CHANGED && spoofing()) {
+    if (type == sdl3::WINDOW_PIXEL_SIZE_CHANGED && g_render_scale.load() != 1.0f) {
         e.window.data1 = scaled(e.window.data1);
-        e.window.data2 = scaled_h(e.window.data2);
-        return true;
-    }
-    if (type == sdl3::WINDOW_RESIZED && g_tall.load() != 1.0f) {
-        e.window.data2 = tall(e.window.data2);
+        e.window.data2 = scaled(e.window.data2);
         return true;
     }
     if (type == sdl3::KEY_DOWN || type == sdl3::KEY_UP) {
@@ -207,10 +181,7 @@ bool pass(Event& e) {
             return false;
         }
     }
-    if (!g_capture_applied) {
-        tall_mouse(e);
-        return true;
-    }
+    if (!g_capture_applied) return true;
     switch (type) {
         case sdl3::MOUSE_MOTION:
             record({MenuInput::Motion, e.motion.x, e.motion.y});
@@ -240,7 +211,6 @@ bool pass(Event& e) {
         case sdl3::TEXT_INPUT:
             return false;
         default:
-            tall_mouse(e);
             return true;
     }
 }
@@ -260,7 +230,7 @@ bool take_injected_motion(Event* e) {
     float mx = 0, my = 0;
     if (real_GetMouseState) real_GetMouseState(&mx, &my);
     e->motion.x = mx + static_cast<float>(x);
-    e->motion.y = (my + static_cast<float>(y)) * g_tall.load();
+    e->motion.y = my + static_cast<float>(y);
     e->motion.xrel = static_cast<float>(x);
     e->motion.yrel = static_cast<float>(y);
     return true;
@@ -314,7 +284,6 @@ const bool* hook_GetKeyboardState(int* count) {
 uint32_t hook_GetMouseState(float* x, float* y) {
     ++g_mouse_state;
     const uint32_t buttons = real_GetMouseState(x, y);
-    if (y) *y *= g_tall.load();
     return g_capture_applied ? 0 : buttons;
 }
 
@@ -338,21 +307,17 @@ bool hook_HideCursor() {
 bool hook_GetWindowSizeInPixels(Window* w, int* width, int* height) {
     ++g_pixel_queries;
     const bool ok = real_GetWindowSizeInPixels(w, width, height);
-    if (ok && spoofing()) {
+    if (ok && g_render_scale.load() != 1.0f) {
         if (width) *width = scaled(*width);
-        if (height) *height = scaled_h(*height);
+        if (height) *height = scaled(*height);
     }
     return ok;
 }
 
 bool hook_GetWindowSize(Window* w, int* width, int* height) {
     ++g_size_queries;
-    const bool ok = real_GetWindowSize(w, width, height);
-    if (ok && height && g_tall.load() != 1.0f) *height = tall(*height);
-    return ok;
+    return real_GetWindowSize(w, width, height);
 }
-
-void hook_WarpMouseInWindow(Window* w, float x, float y) { real_WarpMouseInWindow(w, x, y / g_tall.load()); }
 
 float hook_GetWindowPixelDensity(Window* w) {
     ++g_density_queries;
@@ -429,7 +394,6 @@ bool install() {
         real_GetWindowPixelDensity = nullptr;
     if (!hook(module, "SDL_GetWindowDisplayScale", &hook_GetWindowDisplayScale, real_GetWindowDisplayScale))
         real_GetWindowDisplayScale = nullptr;
-    ok &= hook(module, "SDL_WarpMouseInWindow", &hook_WarpMouseInWindow, real_WarpMouseInWindow);
     if (!ok) {
         MH_RemoveHook(MH_ALL_HOOKS);
         logf("SDL3 hooks were not installed; the VR menu can't take input");
@@ -442,7 +406,6 @@ bool install() {
     // Our own size queries skip the scaling.
     fn_GetWindowSize = real_GetWindowSize;
     fn_GetWindowSizeInPixels = real_GetWindowSizeInPixels;
-    fn_WarpMouseInWindow = real_WarpMouseInWindow;
     g_installed = true;
     logf("SDL3 input hooks installed");
     return true;
@@ -504,15 +467,13 @@ bool window_size(int& points_w, int& points_h, int& pixels_w, int& pixels_h) {
            points_w > 0 && points_h > 0;
 }
 
-void set_render_scale(float scale, float taller) {
+void set_render_scale(float scale) {
     if (!g_installed) return;
-    const bool same = g_render_scale.exchange(scale) == scale;
-    if (g_tall.exchange(taller) == taller && same) return;
+    if (g_render_scale.exchange(scale) == scale) return;
     g_size_event_pending = true;
 }
 
 float render_scale() { return g_render_scale; }
-float render_taller() { return g_tall; }
 
 void inject_mouse_motion(int dx, int dy) {
     if (dx) g_inject_x += dx;

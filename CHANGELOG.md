@@ -2,6 +2,9 @@
 
 ## 2.3.2
 
+- Interact (F) is on the right grip in the world, for workbenches, doors and
+  chests. The right stick flicked up or down picks the previous or next
+  hotbar slot (and touching the hotbar still works).
 - Line up held item (World tab, Hands): the held item goes back in front of
   your face; put your controller where its handle is and squeeze a grip, and
   it follows that hand from there. Replaces guessing with the sliders.
@@ -40,10 +43,6 @@
   so it doesn't drop twice.
 - Aim with your hand (Hands, off): Hytale aims, breaks and places where the
   right controller points.
-- Lens shape (World tab, off): Hytale draws in the headset lens's nearly square
-  shape instead of the monitor's, for the same number of pixels: sharper up
-  and down. Hytale's window is reported taller, so its menus lay out taller;
-  the monitor view looks squeezed while it's on.
 
 ## 2.3.1
 

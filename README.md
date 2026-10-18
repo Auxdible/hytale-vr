@@ -22,10 +22,7 @@ shader mods do, and adds an in-game VR menu.
   raised, in its settings file for you (the original is kept as
   `HytaleVR\hytale_settings_before_vr.json`).
 - **Sharpness (experimental).** The Sharpness slider in the World tab has
-  Hytale draw at more than its window size. Lens shape draws in the headset
-  lens's nearly square shape instead of the monitor's, for the same number of
-  pixels: sharper up and down, with menus laid out taller and the monitor view
-  squeezed while it's on.
+  Hytale draw at more than its window size for a sharper picture.
 - **Hytale on a big screen in VR** for everything else (main menu, loading), in
   a dark room with a floor.
 - **Laser pointer.** Point at the screen and pull the trigger to click.
@@ -62,13 +59,13 @@ puts it back.
 | Right trigger | Attack / break (left click) |
 | Left trigger | Use / place (right click) |
 | Left stick | Move, click to sprint |
-| Right stick | Turn (in the world), look, or scroll in menus |
+| Right stick | Turn (in the world; flick up/down for the hotbar), look, or scroll in menus |
 | A | Jump |
 | B | Back (Esc) |
 | X | Inventory |
 | Y | VR menu |
 | Left grip | Crouch (or crouch for real) |
-| Right grip | Next hotbar slot (Shift in menus) |
+| Right grip | Interact (F): benches, doors, chests (Shift in menus) |
 | Touch the hotbar | Pick that slot |
 | Right stick click | Recenter |
 

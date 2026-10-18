@@ -101,7 +101,7 @@
       "/actions/main/in/vr_menu": "VR menu",
       "/actions/main/in/crouch": "Crouch",
       "/actions/main/in/sprint": "Sprint",
-      "/actions/main/in/hotbar_next": "Next hotbar slot",
+      "/actions/main/in/hotbar_next": "Interact (F), Shift in menus",
       "/actions/main/in/recenter": "Recenter screen",
       "/actions/main/out/haptic_left": "Left haptics",
       "/actions/main/out/haptic_right": "Right haptics"

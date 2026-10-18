@@ -34,7 +34,6 @@ std::atomic<bool> g_menu_open{false};
 // draws into a buffer that big, which is scaled down for the monitor.
 struct Sharpness {
     float scale = 1;        // what Hytale has been told
-    float tall = 1;         // and how many times taller its window is (Lens shape)
     int width = 0, height = 0;  // the buffer it draws into (0 = off)
     int frames = 0;         // since the last change
     bool checked = false;   // Hytale was seen drawing at the new size
@@ -45,47 +44,28 @@ struct Sharpness {
 
 int scaled(int size, float scale) { return static_cast<int>(static_cast<float>(size) * scale + 0.5f); }
 
-// sharpness: the Sharpness setting (1 = the window's pixels). lens_aspect: when
-// above 0, the same number of pixels is laid out in that width/height instead.
-void apply_sharpness(float sharpness, float lens_aspect, int pixels_w, int pixels_h) {
-    int w = 0, h = 0;
-    float scale = 1.0f, tall = 1.0f;
-    if ((sharpness > 1.0f || lens_aspect > 0) && pixels_w > 0 && pixels_h > 0) {
-        float fw = static_cast<float>(pixels_w) * sharpness, fh = static_cast<float>(pixels_h) * sharpness;
-        if (lens_aspect > 0) {
-            fh = std::sqrt(fw * fh / lens_aspect);
-            fw = fh * lens_aspect;
-        }
-        w = static_cast<int>(fw + 0.5f);
-        h = static_cast<int>(fh + 0.5f);
-        scale = static_cast<float>(w) / static_cast<float>(pixels_w);
-        tall = static_cast<float>(h) / (static_cast<float>(pixels_h) * scale);
-        if (std::fabs(tall - 1.0f) < 0.01f) tall = 1.0f;
-    }
-    if (w == g_sharp.width && h == g_sharp.height && (w || g_sharp.scale == 1.0f)) return;
+void apply_sharpness(float scale, int pixels_w, int pixels_h) {
+    const int w = scale > 1.0f ? scaled(pixels_w, scale) : 0, h = scale > 1.0f ? scaled(pixels_h, scale) : 0;
+    if (scale == g_sharp.scale && w == g_sharp.width && h == g_sharp.height) return;
     const bool on = stereo::set_virtual_backbuffer(w, h);
     g_sharp.scale = on ? scale : 1.0f;
-    g_sharp.tall = on ? tall : 1.0f;
     g_sharp.width = on ? w : 0;
     g_sharp.height = on ? h : 0;
     g_sharp.frames = 0;
     g_sharp.checked = false;
-    sdl::set_render_scale(g_sharp.scale, g_sharp.tall);
+    sdl::set_render_scale(g_sharp.scale);
 }
 
 // Called after the frame is shown: picks the size for the next one.
 void update_sharpness(bool vr_active, int pixels_w, int pixels_h) {
-    float want = 1.0f, lens = 0.0f;
+    float want = 1.0f;
     if (g_sharp.gave_up && g_settings.render_scale != g_sharp.gave_up_at && !g_dirty) g_sharp.gave_up = false;
-    if (vr_active && !g_sharp.gave_up && sdl::installed()) {
-        want = g_settings.render_scale;
-        if (g_settings.lens_shape) lens = session::lens_aspect();
-    }
+    if (vr_active && !g_sharp.gave_up && sdl::installed()) want = g_settings.render_scale;
     if (want < 1.05f) want = 1.0f;
     // Wait for the slider to settle before resizing everything.
-    if (g_dirty) return;
-    apply_sharpness(want, lens, pixels_w, pixels_h);
-    if (!g_sharp.width) {
+    if (want != g_sharp.scale && g_dirty) return;
+    apply_sharpness(want, pixels_w, pixels_h);
+    if (g_sharp.scale == 1.0f) {
         g_sharp.status = g_sharp.gave_up ? "Off: Hytale kept drawing at the window's size."
                          : vr_active   ? "Off."
                                        : "Off until VR starts.";
@@ -97,8 +77,7 @@ void update_sharpness(bool vr_active, int pixels_w, int pixels_h) {
     const int rendered = stereo::render_width();
     if (!g_sharp.checked && (seen == g_sharp.width || rendered == g_sharp.width)) {
         g_sharp.checked = true;
-        logf("Hytale draws at %dx%d (%.2fx the window, %.2fx taller)", g_sharp.width, g_sharp.height, g_sharp.scale,
-             g_sharp.tall);
+        logf("Hytale draws at %dx%d (%.2fx the window)", g_sharp.width, g_sharp.height, g_sharp.scale);
     }
     // Give up only when Hytale is clearly still drawing at the window's own size.
     if (!g_sharp.checked && g_sharp.frames > 300 && (seen == pixels_w || rendered == pixels_w)) {
@@ -106,7 +85,7 @@ void update_sharpness(bool vr_active, int pixels_w, int pixels_h) {
              g_sharp.width, sdl::usage_summary().c_str());
         g_sharp.gave_up = true;
         g_sharp.gave_up_at = g_settings.render_scale;
-        apply_sharpness(1.0f, 0.0f, pixels_w, pixels_h);
+        apply_sharpness(1.0f, pixels_w, pixels_h);
         g_sharp.status = "Off: Hytale kept drawing at the window's size.";
         return;
     }
@@ -296,7 +275,7 @@ void before_swap(HDC dc) {
         session::begin_frame(context);
         if (g_menu_open)
             menu::render(pixels_w, pixels_h, points_to_pixels, stereo::virtual_backbuffer(), sharp,
-                         stereo::hud_fbo_this_frame(), g_sharp.width ? g_sharp.tall : 1.0f);
+                         stereo::hud_fbo_this_frame());
         session::end_frame(frame_w, frame_h, g_settings);
     }
     if (g_sharp.width || vr_active) {

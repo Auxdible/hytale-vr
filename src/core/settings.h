@@ -7,7 +7,7 @@ namespace hvr {
 
 // Key values are SDL3 scancodes, which name physical keys on any layout.
 namespace scancode {
-constexpr int A = 4, D = 7, E = 8, Q = 20, S = 22, W = 26;
+constexpr int A = 4, D = 7, E = 8, F = 9, Q = 20, S = 22, W = 26;
 constexpr int Escape = 41, Tab = 43, Space = 44;
 constexpr int F1 = 58, F6 = 63, F12 = 69;
 constexpr int LCtrl = 224, LShift = 225;
@@ -26,7 +26,6 @@ struct Settings {
     float hud_width = 1.9f;         // meters
     float world_scale = 1.0f;       // Hytale blocks per meter of head movement
     float render_scale = 1.0f;      // Hytale draws at this many times the window's size while in VR (1 = off)
-    bool lens_shape = false;        // Hytale draws in the headset lens's shape (same pixels, sharper up and down)
     int turn_mode = 0;              // 0 snap, 1 smooth
     float snap_degrees = 30.0f;
     float smooth_speed = 120.0f;    // degrees per second at full stick
@@ -73,6 +72,7 @@ struct Settings {
     int key_sprint = scancode::LShift;
     int key_crouch = scancode::LCtrl;
     int key_inventory = scancode::Tab;
+    int key_interact = scancode::F;
     int key_forward = scancode::W;
     int key_back = scancode::S;
     int key_left = scancode::A;

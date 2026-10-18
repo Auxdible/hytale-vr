@@ -19,7 +19,6 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("hud_width", s.hud_width);
     visit("world_scale", s.world_scale);
     visit("sharpness", s.render_scale);
-    visit("lens_shape", s.lens_shape);
     visit("item_in_hand", s.item_in_hand);
     visit("item_pitch", s.item_pitch);
     visit("item_x", s.item_x);
@@ -61,6 +60,7 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("key_sprint", s.key_sprint);
     visit("key_crouch", s.key_crouch);
     visit("key_inventory", s.key_inventory);
+    visit("key_interact", s.key_interact);
     visit("key_forward", s.key_forward);
     visit("key_back", s.key_back);
     visit("key_left", s.key_left);
@@ -134,6 +134,7 @@ void clamp(Settings& s) {
     s.key_sprint = clamp_key(s.key_sprint, defaults.key_sprint);
     s.key_crouch = clamp_key(s.key_crouch, defaults.key_crouch);
     s.key_inventory = clamp_key(s.key_inventory, defaults.key_inventory);
+    s.key_interact = clamp_key(s.key_interact, defaults.key_interact);
     s.key_forward = clamp_key(s.key_forward, defaults.key_forward);
     s.key_back = clamp_key(s.key_back, defaults.key_back);
     s.key_left = clamp_key(s.key_left, defaults.key_left);
