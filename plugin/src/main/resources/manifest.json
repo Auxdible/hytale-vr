@@ -1,0 +1,7 @@
+{
+  "Group": "hytalevr",
+  "Name": "HytaleVR",
+  "Version": "1.1.0",
+  "Description": "Lets Hytale VR aim hits and block breaking with your VR hands.",
+  "Main": "dev.hytalevr.plugin.HytaleVrPlugin"
+}

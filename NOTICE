@@ -1,0 +1,23 @@
+Hytale VR
+Copyright 2025-2026 Auxdible
+
+This product includes:
+
+- Dear ImGui (MIT), https://github.com/ocornut/imgui, in third_party/imgui
+- MinHook (BSD 2-Clause), https://github.com/TsudaKageyu/minhook, in third_party/minhook
+- OpenVR SDK (BSD 3-Clause), https://github.com/ValveSoftware/openvr, in third_party/openvr
+- JSON for Modern C++ (MIT), https://github.com/nlohmann/json, in third_party/nlohmann
+
+Adapted code:
+
+- The BlockyModel texture layout rules in src/proxy/avatar.cpp (face_uv) follow
+  heurazy's HytaleVRInjector-mod (Apache 2.0).
+
+Inspiration:
+
+- heurazy's HytaleVRInjector-mod (Apache 2.0), the first Hytale VR experiments.
+- Aurora Shaders by Kristijan1001, which showed that an opengl32.dll next to
+  HytaleClient.exe is a clean way to run inside Hytale with an in-game menu.
+
+Hytale is a trademark of Hypixel Studios. This project is not affiliated with
+or endorsed by Hypixel Studios.

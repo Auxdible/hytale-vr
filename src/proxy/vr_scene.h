@@ -1,0 +1,102 @@
+// Draws the VR view in cinema mode: Hytale's window on a big screen in a dark
+// room with a floor, plus the controllers and their laser pointers.
+#pragma once
+
+#include "../core/vrmath.h"
+#include "gl_api.h"
+
+namespace hvr {
+
+// The palm, from a controller's pose: where a hand closes around the grip.
+constexpr Vec3 kPalm{0, -0.025f, 0.07f};
+
+struct HandView {
+    bool valid = false;
+    Mat4 pose;              // standing space
+    bool laser = false;
+    float laser_length = 0;
+    bool hovering = false;  // laser is on the screen
+    float glow = 0;         // lit up: 0.5 near a handle it can take hold of, 1 holding it
+};
+
+struct SceneView {
+    Screen screen;
+    bool floor = true;
+    Vec3 eye;
+    HandView hands[2];
+    bool dot = false;
+    float dot_u = 0, dot_v = 0;
+    // A piece of the HUD (the hotbar) on a small panel, in the world view.
+    bool hotbar = false;
+    Mat4 hotbar_model;
+    float hotbar_uv[4] = {0, 0, 1, 1};  // u, v of the bottom-left corner, then width, height
+    float vignette = 0;  // 0..1: how dark the edges of the view are (comfort while moving)
+    // Your character's arms on the controllers (else blocky hands), and meters per model unit.
+    bool character_arms = true;
+    float arm_scale = 1.0f / 32.0f;
+    float light = 1.0f;  // how lit the hands are: 1 in daylight, lower at night and in caves
+    // A line from the item hand to what Hytale will interact with.
+    bool target = false;
+    int target_hand = 1;
+    Vec3 target_point;
+};
+
+class EyeTarget {
+public:
+    bool resize(int width, int height);
+    void destroy();
+    GLuint fbo() const { return fbo_; }
+    GLuint texture() const { return color_; }
+    int width() const { return width_; }
+    int height() const { return height_; }
+
+private:
+    GLuint fbo_ = 0, color_ = 0, depth_ = 0;
+    int width_ = 0, height_ = 0;
+};
+
+class Scene {
+public:
+    bool init();
+    void destroy();
+    // Copies the game window's finished frame into the screen texture.
+    void capture_window(int width, int height, GLuint source_fbo);  // source 0 = the window
+    float screen_aspect() const { return height_ > 0 ? static_cast<float>(width_) / height_ : 16.0f / 9.0f; }
+    void render(const EyeTarget& target, const Mat4& projection, const Mat4& view, const SceneView& scene);
+    // Over an eye image already drawn by Hytale: the HUD panel (premultiplied
+    // texture on scene.screen) and the controllers.
+    // Hytale's depth from where it drew the held item, for the hands to be
+    // drawn in, so the item can be in front of your fingers.
+    struct HandDepth {
+        GLuint fbo = 0;
+        int width = 0, height = 0;
+        GLint depth_func = 0;
+        Mat4 view_projection;  // standing space to that depth's clip space
+    };
+    void render_overlay(GLuint fbo, int width, int height, const Mat4& projection, const Mat4& view,
+                        const SceneView& scene, GLuint hud_texture,
+                        const HandDepth* depth = nullptr);
+    // How bright the middle of an eye image is (0..1, perceived), from a small
+    // copy read back a frame later so nothing waits on the GPU. Negative
+    // until the first reading arrives.
+    float measure_brightness(GLuint fbo, int width, int height);
+
+private:
+    void draw_hands(const Mat4& vp, const SceneView& scene);
+    void draw(int first, int count, const Mat4& view_projection, const Mat4& model, int mode, const float color[4]);
+
+    GLuint program_ = 0, vao_ = 0, vbo_ = 0;
+    bool depth_ok_ = true;  // sharing Hytale's depth hasn't failed
+    GLint u_light_ = -1, u_mvp_ = -1, u_model_ = -1, u_mode_ = -1, u_color_ = -1, u_eye_ = -1, u_tex_ = -1, u_size_ = -1, u_uv_ = -1;
+    GLuint screen_fbo_ = 0, screen_texture_ = 0;
+    bool upload_arms();
+    GLuint arm_vao_ = 0, arm_vbo_ = 0, arm_texture_ = 0;
+    const void* arm_model_ = nullptr;  // the character model on the GPU
+    int arm_first_[2] = {}, arm_count_[2] = {};
+    GLuint light_fbo_ = 0, light_texture_ = 0, light_pbo_ = 0;
+    bool light_pending_ = false;
+    int width_ = 0, height_ = 0;
+    Vec3 eye_;
+};
+
+}  // namespace hvr
