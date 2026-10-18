@@ -2,6 +2,9 @@
 
 ## 2.3.2
 
+- Line up held item (World tab, Hands): the held item goes back in front of
+  your face; put your controller where its handle is and squeeze a grip, and
+  it follows that hand from there. Replaces guessing with the sliders.
 - Touch a slot on the hotbar over your hand with your other controller's tip
   to pick it, with a buzz.
 - A light tick in your hand when you pull a trigger in the world.

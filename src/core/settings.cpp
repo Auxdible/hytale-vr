@@ -25,6 +25,11 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("item_x", s.item_x);
     visit("item_y", s.item_y);
     visit("item_z", s.item_z);
+    visit("item_aligned", s.item_aligned);
+    static const char* const grip_names[12] = {"item_grip_0", "item_grip_1", "item_grip_2",  "item_grip_3",
+                                               "item_grip_4", "item_grip_5", "item_grip_6",  "item_grip_7",
+                                               "item_grip_8", "item_grip_9", "item_grip_10", "item_grip_11"};
+    for (int i = 0; i < 12; ++i) visit(grip_names[i], s.item_grip[i]);
     visit("hotbar_on_hand", s.hotbar_on_hand);
     visit("hotbar_width", s.hotbar_width);
     visit("hotbar_left", s.hotbar_left);
@@ -89,7 +94,7 @@ std::string text_of(bool value) { return value ? "true" : "false"; }
 std::string text_of(int value) { return std::to_string(value); }
 std::string text_of(float value) {
     char buffer[32];
-    std::snprintf(buffer, sizeof(buffer), "%.3g", value);
+    std::snprintf(buffer, sizeof(buffer), "%.5g", value);
     return buffer;
 }
 

@@ -39,6 +39,13 @@ SceneView g_view;
 bool g_screen_placed = false;
 std::atomic<bool> g_recenter{false};
 std::atomic<bool> g_menu_button{false};
+// Lining up the held item: the item goes back in front of your face, you put
+// your hand where it is and squeeze a grip, and that's remembered.
+std::atomic<bool> g_align_requested{false};
+bool g_aligning = false;
+std::mutex g_grip_mutex;
+bool g_grip_ready = false;
+float g_new_grip[12] = {};
 ::vr::TrackedDevicePose_t g_poses[::vr::k_unMaxTrackedDeviceCount];
 Mat4 g_hmd;
 bool g_hmd_valid = false;
@@ -390,6 +397,33 @@ void controls(const FrameContext& context, float dt) {
                                                             ::vr::k_ulInvalidInputValueHandle);
     }
 
+    if (g_align_requested.exchange(false)) {
+        g_aligning = true;
+        logf("Lining up the held item: waiting for a grip squeeze");
+    }
+    const bool was_aligning = g_aligning;  // its grip squeeze doesn't reach Hytale
+    {
+        const int item_hand = s.left_handed ? 0 : 1;
+        const HandView& hand = g_view.hands[item_hand];
+        const bool squeeze = boolean(g_actions.hotbar_next).pressed || boolean(g_actions.crouch).pressed;
+        if (g_aligning && squeeze && hand.valid && g_hmd_valid && !context.menu_open) {
+            // Hytale's first-person view sits on your head right now; keep that
+            // spot, but carried by the hand from here on.
+            const Mat4 grip = inverse_rigid(hand.pose) * g_hmd;
+            {
+                std::lock_guard lock(g_grip_mutex);
+                for (int r = 0; r < 3; ++r)
+                    for (int c = 0; c < 4; ++c) g_new_grip[r * 4 + c] = grip.at(r, c);
+                g_grip_ready = true;
+            }
+            g_aligning = false;
+            logf("Held item lined up with the %s hand", item_hand ? "right" : "left");
+            if (g_actions.haptic[item_hand])
+                ::vr::VRInput()->TriggerHapticVibrationAction(g_actions.haptic[item_hand], 0, 0.08f, 120.0f, 0.7f,
+                                                            ::vr::k_ulInvalidInputValueHandle);
+        }
+    }
+
     const bool play = !context.menu_open;
     float mx, my;
     stick(g_actions.move, mx, my);
@@ -426,10 +460,10 @@ void controls(const FrameContext& context, float dt) {
         input::key(s.key_sprint, sprint);
         input::key(225, shift);
     }
-    input::key(s.key_crouch, play && (boolean(g_actions.crouch).down || g_crouch.down));
+    input::key(s.key_crouch, play && ((boolean(g_actions.crouch).down && !was_aligning) || g_crouch.down));
     input::key(s.key_inventory, play && boolean(g_actions.inventory).down);
     input::key(41 /* Escape */, play && boolean(g_actions.back).down);
-    if (play && !pointer_mode && boolean(g_actions.hotbar_next).pressed) input::wheel(-1);
+    if (play && !pointer_mode && !was_aligning && boolean(g_actions.hotbar_next).pressed) input::wheel(-1);
     // A hotbar slot touched last frame: tap its number key.
     if (g_touch.key) {
         input::key(g_touch.key, play && g_touch.press_frames > 0);
@@ -512,6 +546,14 @@ std::string headset_name() {
 void recenter() { g_recenter = true; }
 void force_world() { g_force_world = true; }
 bool take_menu_button() { return g_menu_button.exchange(false); }
+void align_item() { g_align_requested = true; }
+bool take_item_grip(float rows[12]) {
+    std::lock_guard lock(g_grip_mutex);
+    if (!g_grip_ready) return false;
+    for (int i = 0; i < 12; ++i) rows[i] = g_new_grip[i];
+    g_grip_ready = false;
+    return true;
+}
 float lens_aspect() { return g_lens_aspect; }
 
 void begin_frame(const FrameContext& context) {
@@ -794,12 +836,18 @@ void prepare_world(const Settings& s, bool showed_world) {
     // The held item: Hytale's first-person view, moved so its grip point sits
     // in the attack hand and points where the controller points.
     const HandView& item_hand = g_view.hands[s.left_handed ? 0 : 1];
-    setup.item_in_hand = s.item_in_hand && item_hand.valid;
+    setup.item_in_hand = s.item_in_hand && item_hand.valid && !g_aligning;
     if (setup.item_in_hand) {
         const float pi = 3.14159265f;
         const Mat4 palm = translation({0, -0.025f, 0.07f});  // from the controller's tip pose back to the palm
         const Mat4 grip = rotation_x(s.item_pitch * pi / 180.0f) * translation(Vec3{} - Vec3{s.item_x, s.item_y, s.item_z});
-        setup.item = rotation_y(g_yaw_offset) * translation(Vec3{} - g_neutral) * item_hand.pose * palm * grip;
+        Mat4 hold = palm * grip;
+        if (s.item_aligned) {
+            hold = Mat4{};
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 4; ++c) hold.at(r, c) = s.item_grip[r * 4 + c];
+        }
+        setup.item = rotation_y(g_yaw_offset) * translation(Vec3{} - g_neutral) * item_hand.pose * hold;
     }
     stereo::set_eyes(setup);
 }

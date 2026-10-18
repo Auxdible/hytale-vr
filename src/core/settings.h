@@ -44,6 +44,10 @@ struct Settings {
     float item_x = 0.30f;           // where the item's grip sits in Hytale's first-person view (meters)
     float item_y = -0.32f;
     float item_z = -0.48f;
+    // Set by "Line up held item": from the controller to Hytale's first-person
+    // view, rows of a 3x4 matrix (meters). Used instead of the sliders when set.
+    bool item_aligned = false;
+    float item_grip[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
     bool hotbar_on_hand = true;     // the hotbar floats over the left controller
     float hotbar_width = 0.22f;     // meters
     float hotbar_left = 0.31f;      // where the hotbar is in Hytale's HUD, as fractions of the window

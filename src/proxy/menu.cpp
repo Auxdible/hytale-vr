@@ -265,11 +265,24 @@ void tab_world(Settings& s) {
     ImGui::TextUnformatted("Hands");
     changed |= ImGui::Checkbox("Held item in your hand", &s.item_in_hand);
     if (s.item_in_hand) {
-        hint("Move these until the item sits in your grip.");
-        changed |= slider("Item tilt", &s.item_pitch, -90.0f, 90.0f, "%.0f deg");
-        changed |= slider("Item left/right", &s.item_x, -1.0f, 1.0f, "%.2f");
-        changed |= slider("Item up/down", &s.item_y, -1.0f, 1.0f, "%.2f");
-        changed |= slider("Item near/far", &s.item_z, -1.5f, 0.5f, "%.2f");
+        if (ImGui::Button("Line up held item")) {
+            session::align_item();
+            app::set_menu_open(false);
+        }
+        hint("The item goes back in front of you. Put your controller where its handle is, at the same angle, "
+             "and squeeze the grip.");
+        if (s.item_aligned) {
+            if (ImGui::Button("Forget lined-up item")) {
+                s.item_aligned = false;
+                changed = true;
+            }
+        } else {
+            hint("Or move these until the item sits in your grip:");
+            changed |= slider("Item tilt", &s.item_pitch, -90.0f, 90.0f, "%.0f deg");
+            changed |= slider("Item left/right", &s.item_x, -1.0f, 1.0f, "%.2f");
+            changed |= slider("Item up/down", &s.item_y, -1.0f, 1.0f, "%.2f");
+            changed |= slider("Item near/far", &s.item_z, -1.5f, 0.5f, "%.2f");
+        }
     }
     changed |= ImGui::Checkbox("Hotbar on your other hand", &s.hotbar_on_hand);
     if (s.hotbar_on_hand) {
