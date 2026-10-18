@@ -1652,6 +1652,77 @@ bool is_arm_piece(const Mat4& model, float size) {
     return std::memcmp(g_arm_matrix, model.m, sizeof(g_arm_matrix)) == 0;
 }
 
+// A held item's shape, from where its parts (bones) sit: which way it's
+// long, which way its head or blade sticks out, and where to hold it. Read
+// once per item, so Hytale's animations don't shake it.
+struct ItemShape {
+    bool known = false;
+    Mat4 hold;  // item units in, grip frame out: length along +Z, head toward +X, grip point at 0
+};
+// By vertex array and index count; forgotten when what's held changes kind.
+std::map<std::pair<GLint, GLsizei>, ItemShape> g_item_shapes;
+EyeSetup::Held g_item_shapes_held = EyeSetup::Held::Other;
+
+ItemShape learn_item_shape() {
+    ItemShape shape;
+    const ProgramInfo& info = program_info(t.program);
+    GLint binding = -1;
+    if (info.node_block >= 0)
+        glr.glGetActiveUniformBlockiv(t.program, static_cast<GLuint>(info.node_block), gl::UNIFORM_BLOCK_BINDING,
+                                      &binding);
+    if (binding < 0 || binding >= kUboIndices || !glr.has_dsa) return shape;
+    const UboBinding& nodes = t.ubo[binding];
+    static float raw[16 * 64];
+    const GLsizeiptr bytes = std::min<GLsizeiptr>(nodes.size > 0 ? nodes.size : 1024, sizeof(raw)) / 64 * 64;
+    if (!nodes.buffer || bytes <= 0) return shape;
+    glr.glGetNamedBufferSubData(nodes.buffer, nodes.offset, bytes, raw);
+    std::vector<Vec3> parts;
+    for (GLsizeiptr at = 0; at < bytes / 4; at += 16) {
+        const float* m = raw + at;
+        if (m[0] == 0 && m[5] == 0 && m[10] == 0) continue;  // unused slot
+        const Vec3 p{m[12], m[13], m[14]};
+        if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) continue;
+        parts.push_back(p);
+    }
+    if (parts.size() < 2) return shape;
+    Vec3 lo = parts[0], hi = parts[0], mean{};
+    for (const Vec3& p : parts) {
+        lo = {std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z)};
+        hi = {std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z)};
+        mean = mean + p * (1.0f / static_cast<float>(parts.size()));
+    }
+    const Vec3 center = (lo + hi) * 0.5f, extent = hi - lo;
+    const float e[3] = {extent.x, extent.y, extent.z};
+    int a = 0;
+    for (int i = 1; i < 3; ++i)
+        if (e[i] > e[a]) a = i;
+    int b = (a + 1) % 3;
+    if (e[(a + 2) % 3] > e[b]) b = (a + 2) % 3;
+    const float length = e[a];
+    if (length < 2.0f) return shape;  // too small to tell (a single part)
+    const float c[3] = {center.x, center.y, center.z}, avg[3] = {mean.x, mean.y, mean.z};
+    // The handle starts nearest the item's own origin; the head is the far end.
+    Vec3 u{}, v{};
+    (&u.x)[a] = c[a] >= 0 ? 1.0f : -1.0f;
+    // The head sticks out the side where its parts crowd.
+    (&v.x)[b] = avg[b] >= c[b] ? 1.0f : -1.0f;
+    const Vec3 w = cross(u, v);
+    Vec3 grip = center;
+    using Held = EyeSetup::Held;
+    const Held held = g_setup.held;
+    if (held == Held::Other) grip = center - u * (length * 0.3f);  // a fifth of the way up from the handle's end
+    // Rows: item vectors onto v (x), u x v (y), u (z).
+    Mat4 r;
+    r.at(0, 0) = v.x, r.at(0, 1) = v.y, r.at(0, 2) = v.z;
+    r.at(1, 0) = w.x, r.at(1, 1) = w.y, r.at(1, 2) = w.z;
+    r.at(2, 0) = u.x, r.at(2, 1) = u.y, r.at(2, 2) = u.z;
+    shape.hold = r * translation(Vec3{} - grip);
+    shape.known = true;
+    logf("Hands: item (%d indices, %zu parts) %.0f units long along %c, held %s", g_draw_indices, parts.size(), length,
+         "xyz"[a], held == Held::Other ? "near the handle's end" : "by the middle");
+    return shape;
+}
+
 bool move_first_person() {
     g_fp_moved_location = -1;
     if (!g_setup.hytale_hand || !t.program || !active()) return false;
@@ -1669,7 +1740,17 @@ bool move_first_person() {
         Mat4 grip = g_setup.grip[side];
         for (int r = 0; r < 3; ++r) grip.at(r, 3) *= g_setup.world_scale;
         const float k = size * g_setup.item_size * 0.7f;
+        GLint vao = 0;
+        glr.glGetIntegerv(gl::VERTEX_ARRAY_BINDING, &vao);
+        if (g_setup.held != g_item_shapes_held || g_item_shapes.size() > 64) {
+            g_item_shapes.clear();
+            g_item_shapes_held = g_setup.held;
+        }
+        const auto key = std::make_pair(vao, g_draw_indices);
+        auto it = g_item_shapes.find(key);
+        if (it == g_item_shapes.end()) it = g_item_shapes.emplace(key, learn_item_shape()).first;
         moved = grip * scale({k, k, k});
+        if (it->second.known) moved = moved * it->second.hold;
     }
     glr.glUniformMatrix4fv(info.model_matrix, 1, gl::FALSE_, moved.m);
     g_fp_moved_location = info.model_matrix;

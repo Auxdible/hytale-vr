@@ -26,7 +26,7 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("item_tilt", s.item_tilt);
     visit("grip_tilt", s.grip_tilt);
     visit("grip_turn", s.grip_turn);
-    visit("bow_grip", s.bow_grip);
+    visit("bow_grip_offset", s.bow_grip);
     visit("character_arms", s.character_arms);
     visit("target_line", s.target_line);
     visit("aim_actions_by_hand", s.aim_actions_by_hand);
@@ -125,7 +125,7 @@ void clamp(Settings& s) {
     s.item_turn = std::clamp(s.item_turn, -180.0f, 180.0f);
     s.grip_tilt = std::clamp(s.grip_tilt, -90.0f, 90.0f);
     s.grip_turn = std::clamp(s.grip_turn, -180.0f, 180.0f);
-    s.bow_grip = std::clamp(s.bow_grip, 0.0f, 1.0f);
+    s.bow_grip = std::clamp(s.bow_grip, -0.5f, 0.5f);
     s.arm_size = std::clamp(s.arm_size, 0.4f, 2.0f);
     s.turn_mode = std::clamp(s.turn_mode, 0, 1);
     s.snap_degrees = std::clamp(s.snap_degrees, 10.0f, 90.0f);

@@ -1083,6 +1083,10 @@ void prepare_world(const Settings& s, bool showed_world) {
     setup.hytale_hand = s.hytale_hand;
     setup.item_size = s.item_size;
     setup.item_hand = grip_hand;
+    setup.held = g_held_kind == "bow"     ? stereo::EyeSetup::Held::Bow
+                 : g_held_kind == "food"  ? stereo::EyeSetup::Held::Food
+                 : g_held_kind == "block" ? stereo::EyeSetup::Held::Block
+                                          : stereo::EyeSetup::Held::Other;
     const float degrees = 3.14159265f / 180.0f;
     for (int hand = 0; hand < 2; ++hand) {
         setup.grip_valid[hand] = g_view.hands[hand].valid && g_hmd_valid;
@@ -1112,7 +1116,7 @@ void prepare_world(const Settings& s, bool showed_world) {
             setup.grip[hand] = setup.palm[hand] * translation(point) *
                                rotation_x((-120.0f - s.grip_tilt) * degrees) * rotation_z((90.0f + s.grip_turn) * degrees);
             // A bow is held by its middle, not its end.
-            if (g_held_kind == "bow") setup.grip[hand] = setup.grip[hand] * translation({0, 0, -s.bow_grip * s.item_size});
+            if (g_held_kind == "bow") setup.grip[hand] = setup.grip[hand] * translation({0, 0, s.bow_grip * s.item_size});  // the middle comes from the bow's shape
             // Food sits on top of your hand, not through your fingers.
             if (g_held_kind == "food")
                 setup.grip[hand] = setup.palm[hand] * translation(point + Vec3{0, 0.06f * s.item_size, 0}) *

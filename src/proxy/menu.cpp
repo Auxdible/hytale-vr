@@ -272,8 +272,8 @@ void tab_world(Settings& s) {
             changed |= slider("Item lean", &s.grip_tilt, -90.0f, 90.0f, "%.0f deg");
             changed |= slider("Item turn", &s.grip_turn, -180.0f, 180.0f, "%.0f deg");
             hint("Lean tips the item forward or back in your fist; turn spins it about its handle.");
-            changed |= slider("Bow grip", &s.bow_grip, 0.0f, 1.0f, "%.2f m");
-            hint("How far up the bow your hand holds it.");
+            changed |= slider("Bow grip", &s.bow_grip, -0.5f, 0.5f, "%.2f m");
+            hint("Moves a bow up or down through your hand; 0 holds it by its middle.");
         } else {
             changed |= slider("Item tilt", &s.item_tilt, -90.0f, 90.0f, "%.0f deg");
             changed |= slider("Item turn", &s.item_turn, -180.0f, 180.0f, "%.0f deg");
