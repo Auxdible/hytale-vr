@@ -5,12 +5,11 @@
 - Interact (F) is on the right grip in the world, for workbenches, doors and
   chests. The right stick flicked up or down picks the previous or next
   hotbar slot (and touching the hotbar still works).
-- Your character's own arm, in your skin, is on each controller (World tab,
-  Your character's arms): Hytale's first-person arm is pinned by its hand to
-  your right controller and drawn again, mirrored, on your left, with the
-  held item where Hytale holds it. Pieces Hytale keeps behind the camera stay
-  hidden. Turned off, each controller shows a blocky hand with the item in
-  the right one. Item size, Item tilt and Item turn adjust the fit.
+- Each controller shows a blocky hand (fist, thumb and sleeve cuff) in place
+  of the gray block, and Hytale's own model of your held item sits in the
+  right one (Held item in your hand, World tab). Hytale's first-person arms
+  are all hidden: Hytale draws each arm as a single model, so its hand can't
+  be taken on its own. Item size, Item tilt and Item turn adjust the fit.
 - With the server plugin connected, Aim with your hand is set aside and Hytale
   aims with your head: Hytale only draws what its camera faces, so pointing
   your hand behind you blanked out the view in front.

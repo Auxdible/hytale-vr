@@ -259,8 +259,6 @@ void tab_world(Settings& s) {
     ImGui::Spacing();
     ImGui::TextUnformatted("Hands");
     changed |= ImGui::Checkbox("Held item in your hand", &s.hytale_hand);
-    changed |= ImGui::Checkbox("Your character's arms", &s.hytale_arms);
-    hint("Hytale's own arm, in your skin, on each controller. Off: blocky hands.");
     if (s.hytale_hand) {
         changed |= slider("Item size", &s.item_size, 0.2f, 2.0f, "%.2fx");
         changed |= slider("Item tilt", &s.item_tilt, -90.0f, 90.0f, "%.0f deg");

@@ -197,8 +197,7 @@ constexpr GLenum VENDOR = 0x1F00, RENDERER = 0x1F01, VERSION = 0x1F02, SHADING_L
     X(void, glTexStorage3D, (GLenum target, GLsizei levels, GLenum format, GLsizei width, GLsizei height,    \
                              GLsizei depth))                                                                 \
     X(void, glBindImageTexture, (GLuint unit, GLuint texture, GLint level, GLboolean layered, GLint layer,   \
-                                 GLenum access, GLenum format))                                              \
-    X(void, glFrontFace, (GLenum mode))
+                                 GLenum access, GLenum format))
 
 struct GlApi {
 #define HVR_GL_DECLARE(ret, name, params) ret(APIENTRY* name) params = nullptr;

@@ -1619,26 +1619,14 @@ bool draw_begin(GLenum mode, GLsizei count) {
     return true;
 }
 
-// --- Your character's arms and held item on the controllers ---
+// --- Hytale's held item in the hand ---
 //
 // First person is several models drawn one after another: the arm's pieces
 // share one uModelMatrix (a 1/64 scale turned to face the camera), and the
-// held item gets its own. The arm's first piece has the hand as its root
-// bone; that hand is pinned to the item-hand controller each frame and every
-// piece (the item too) keeps where Hytale puts it relative to the hand. The
-// same arm is drawn again, mirrored, on the other controller. Pieces Hytale
-// keeps behind the camera (the body, the other arm) stay hidden.
+// held item gets its own. The item is drawn at the controller's grip, at its
+// own model scale; the arm's pieces are hidden, since the hands are ours.
 
-struct FirstPersonPiece {
-    int checked = -1000;  // frame
-    bool behind = false;
-};
-std::unordered_map<GLint, FirstPersonPiece> g_fp_pieces;  // by vertex array
-Mat4 g_arm_hand;             // the arm's hand in first-person space, unit scale
-int g_arm_hand_at = -1000;   // frame it's from
-Mat4 g_fp_mirrored;          // the current piece on the other hand
 GLint g_fp_moved_location = -1;
-GLint g_front_face = 0;      // to put back after a mirrored draw
 
 bool arm_shaped(const Mat4& m, float size) {
     const float slack = size * 0.1f;
@@ -1646,101 +1634,31 @@ bool arm_shaped(const Mat4& m, float size) {
            std::fabs(m.at(2, 2) + size) < slack;
 }
 
-// The current draw's root bone, read back from the GPU's copy of its bones.
-bool read_root_bone(const ProgramInfo& info, Mat4& root) {
-    GLint binding = -1;
-    if (info.node_block >= 0)
-        glr.glGetActiveUniformBlockiv(t.program, static_cast<GLuint>(info.node_block), gl::UNIFORM_BLOCK_BINDING,
-                                      &binding);
-    if (binding < 0 || binding >= kUboIndices || !t.ubo[binding].buffer || !glr.has_dsa) return false;
-    glr.glGetNamedBufferSubData(t.ubo[binding].buffer, t.ubo[binding].offset, sizeof(root.m), root.m);
-    root.m[3] = root.m[7] = 0;  // the shader keeps a texture offset there
-    root.m[11] = 0;
-    root.m[15] = 1;
-    return std::isfinite(root.m[12]) && std::isfinite(root.m[13]) && std::isfinite(root.m[14]);
-}
-
-// Whether a piece's root bone sits behind Hytale's first-person camera, where
-// it's never seen. Checked now and then per piece.
-bool behind_camera(const ProgramInfo& info, const Mat4& model) {
-    GLint vao = 0;
-    glr.glGetIntegerv(gl::VERTEX_ARRAY_BINDING, &vao);
-    FirstPersonPiece& piece = g_fp_pieces[vao];
-    if (g_frame - piece.checked < 20) return piece.behind;
-    piece.checked = g_frame;
-    Mat4 root;
-    piece.behind = read_root_bone(info, root) && position_of(model * root).z > 0;
-    return piece.behind;
-}
-
-Mat4 on_hand(int side, const Mat4& from_hand) {
-    Mat4 grip = g_setup.grip[side];
-    for (int r = 0; r < 3; ++r) grip.at(r, 3) *= g_setup.world_scale;
-    const float k = g_setup.item_size;
-    return grip * scale({k, k, k}) * from_hand;
-}
-
-int move_first_person() {
+bool move_first_person() {
     g_fp_moved_location = -1;
-    if (!g_setup.hytale_hand || !t.program || !active()) return 0;
+    if (!g_setup.hytale_hand || !t.program || !active()) return false;
     const ProgramInfo& info = program_info(t.program);
-    if (!info.first_person || info.model_matrix < 0) return 0;
+    if (!info.first_person || info.model_matrix < 0) return false;
     const Mat4 model = mat_at(g_fp_model);
     const float size = std::sqrt(model.at(0, 0) * model.at(0, 0) + model.at(1, 0) * model.at(1, 0) +
                                  model.at(2, 0) * model.at(2, 0));
-    const int side = g_setup.item_hand, other = 1 - side;
     Mat4 moved;
     for (float& v : moved.m) v = 0;  // hidden: every vertex at w = 0, clipped away
-    int result = 1;
-    if (size > 0 && g_setup.grip_valid[side]) {
-        if (!arm_shaped(model, size)) {
-            // The held item: where Hytale holds it in the hand, or straight in
-            // the grip when the arm isn't drawn.
-            moved = g_setup.hytale_arms && g_arm_hand_at == g_frame
-                        ? on_hand(side, inverse_rigid(g_arm_hand) * model)
-                        : on_hand(side, scale({size, size, size}));
-        } else if (g_setup.hytale_arms && !behind_camera(info, model)) {
-            Mat4 root;
-            if (g_arm_hand_at != g_frame && read_root_bone(info, root)) {
-                Mat4 hand = model * root;
-                for (int c = 0; c < 3; ++c) {
-                    const float n = std::sqrt(hand.at(0, c) * hand.at(0, c) + hand.at(1, c) * hand.at(1, c) +
-                                              hand.at(2, c) * hand.at(2, c));
-                    if (n > 0)
-                        for (int r = 0; r < 3; ++r) hand.at(r, c) /= n;
-                }
-                g_arm_hand = hand;
-                g_arm_hand_at = g_frame;
-            }
-            if (g_arm_hand_at == g_frame) {
-                const Mat4 from_hand = inverse_rigid(g_arm_hand) * model;
-                moved = on_hand(side, from_hand);
-                if (g_setup.grip_valid[other] && glr.glFrontFace) {
-                    g_fp_mirrored = on_hand(other, scale({-1, 1, 1}) * from_hand);
-                    result = 2;
-                }
-            }
-        }
+    const int side = g_setup.item_hand;
+    if (size > 0 && !arm_shaped(model, size) && g_setup.grip_valid[side]) {
+        Mat4 grip = g_setup.grip[side];
+        for (int r = 0; r < 3; ++r) grip.at(r, 3) *= g_setup.world_scale;
+        const float k = size * g_setup.item_size;
+        moved = grip * scale({k, k, k});
     }
     glr.glUniformMatrix4fv(info.model_matrix, 1, gl::FALSE_, moved.m);
     g_fp_moved_location = info.model_matrix;
-    return result;
-}
-
-bool mirror_first_person() {
-    if (g_fp_moved_location < 0) return false;
-    glr.glUniformMatrix4fv(g_fp_moved_location, 1, gl::FALSE_, g_fp_mirrored.m);
-    // A mirror turns the triangles inside out; swap which side faces front.
-    glr.glGetIntegerv(0x0B46 /* FRONT_FACE */, &g_front_face);
-    glr.glFrontFace(g_front_face == 0x0900 /* CW */ ? 0x0901 : 0x0900);
     return true;
 }
 
 void restore_first_person() {
     if (g_fp_moved_location >= 0) glr.glUniformMatrix4fv(g_fp_moved_location, 1, gl::FALSE_, g_fp_model);
-    if (g_front_face) glr.glFrontFace(static_cast<GLenum>(g_front_face));
     g_fp_moved_location = -1;
-    g_front_face = 0;
 }
 
 void draw_second() {

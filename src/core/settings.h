@@ -43,7 +43,6 @@ struct Settings {
     bool show_arms = false;
     // Hytale's own hand and held item, carried by your controller instead.
     bool hytale_hand = true;
-    bool hytale_arms = true;        // your character's own arm, in your skin, on each controller
     float item_size = 0.7f;         // of Hytale's first-person size
     float item_turn = 180.0f;       // degrees it turns about the controller's up axis
     float item_tilt = 30.0f;        // degrees the item tips forward from the controller

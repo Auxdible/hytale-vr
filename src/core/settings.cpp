@@ -21,7 +21,6 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("sharpness", s.render_scale);
     visit("show_arms", s.show_arms);
     visit("hytale_hand", s.hytale_hand);
-    visit("hytale_arms", s.hytale_arms);
     visit("item_scale", s.item_size);  // "item_size" held 1.0 before it was too big
     visit("item_turn", s.item_turn);
     visit("item_tilt", s.item_tilt);

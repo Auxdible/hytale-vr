@@ -861,8 +861,6 @@ void prepare_world(const Settings& s, bool showed_world) {
     setup.hytale_hand = s.hytale_hand;
     setup.item_size = s.item_size;
     setup.item_hand = grip_hand;
-    setup.hytale_arms = s.hytale_arms;
-    for (int hand = 0; hand < 2; ++hand) g_view.hands[hand].hide_model = s.hytale_arms && g_world_frame;
     const float degrees = 3.14159265f / 180.0f;
     for (int hand = 0; hand < 2; ++hand) {
         setup.grip_valid[hand] = g_view.hands[hand].valid && g_hmd_valid;
