@@ -2,6 +2,9 @@
 
 ## 2.3.2
 
+- Slender food, like meat on a bone, is held through your fist by its end
+  like a handle; round food still sits on your hand. Swap its ends (World
+  tab) if the wrong end is in your fist.
 - Held items no longer show through your hand: Hytale squashes the depth of
   what you hold so it never dips into walls, and your hands now get the same
   squash.

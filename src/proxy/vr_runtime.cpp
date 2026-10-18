@@ -1188,8 +1188,9 @@ void prepare_world(const Settings& s, bool showed_world) {
                 setup.grip[hand] = setup.palm[hand] * translation(point) * rotation_x(-s.grip_tilt * degrees) *
                                    rotation_y(s.grip_turn * degrees) * point_ahead;
             }
-            // Food sits on top of your hand, not through your fingers.
-            if (g_held_kind == "food")
+            // Round food sits on top of your hand, not through your fingers;
+            // slender food (meat on a bone) goes through your fist by its end.
+            if (g_held_kind == "food" && !stereo::held_item_slender())
                 setup.grip[hand] = setup.palm[hand] * translation(point + Vec3{0, 0.06f * s.item_size, 0}) *
                                    rotation_x(-s.grip_tilt * degrees) * rotation_y(s.grip_turn * degrees);
         }

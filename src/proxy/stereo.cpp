@@ -1179,7 +1179,10 @@ std::string g_item_fixes_text;
 bool g_item_fixes_changed = false;
 int g_held_model = 0, g_held_model_frame = -1000;
 
+bool g_held_slender = false;
+
 int held_item_model() { return g_frame - g_held_model_frame < 30 ? g_held_model : 0; }
+bool held_item_slender() { return held_item_model() != 0 && g_held_slender; }
 
 void set_item_fixes(const std::string& fixes) {
     if (fixes == g_item_fixes_text) return;
@@ -1711,6 +1714,7 @@ bool is_arm_piece(const Mat4& model, float size) {
 // once per item, so Hytale's animations don't shake it.
 struct ItemShape {
     bool known = false;
+    bool slender = false;  // much longer than it is wide, like meat on a bone
     Mat4 hold;  // item units in, grip frame out: length along +Z, head toward +X, grip point at 0
 };
 // By vertex array and index count; forgotten when what's held changes kind.
@@ -1772,7 +1776,10 @@ ItemShape learn_item_shape() {
     using Held = EyeSetup::Held;
     const Held held = g_setup.held;
     if (held == Held::Other) grip = center - u * (length * 0.3f);  // a fifth of the way up from the handle's end
-    if (held == Held::Aimed) grip = center - u * (length * 0.2f);  // behind the middle, like a pistol grip or stock
+    if (held == Held::Aimed) grip = center - u * (length * 0.2f);
+    // Slender food (meat on a bone, a fish) is held by its end like a handle; round food sits on your hand.
+    shape.slender = length >= 1.6f * std::max(e[b], 0.5f);
+    if (held == Held::Food && shape.slender) grip = center - u * (length * 0.35f);  // behind the middle, like a pistol grip or stock
     // Rows: item vectors onto v (x), u x v (y), u (z).
     Mat4 r;
     r.at(0, 0) = v.x, r.at(0, 1) = v.y, r.at(0, 2) = v.z;
@@ -1782,7 +1789,9 @@ ItemShape learn_item_shape() {
     shape.known = true;
     logf("Hands: item (%d indices, %zu parts) %.0f units long along %c, held %s%s", g_draw_indices, parts.size(), length,
          "xyz"[a],
-         held == Held::Other ? "near the handle's end" : held == Held::Aimed ? "pointing ahead" : "by the middle",
+         held == Held::Other || (held == Held::Food && shape.slender) ? "near the handle's end"
+        : held == Held::Aimed                                         ? "pointing ahead"
+                                                                      : "by the middle",
          how ? " (turned around in the menu)" : "");
     return shape;
 }
@@ -1830,6 +1839,7 @@ bool move_first_person() {
         const auto key = std::make_pair(vao, g_draw_indices);
         auto it = g_item_shapes.find(key);
         if (it == g_item_shapes.end()) it = g_item_shapes.emplace(key, learn_item_shape()).first;
+        if (side == g_setup.item_hand) g_held_slender = it->second.slender;
         moved = grip * scale({k, k, k});
         if (it->second.known) moved = moved * it->second.hold;
         // Remember where it's drawn, for the hands to share its depth.

@@ -84,6 +84,8 @@ bool offhand_item();
 // The model of the item in your hand lately (0 for none), and the fixes to
 // apply to held items, as in Settings::item_fixes.
 int held_item_model();
+// Whether that item is much longer than wide (meat on a bone, say).
+bool held_item_slender();
 void set_item_fixes(const std::string& fixes);
 // The HUD target for the menu to draw into this frame (0 when not stereo).
 GLuint hud_fbo_this_frame();
