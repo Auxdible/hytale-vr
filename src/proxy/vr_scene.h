@@ -7,6 +7,9 @@
 
 namespace hvr {
 
+// The palm, from a controller's pose: where a hand closes around the grip.
+constexpr Vec3 kPalm{0, -0.025f, 0.07f};
+
 struct HandView {
     bool valid = false;
     Mat4 pose;              // standing space
@@ -30,6 +33,11 @@ struct SceneView {
     // Your character's arms on the controllers (else blocky hands), and meters per model unit.
     bool character_arms = true;
     float arm_scale = 1.0f / 32.0f;
+    float light = 1.0f;  // how lit the hands are: 1 in daylight, lower at night and in caves
+    // A line from the item hand to what Hytale will interact with.
+    bool target = false;
+    int target_hand = 1;
+    Vec3 target_point;
 };
 
 class EyeTarget {
@@ -58,17 +66,23 @@ public:
     // texture on scene.screen) and the controllers.
     void render_overlay(GLuint fbo, int width, int height, const Mat4& projection, const Mat4& view,
                         const SceneView& scene, GLuint hud_texture);
+    // How bright the middle of an eye image is (0..1, perceived), from a small
+    // copy read back a frame later so nothing waits on the GPU. Negative
+    // until the first reading arrives.
+    float measure_brightness(GLuint fbo, int width, int height);
 
 private:
     void draw_hands(const Mat4& vp, const SceneView& scene);
     void draw(int first, int count, const Mat4& view_projection, const Mat4& model, int mode, const float color[4]);
 
     GLuint program_ = 0, vao_ = 0, vbo_ = 0;
-    GLint u_mvp_ = -1, u_model_ = -1, u_mode_ = -1, u_color_ = -1, u_eye_ = -1, u_tex_ = -1, u_size_ = -1, u_uv_ = -1;
+    GLint u_light_ = -1, u_mvp_ = -1, u_model_ = -1, u_mode_ = -1, u_color_ = -1, u_eye_ = -1, u_tex_ = -1, u_size_ = -1, u_uv_ = -1;
     GLuint screen_fbo_ = 0, screen_texture_ = 0;
     bool upload_arms();
     GLuint arm_vao_ = 0, arm_vbo_ = 0, arm_texture_ = 0;
     int arm_first_[2] = {}, arm_count_[2] = {};
+    GLuint light_fbo_ = 0, light_texture_ = 0, light_pbo_ = 0;
+    bool light_pending_ = false;
     int width_ = 0, height_ = 0;
     Vec3 eye_;
 };

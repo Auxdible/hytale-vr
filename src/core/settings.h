@@ -43,11 +43,12 @@ struct Settings {
     bool show_arms = false;
     // Hytale's own hand and held item, carried by your controller instead.
     bool hytale_hand = true;
-    float item_size = 0.7f;         // of Hytale's first-person size
+    float item_size = 1.0f;         // of the size Hytale gives it in your hand
     float item_turn = 180.0f;       // degrees it turns about the controller's up axis
     float item_tilt = 30.0f;        // degrees the item tips forward from the controller
     bool character_arms = true;     // your character's forearms and hands from Hytale's files, not blocky hands
-    float arm_size = 1.0f;          // of your character's size in the world
+    bool target_line = true;        // a line from your hand to what you'll interact with (needs the plugin)
+    float arm_size = 0.8f;          // of your character's size in the world
     bool hotbar_on_hand = true;     // the hotbar floats over the left controller
     float hotbar_width = 0.22f;     // meters
     float hotbar_left = 0.31f;      // where the hotbar is in Hytale's HUD, as fractions of the window

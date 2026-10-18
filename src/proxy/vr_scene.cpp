@@ -1,5 +1,6 @@
 #include "vr_scene.h"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -33,6 +34,7 @@ uniform int uMode;
 uniform vec4 uColor;
 uniform vec3 uEye;
 uniform vec2 uSize;
+uniform float uLight;
 uniform sampler2D uTex;
 out vec4 oColor;
 
@@ -75,7 +77,7 @@ void main() {
         if (skin.a < 0.5) discard;
         vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
         float light = 0.62 + 0.38 * abs(dot(n, normalize(vec3(0.35, 1.0, 0.45))));
-        oColor = vec4(skin.rgb * light, 1.0);
+        oColor = vec4(skin.rgb * light * uLight, 1.0);
     } else if (uMode == 7) {
         float r = length(vWorld.xy);
         oColor = vec4(0.0, 0.0, 0.0, uColor.a * smoothstep(0.45, 1.05, r));
@@ -213,6 +215,7 @@ bool Scene::init() {
     u_tex_ = glr.glGetUniformLocation(program_, "uTex");
     u_size_ = glr.glGetUniformLocation(program_, "uSize");
     u_uv_ = glr.glGetUniformLocation(program_, "uUvRect");
+    u_light_ = glr.glGetUniformLocation(program_, "uLight");
 
     const std::vector<Vertex> vertices = build_geometry();
     glr.glGenVertexArrays(1, &vao_);
@@ -273,6 +276,8 @@ void Scene::destroy() {
     width_ = height_ = 0;
     program_ = vao_ = vbo_ = 0;  // freed with the context
     arm_vao_ = arm_vbo_ = arm_texture_ = 0;
+    light_fbo_ = light_texture_ = light_pbo_ = 0;
+    light_pending_ = false;
 }
 
 void Scene::capture_window(int width, int height, GLuint source_fbo) {
@@ -309,6 +314,50 @@ void Scene::capture_window(int width, int height, GLuint source_fbo) {
     glr.glGenerateMipmap(gl::TEXTURE_2D);
 }
 
+float Scene::measure_brightness(GLuint fbo, int width, int height) {
+    constexpr int kSize = 32;
+    if (!fbo || width <= 0 || height <= 0) return -1;
+    if (!light_fbo_) {
+        glr.glGenTextures(1, &light_texture_);
+        glr.glBindTexture(gl::TEXTURE_2D, light_texture_);
+        glr.glTexImage2D(gl::TEXTURE_2D, 0, static_cast<GLint>(gl::RGBA8), kSize, kSize, 0, gl::RGBA, gl::UNSIGNED_BYTE,
+                         nullptr);
+        glr.glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, static_cast<GLint>(gl::LINEAR));
+        glr.glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAX_LEVEL, 0);
+        glr.glGenFramebuffers(1, &light_fbo_);
+        glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, light_fbo_);
+        glr.glFramebufferTexture2D(gl::DRAW_FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, light_texture_, 0);
+        glr.glGenBuffers(1, &light_pbo_);
+        glr.glBindBuffer(gl::PIXEL_PACK_BUFFER, light_pbo_);
+        glr.glBufferData(gl::PIXEL_PACK_BUFFER, kSize * kSize * 4, nullptr, gl::STREAM_READ);
+        glr.glBindBuffer(gl::PIXEL_PACK_BUFFER, 0);
+    }
+    GLint pack = 0;
+    glr.glGetIntegerv(gl::PIXEL_PACK_BUFFER_BINDING, &pack);
+    glr.glBindBuffer(gl::PIXEL_PACK_BUFFER, light_pbo_);
+    float brightness = -1;
+    if (light_pending_) {
+        static uint8_t pixels[kSize * kSize * 4];
+        glr.glGetBufferSubData(gl::PIXEL_PACK_BUFFER, 0, sizeof(pixels), pixels);
+        double sum = 0;
+        for (int i = 0; i < kSize * kSize; ++i)
+            sum += 0.2126 * pixels[i * 4] + 0.7152 * pixels[i * 4 + 1] + 0.0722 * pixels[i * 4 + 2];
+        brightness = static_cast<float>(sum / (kSize * kSize * 255.0));
+    }
+    // The middle of the view, where you're looking, shrunk down for next frame.
+    glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, fbo);
+    glr.glBindFramebuffer(gl::DRAW_FRAMEBUFFER, light_fbo_);
+    glr.glDisable(gl::SCISSOR_TEST);
+    glr.glBlitFramebuffer(width / 5, height / 5, width - width / 5, height - height / 5, 0, 0, kSize, kSize,
+                          gl::COLOR_BUFFER_BIT, gl::LINEAR);
+    glr.glBindFramebuffer(gl::READ_FRAMEBUFFER, light_fbo_);
+    glr.glPixelStorei(0x0D05 /* PACK_ALIGNMENT */, 4);
+    glr.glReadPixels(0, 0, kSize, kSize, gl::RGBA, gl::UNSIGNED_BYTE, nullptr);
+    light_pending_ = true;
+    glr.glBindBuffer(gl::PIXEL_PACK_BUFFER, static_cast<GLuint>(pack));
+    return brightness;
+}
+
 void Scene::draw(int first, int count, const Mat4& view_projection, const Mat4& model, int mode, const float color[4]) {
     const Mat4 mvp = view_projection * model;
     glr.glUniformMatrix4fv(u_mvp_, 1, gl::FALSE_, mvp.m);
@@ -328,7 +377,8 @@ void Scene::draw_hands(const Mat4& vp, const SceneView& scene) {
     for (int side = 0; side < 2; ++side) {
         const HandView& hand = scene.hands[side];
         if (!hand.valid) continue;
-        const Mat4 palm = hand.pose * translation({0, -0.025f, 0.07f});
+        const Mat4 palm = hand.pose * translation(kPalm);
+        glr.glUniform1f(u_light_, scene.light);
         if (scene.character_arms && upload_arms() && arm_count_[side] > 0) {
             // Your character's forearm and hand, palm on the grip, arm back along the controller.
             GLint texture = 0;
@@ -342,9 +392,10 @@ void Scene::draw_hands(const Mat4& vp, const SceneView& scene) {
         } else {
             // A blocky hand in Hytale's style, closed around where a held item
             // sits: fist, thumb and sleeve cuff, around the palm.
-            const float skin[4] = {0.87f, 0.67f, 0.53f, 1.0f};
-            const float thumb_skin[4] = {0.80f, 0.60f, 0.47f, 1.0f};
-            const float sleeve[4] = {0.30f, 0.33f, 0.42f, 1.0f};
+            const float l = scene.light;
+            const float skin[4] = {0.87f * l, 0.67f * l, 0.53f * l, 1.0f};
+            const float thumb_skin[4] = {0.80f * l, 0.60f * l, 0.47f * l, 1.0f};
+            const float sleeve[4] = {0.30f * l, 0.33f * l, 0.42f * l, 1.0f};
             const float mirror = side == 0 ? -1.0f : 1.0f;
             draw(kCubeFirst, kCubeCount, vp, palm * translation({0, -0.005f, 0}) * hvr::scale({0.075f, 0.085f, 0.085f}), 1,
                  skin);
@@ -361,6 +412,24 @@ void Scene::draw_hands(const Mat4& vp, const SceneView& scene) {
                                hand.hovering ? 0.85f : 0.45f};
         draw(kCubeFirst, kCubeCount, vp,
              aim(origin + forward * (length * 0.5f), forward) * hvr::scale({0.003f, 0.003f, length}), 1, beam);
+    }
+    if (scene.target && scene.hands[scene.target_hand].valid) {
+        // A faint line from the hand to what you'll interact with, and a mark on it.
+        const Vec3 origin = position_of(scene.hands[scene.target_hand].pose * translation(kPalm + Vec3{0, 0, -0.06f}));
+        const Vec3 to = scene.target_point - origin;
+        const float length = hvr::length(to);
+        if (length > 0.05f) {
+            const Vec3 forward = to * (1.0f / length);
+            const float beam[4] = {0.95f, 0.95f, 1.0f, 0.28f};
+            const float mark[4] = {1.0f, 1.0f, 1.0f, 0.75f};
+            glr.glDepthMask(0);
+            draw(kCubeFirst, kCubeCount, vp,
+                 aim(origin + forward * (length * 0.5f), forward) * hvr::scale({0.002f, 0.002f, length}), 1, beam);
+            const float size = std::clamp(length * 0.012f, 0.006f, 0.04f);
+            draw(kCubeFirst, kCubeCount, vp, aim(scene.target_point - forward * 0.01f, forward) * hvr::scale({size, size, size}),
+                 1, mark);
+            glr.glDepthMask(1);
+        }
     }
     if (scene.dot) {
         const float dot_color[4] = {1.0f, 0.82f, 0.35f, 1.0f};

@@ -21,11 +21,12 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("sharpness", s.render_scale);
     visit("show_arms", s.show_arms);
     visit("hytale_hand", s.hytale_hand);
-    visit("item_scale", s.item_size);  // "item_size" held 1.0 before it was too big
+    visit("held_item_size", s.item_size);  // "item_scale" was for the item without a hand to hold it
     visit("item_turn", s.item_turn);
     visit("item_tilt", s.item_tilt);
     visit("character_arms", s.character_arms);
-    visit("arm_size", s.arm_size);
+    visit("target_line", s.target_line);
+    visit("hand_size", s.arm_size);  // "arm_size" was 1.0 when the arms came in too big
     visit("hotbar_on_hand", s.hotbar_on_hand);
     visit("hotbar_width", s.hotbar_width);
     visit("hotbar_left", s.hotbar_left);

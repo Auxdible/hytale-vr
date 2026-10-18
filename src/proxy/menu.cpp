@@ -259,12 +259,15 @@ void tab_world(Settings& s) {
     ImGui::Spacing();
     ImGui::TextUnformatted("Hands");
     changed |= ImGui::Checkbox("Your character's arms", &s.character_arms);
-    if (s.character_arms) changed |= slider("Arm size", &s.arm_size, 0.4f, 2.0f, "%.2fx");
+    if (s.character_arms) changed |= slider("Hand size", &s.arm_size, 0.4f, 2.0f, "%.2fx");
+    changed |= ImGui::Checkbox("Line to what you'll interact with", &s.target_line);
     changed |= ImGui::Checkbox("Held item in your hand", &s.hytale_hand);
     if (s.hytale_hand) {
         changed |= slider("Item size", &s.item_size, 0.2f, 2.0f, "%.2fx");
-        changed |= slider("Item tilt", &s.item_tilt, -90.0f, 90.0f, "%.0f deg");
-        changed |= slider("Item turn", &s.item_turn, -180.0f, 180.0f, "%.0f deg");
+        if (!s.character_arms) {
+            changed |= slider("Item tilt", &s.item_tilt, -90.0f, 90.0f, "%.0f deg");
+            changed |= slider("Item turn", &s.item_turn, -180.0f, 180.0f, "%.0f deg");
+        }
     } else {
         changed |= ImGui::Checkbox("Show Hytale's arms and held item", &s.show_arms);
         hint("Stuck to your head as one piece in VR, so they're off by default.");

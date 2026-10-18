@@ -39,6 +39,13 @@ struct EyeSetup {
     Mat4 grip[2];  // [0] left hand
     int item_hand = 1;
     float item_size = 1;
+    // Your character's hands: each palm from the head (meters), how many
+    // meters a model unit is, and where the hand and its item point sit in the
+    // palm's frame (model units). Held items go where Hytale's hand holds them.
+    Mat4 palm[2];
+    float arm_unit = 1.0f / 32.0f;
+    bool hand_valid = false, attachment_valid = false;
+    Mat4 hand, attachment;  // the item hand's
     // Smooths small, quick wobbles out of Hytale's camera position (bobbing,
     // sway), while still following walking, jumping and falling.
     bool steady = true;

@@ -279,49 +279,66 @@ bool load_json(Zip& zip, const std::string& path, json& out) {
     return !out.is_discarded();
 }
 
-struct Body {
-    std::string model, texture;
+// One piece of the character: a model and its texture in the colors picked.
+struct Part {
+    std::string key, model, texture;
     Image image;
 };
 
-// The body the player picked: its model and its texture in their skin color.
-bool load_body(Zip& zip, Body& body) {
-    std::string choice;  // "<part id>.<color>"
-    const std::wstring skin_file = latest_skin_file();
-    if (!skin_file.empty()) {
-        std::ifstream file(skin_file, std::ios::binary);
-        const json skin = json::parse(file, nullptr, false);
-        if (!skin.is_discarded()) {
-            if (const json* value = find_key(skin, "bodyCharacteristic"); value && value->is_string()) choice = *value;
-        }
+// "<id>.<color>" or "<id>.<color>.<variant>": the ways an id and its color
+// can be split, most likely first.
+std::vector<std::array<std::string, 3>> split_choice(const std::string& choice) {
+    std::vector<std::array<std::string, 3>> ways;
+    std::vector<std::string> bits;
+    for (size_t at = 0;;) {
+        const size_t dot = choice.find('.', at);
+        bits.push_back(choice.substr(at, dot == std::string::npos ? std::string::npos : dot - at));
+        if (dot == std::string::npos) break;
+        at = dot + 1;
     }
-    logf("Character: skin file %s, body \"%s\"", skin_file.empty() ? "not found" : narrow(skin_file).c_str(),
-         choice.c_str());
+    if (bits.size() >= 3) ways.push_back({bits[0], bits[1], bits[2]});
+    const size_t last = choice.rfind('.');
+    if (last != std::string::npos) ways.push_back({choice.substr(0, last), choice.substr(last + 1), ""});
+    ways.push_back({choice, "", ""});
+    return ways;
+}
 
-    const size_t dot = choice.rfind('.');
-    const std::string id = choice.substr(0, dot), color = dot == std::string::npos ? "" : choice.substr(dot + 1);
-    json catalog;
+// Looks the choice up in a Character Creator catalog and loads its texture,
+// colored through its gradient.
+bool load_part(Zip& zip, const json& catalog, const std::string& choice, Part& out) {
     const json* part = nullptr;
-    if (!id.empty() && load_json(zip, "CharacterCreator/BodyCharacteristics.json", catalog))
-        part = find_id(catalog, id);
-    body.model = string_at(part, "Model");
-    std::string gradient_set = string_at(part, "GradientSet");
-    body.texture = string_at(part, "GreyscaleTexture");
-    if (body.texture.empty() && part) {
-        if (const json* textures = find_key(*part, "Textures")) {
-            const json* chosen = find_key(*textures, color);
-            body.texture = string_at(chosen, "Texture");
-            if (body.texture.empty() && textures->is_object() && !textures->empty())
-                body.texture = string_at(&textures->begin().value(), "Texture");
+    std::array<std::string, 3> way;
+    for (const auto& w : split_choice(choice)) {
+        if ((part = find_id(catalog, w[0]))) {
+            way = w;
+            break;
         }
-        gradient_set.clear();
     }
-    if (body.model.empty()) body.model = "Characters/Player.blockymodel";
-    if (body.texture.empty()) body.texture = "Characters/Player_Textures/Player_Greyscale.png", gradient_set.clear();
-
+    if (!part) return false;
+    const std::string& color = way[1];
+    // A variant (a sleeve length, say) can carry its own model and textures.
+    const json* variant = way[2].empty() ? nullptr : find_key(*part, way[2]);
+    const auto field = [&](const char* key) {
+        std::string value = variant && variant->is_object() ? string_at(variant, key) : std::string();
+        return value.empty() ? string_at(part, key) : value;
+    };
+    out.model = field("Model");
+    std::string gradient_set = field("GradientSet");
+    out.texture = field("GreyscaleTexture");
+    if (out.texture.empty()) {
+        gradient_set.clear();
+        const json* textures = variant ? find_key(*variant, "Textures") : nullptr;
+        if (!textures) textures = find_key(*part, "Textures");
+        if (textures) {
+            out.texture = string_at(find_key(*textures, color), "Texture");
+            if (out.texture.empty() && textures->is_object() && !textures->empty())
+                out.texture = string_at(&textures->begin().value(), "Texture");
+        }
+    }
+    if (out.texture.empty()) return false;
     std::vector<uint8_t> png;
-    if (!zip.load(body.texture, png) || !decode_png(png, body.image)) {
-        logf("Character: couldn't read the texture %s", body.texture.c_str());
+    if (!zip.load(out.texture, png) || !decode_png(png, out.image)) {
+        logf("Character: couldn't read the texture %s", out.texture.c_str());
         return false;
     }
     json gradients;
@@ -330,14 +347,60 @@ bool load_body(Zip& zip, Body& body) {
         const std::string strip = set ? string_at(find_key(*set, color), "Texture") : std::string();
         Image gradient;
         if (!strip.empty() && zip.load(strip, png) && decode_png(png, gradient)) {
-            apply_gradient(body.image, gradient);
+            apply_gradient(out.image, gradient);
         } else {
             logf("Character: no %s color in gradient set %s", color.c_str(), gradient_set.c_str());
         }
     }
-    logf("Character: model %s, texture %s %ux%u", body.model.c_str(), body.texture.c_str(), body.image.width,
-         body.image.height);
     return true;
+}
+
+// The skin Hytale saved for the player: each slot ("bodyCharacteristic",
+// "undertop", "gloves", ...) and what was picked for it.
+std::vector<std::pair<std::string, std::string>> read_skin() {
+    std::vector<std::pair<std::string, std::string>> slots;
+    const std::wstring skin_file = latest_skin_file();
+    if (skin_file.empty()) {
+        logf("Character: no saved skin found");
+        return slots;
+    }
+    std::ifstream file(skin_file, std::ios::binary);
+    const json skin = json::parse(file, nullptr, false);
+    if (skin.is_discarded()) return slots;
+    // The slots sit in the object that holds bodyCharacteristic.
+    const json* holder = &skin;
+    std::vector<const json*> stack{&skin};
+    while (!stack.empty()) {
+        const json* at = stack.back();
+        stack.pop_back();
+        if (at->is_object() && at->contains("bodyCharacteristic")) {
+            holder = at;
+            break;
+        }
+        if (at->is_structured())
+            for (const auto& item : *at) stack.push_back(&item);
+    }
+    if (holder->is_object()) {
+        for (const auto& [key, value] : holder->items()) {
+            if (value.is_string() && !value.get<std::string>().empty()) slots.push_back({key, value.get<std::string>()});
+        }
+    }
+    std::string list;
+    for (const auto& [key, value] : slots) list += (list.empty() ? "" : ", ") + key + "=" + value;
+    logf("Character: skin file %s: %s", narrow(skin_file).c_str(), list.c_str());
+    return slots;
+}
+
+// The catalog for a slot: "undertop" is CharacterCreator/Undertops.json.
+bool load_catalog(Zip& zip, const std::string& slot, json& out) {
+    if (slot.empty()) return false;
+    std::string name = slot;
+    name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(name[0])));
+    for (const std::string& file : {name + "s", name, name + "es"}) {
+        if (!zip.find("CharacterCreator/" + file + ".json").empty())
+            return load_json(zip, "CharacterCreator/" + file + ".json", out);
+    }
+    return false;
 }
 
 // ---- BlockyModel -------------------------------------------------------------
@@ -537,43 +600,68 @@ bool inside(const std::vector<Node>& nodes, int node, int root) {
     return false;
 }
 
-bool build_arm(const std::vector<Node>& nodes, int side, const Image& tex, Arm& arm) {
-    // From the forearm down when the model has one, else the whole arm.
-    int root = -1, forearm = -1, hand = -1;
+// The arm's frame: the palm at the origin, the arm toward the palm along -Z,
+// the thumb side +Y.
+struct ArmFrame {
+    V3 palm, outward, forward, down;
+    V3 point(V3 p) const { return direction(p - palm); }
+    V3 direction(V3 v) const { return {dot(v, outward), dot(v, forward), -dot(v, down)}; }
+};
+
+struct Geometry {
+    std::vector<V3> points;
+    std::vector<std::pair<float, float>> uvs;
+    size_t layer_start = 0;
+};
+
+// The base model's arm: which part starts it and where its hand is.
+struct ArmBones {
+    int root = -1, hand = -1, attachment = -1;
+};
+
+ArmBones find_arm(const std::vector<Node>& nodes, int side) {
+    ArmBones bones;
+    int forearm = -1;
     for (int i = 0; i < static_cast<int>(nodes.size()); ++i) {
-        if (arm_side(nodes[i].name) != side) continue;
         const std::string n = lower(nodes[i].name);
         const auto shallower = [&](int best) { return best < 0 || nodes[i].depth < nodes[best].depth; };
-        if (shallower(root)) root = i;
+        const bool left = n.rfind("l-", 0) == 0 || n.rfind("l_", 0) == 0 || n.find("left") != std::string::npos;
+        const bool right = n.rfind("r-", 0) == 0 || n.rfind("r_", 0) == 0 || n.find("right") != std::string::npos;
+        if (n.find("attachment") != std::string::npos && (side ? right : left) && n.find("eye") == std::string::npos &&
+            n.find("ear") == std::string::npos && n.find("eyebrow") == std::string::npos)
+            bones.attachment = i;
+        if (arm_side(nodes[i].name) != side) continue;
+        if (shallower(bones.root)) bones.root = i;
         if ((n.find("forearm") != std::string::npos || n.find("lower") != std::string::npos) && shallower(forearm))
             forearm = i;
-        if (n.find("hand") != std::string::npos && shallower(hand)) hand = i;
+        if (n.find("hand") != std::string::npos && shallower(bones.hand)) bones.hand = i;
     }
-    if (forearm >= 0) root = forearm;
-    if (root < 0) return false;
-    if (hand >= 0 && !inside(nodes, hand, root)) hand = -1;
+    if (forearm >= 0) bones.root = forearm;
+    if (bones.hand >= 0 && !inside(nodes, bones.hand, bones.root)) bones.hand = -1;
+    return bones;
+}
 
+ArmFrame arm_frame(const std::vector<Node>& nodes, const ArmBones& bones, const Image& tex) {
     std::vector<V3> points, hand_points;
-    std::vector<std::pair<float, float>> uvs, hand_uvs;
+    std::vector<std::pair<float, float>> uvs;
     for (int i = 0; i < static_cast<int>(nodes.size()); ++i) {
-        if (!nodes[i].shape || !inside(nodes, i, root)) continue;
+        if (!nodes[i].shape || !inside(nodes, i, bones.root)) continue;
+        const size_t before = points.size();
         emit_shape(*nodes[i].shape, nodes[i].world, tex, points, uvs);
-        if (hand >= 0 && inside(nodes, i, hand)) emit_shape(*nodes[i].shape, nodes[i].world, tex, hand_points, hand_uvs);
+        if (bones.hand >= 0 && inside(nodes, i, bones.hand))
+            hand_points.insert(hand_points.end(), points.begin() + static_cast<ptrdiff_t>(before), points.end());
     }
-    if (points.empty()) return false;
-
     // Palm: the middle of the hand's blocks, or the far end of the arm.
-    const V3 shoulder = nodes[root].world.p;
-    V3 lo{1e9, 1e9, 1e9}, hi{-1e9, -1e9, -1e9};
-    const auto grow = [&](V3 p) {
-        lo = {std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z)};
-        hi = {std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z)};
-    };
-    V3 palm;
+    const V3 shoulder = nodes[bones.root].world.p;
+    ArmFrame f;
     if (!hand_points.empty()) {
-        for (V3 p : hand_points) grow(p);
-        palm = (lo + hi) * 0.5;
-    } else {
+        V3 lo{1e9, 1e9, 1e9}, hi{-1e9, -1e9, -1e9};
+        for (V3 p : hand_points) {
+            lo = {std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z)};
+            hi = {std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z)};
+        }
+        f.palm = (lo + hi) * 0.5;
+    } else if (!points.empty()) {
         V3 tip = shoulder;
         for (V3 p : points)
             if (dot(p - shoulder, p - shoulder) > dot(tip - shoulder, tip - shoulder)) tip = p;
@@ -582,27 +670,59 @@ bool build_arm(const std::vector<Node>& nodes, int side, const Image& tex, Arm& 
         for (V3 p : points) reach = std::max(reach, dot(p - shoulder, along));
         int count = 0;
         for (V3 p : points)
-            if (dot(p - shoulder, along) > reach - 4) palm = palm + p, ++count;
-        palm = palm * (1.0 / std::max(count, 1)) - along * 2.0;
+            if (dot(p - shoulder, along) > reach - 4) f.palm = f.palm + p, ++count;
+        f.palm = f.palm * (1.0 / std::max(count, 1)) - along * 2.0;
     }
-    V3 down = unit(palm - shoulder);
-    if (dot(down, down) < 0.5) down = {0, -1, 0};
+    f.down = unit(f.palm - shoulder);
+    if (dot(f.down, f.down) < 0.5) f.down = {0, -1, 0};
     // Characters face +Z; with the arm hanging the thumb points that way.
-    V3 forward = unit(V3{0, 0, 1} - down * down.z);
-    if (dot(forward, forward) < 0.5) forward = unit(V3{0, 1, 0} - down * down.y);
-    const V3 outward = cross(down, forward);
+    f.forward = unit(V3{0, 0, 1} - f.down * f.down.z);
+    if (dot(f.forward, f.forward) < 0.5) f.forward = unit(V3{0, 1, 0} - f.down * f.down.y);
+    f.outward = cross(f.down, f.forward);
+    return f;
+}
 
-    // Arm toward the palm becomes -Z, the thumb side +Y.
-    arm.vertices.clear();
-    for (size_t i = 0; i < points.size(); ++i) {
-        const V3 p = points[i] - palm;
-        arm.vertices.push_back({static_cast<float>(dot(p, outward)), static_cast<float>(dot(p, forward)),
-                                static_cast<float>(-dot(p, down)), uvs[i].first, uvs[i].second});
+// A part's matrix in the arm's frame, column-major: from the part's own axes
+// (model units) into the arm's.
+void export_frame(const ArmFrame& f, const Frame& world, float out[16]) {
+    const V3 columns[4] = {f.direction(world.x), f.direction(world.y), f.direction(world.z), f.point(world.p)};
+    for (int c = 0; c < 4; ++c) {
+        out[c * 4 + 0] = static_cast<float>(columns[c].x);
+        out[c * 4 + 1] = static_cast<float>(columns[c].y);
+        out[c * 4 + 2] = static_cast<float>(columns[c].z);
+        out[c * 4 + 3] = c == 3 ? 1.0f : 0.0f;
     }
-    logf("Character: %s arm from \"%s\"%s%s%s, %zu triangles", side ? "right" : "left", nodes[root].name.c_str(),
-         hand >= 0 ? ", hand \"" : "", hand >= 0 ? nodes[hand].name.c_str() : "", hand >= 0 ? "\"" : "",
-         arm.vertices.size() / 3);
-    return true;
+}
+
+Frame inverse(const Frame& f) {
+    Frame r;
+    r.x = {f.x.x, f.y.x, f.z.x};
+    r.y = {f.x.y, f.y.y, f.z.y};
+    r.z = {f.x.z, f.y.z, f.z.z};
+    r.p = V3{0, 0, 0} - r.apply(f.p);
+    return r;
+}
+
+// Adds a model's pieces that sit on the arm: the base model's own, or a
+// cosmetic's pieces under a part of the same name, moved onto that part.
+void add_arm_pieces(const std::vector<Node>& base, const ArmBones& bones, const std::vector<Node>& model,
+                    const Image& tex, Geometry& out) {
+    for (int i = 0; i < static_cast<int>(model.size()); ++i) {
+        if (!model[i].shape) continue;
+        // The nearest part (itself or above) that the base arm also has.
+        int bone = -1, own = -1;
+        for (int at = i; at >= 0 && bone < 0; at = model[at].parent) {
+            for (int b = 0; b < static_cast<int>(base.size()); ++b) {
+                if (base[b].name == model[at].name && inside(base, b, bones.root)) {
+                    bone = b, own = at;
+                    break;
+                }
+            }
+        }
+        if (bone < 0) continue;
+        const Frame onto = base[bone].world * inverse(model[own].world);
+        emit_shape(*model[i].shape, onto * model[i].world, tex, out.points, out.uvs);
+    }
 }
 
 void load() {
@@ -613,30 +733,147 @@ void load() {
              zip_path.empty() ? "not found" : narrow(zip_path).c_str());
         return;
     }
-    Body body;
+    const auto slots = read_skin();
+
+    // The body first: its model is the skeleton everything else goes on.
+    Part body;
+    {
+        std::string choice;
+        for (const auto& [key, value] : slots)
+            if (key == "bodyCharacteristic") choice = value;
+        json catalog;
+        if (choice.empty() || !load_json(zip, "CharacterCreator/BodyCharacteristics.json", catalog) ||
+            !load_part(zip, catalog, choice, body)) {
+            body = Part{};
+            body.texture = "Characters/Player_Textures/Player_Greyscale.png";
+            std::vector<uint8_t> png;
+            if (!zip.load(body.texture, png) || !decode_png(png, body.image)) return;
+        }
+        if (body.model.empty()) body.model = "Characters/Player.blockymodel";
+    }
     json model;
-    if (!load_body(zip, body)) return;
-    if (!load_json(zip, body.model, model) &&
-        (body.model == "Characters/Player.blockymodel" || !load_json(zip, "Characters/Player.blockymodel", model))) {
+    if (!load_json(zip, body.model, model) && !load_json(zip, "Characters/Player.blockymodel", model)) {
         logf("Character: couldn't read the player model");
         return;
     }
     std::vector<Node> nodes;
     flatten(member(model, "nodes"), -1, Frame{}, nodes);
-    std::string names;
-    for (const Node& node : nodes) names += (names.empty() ? "" : ", ") + node.name;
-    logf("Character: %zu model parts: %s", nodes.size(), names.c_str());
+    logf("Character: body %s with %s, %ux%u, %zu parts", body.model.c_str(), body.texture.c_str(), body.image.width,
+         body.image.height, nodes.size());
+
+    // Clothes and gloves, outermost first so they win over the skin under them.
+    std::vector<Part> clothes;
+    std::vector<json> cloth_models;
+    for (const auto& [key, value] : slots) {
+        if (key == "bodyCharacteristic") continue;
+        json catalog;
+        Part part;
+        part.key = key;
+        if (!load_catalog(zip, key, catalog) || !load_part(zip, catalog, value, part) || part.model.empty()) continue;
+        json cloth;
+        if (!load_json(zip, part.model, cloth)) continue;
+        clothes.push_back(std::move(part));
+        cloth_models.push_back(std::move(cloth));
+    }
+    const auto rank = [](const std::string& key) {
+        const std::string k = lower(key);
+        if (k.find("glove") != std::string::npos) return 0;
+        if (k.find("over") != std::string::npos) return 1;
+        if (k.find("under") != std::string::npos) return 2;
+        return 3;
+    };
 
     auto* result = new Model;
-    bool any = false;
-    for (int side = 0; side < 2; ++side) any |= build_arm(nodes, side, body.image, result->arms[side]);
-    result->width = body.image.width;
-    result->height = body.image.height;
-    result->rgba = std::move(body.image.rgba);
-    if (!any) {
+    std::vector<const Image*> layers;
+    for (int side = 0; side < 2; ++side) {
+        const ArmBones bones = find_arm(nodes, side);
+        Arm& arm = result->arms[side];
+        if (bones.root < 0) continue;
+        const ArmFrame frame = arm_frame(nodes, bones, body.image);
+        std::vector<Geometry> pieces;
+        std::vector<size_t> order(clothes.size());
+        for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+        std::stable_sort(order.begin(), order.end(),
+                         [&](size_t a, size_t b) { return rank(clothes[a].key) < rank(clothes[b].key); });
+        std::string worn;
+        std::vector<const Image*> piece_images;
+        for (size_t i : order) {
+            std::vector<Node> cloth_nodes;
+            flatten(member(cloth_models[i], "nodes"), -1, Frame{}, cloth_nodes);
+            Geometry g;
+            add_arm_pieces(nodes, bones, cloth_nodes, clothes[i].image, g);
+            if (g.points.empty()) continue;
+            worn += (worn.empty() ? "" : ", ") + clothes[i].key;
+            pieces.push_back(std::move(g));
+            piece_images.push_back(&clothes[i].image);
+        }
+        Geometry skin;
+        add_arm_pieces(nodes, bones, nodes, body.image, skin);
+        pieces.push_back(std::move(skin));
+        piece_images.push_back(&body.image);
+
+        // Every texture goes in one tall image: each piece's UVs move to its strip.
+        for (size_t p = 0; p < pieces.size(); ++p) {
+            size_t layer = 0;
+            while (layer < layers.size() && layers[layer] != piece_images[p]) ++layer;
+            if (layer == layers.size()) layers.push_back(piece_images[p]);
+            pieces[p].layer_start = layer;
+            for (size_t v = 0; v < pieces[p].points.size(); ++v) {
+                const V3 q = frame.point(pieces[p].points[v]);
+                arm.vertices.push_back({static_cast<float>(q.x), static_cast<float>(q.y), static_cast<float>(q.z),
+                                        pieces[p].uvs[v].first, pieces[p].uvs[v].second});
+            }
+        }
+        // Remember each vertex's layer to remap after the atlas is laid out.
+        size_t at = 0;
+        for (const Geometry& g : pieces) {
+            for (size_t v = 0; v < g.points.size(); ++v) arm.vertices[at + v].u += static_cast<float>(g.layer_start) * 4.0f;
+            at += g.points.size();
+        }
+        if (bones.hand >= 0) {
+            export_frame(frame, nodes[bones.hand].world, arm.hand);
+            arm.has_hand = true;
+        }
+        if (bones.attachment >= 0) {
+            export_frame(frame, nodes[bones.attachment].world, arm.attachment);
+            arm.has_attachment = true;
+        }
+        logf("Character: %s arm from \"%s\"%s, %zu triangles, wearing %s", side ? "right" : "left",
+             nodes[bones.root].name.c_str(), bones.attachment >= 0 ? " with an item point" : "",
+             arm.vertices.size() / 3, worn.empty() ? "nothing on it" : worn.c_str());
+    }
+
+    // Lay the textures out top to bottom and point each vertex at its strip.
+    uint32_t width = 1, height = 0;
+    std::vector<uint32_t> tops;
+    for (const Image* image : layers) {
+        tops.push_back(height);
+        width = std::max(width, image->width);
+        height += image->height;
+    }
+    if (layers.empty() || !height) {
         logf("Character: no arm parts found in the model; keeping the blocky hands");
         delete result;
         return;
+    }
+    result->width = width;
+    result->height = height;
+    result->rgba.assign(static_cast<size_t>(width) * height * 4, 0);
+    for (size_t l = 0; l < layers.size(); ++l) {
+        for (uint32_t y = 0; y < layers[l]->height; ++y)
+            std::memcpy(&result->rgba[(static_cast<size_t>(tops[l] + y) * width) * 4], layers[l]->at(0, y),
+                        static_cast<size_t>(layers[l]->width) * 4);
+    }
+    for (Arm& arm : result->arms) {
+        for (Vertex& v : arm.vertices) {
+            // The integer part of u (in fours) is the layer, the rest the UV inside it.
+            const int layer = static_cast<int>(std::floor((v.u + 1.0f) / 4.0f));
+            const float u = v.u - static_cast<float>(layer) * 4.0f;
+            const Image& image = *layers[static_cast<size_t>(layer)];
+            v.u = u * static_cast<float>(image.width) / static_cast<float>(width);
+            v.v = (static_cast<float>(tops[static_cast<size_t>(layer)]) + v.v * static_cast<float>(image.height)) /
+                  static_cast<float>(height);
+        }
     }
     g_model.store(result, std::memory_order_release);
 }

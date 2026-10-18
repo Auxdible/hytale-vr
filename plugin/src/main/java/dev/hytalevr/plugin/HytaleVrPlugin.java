@@ -49,6 +49,24 @@ public final class HytaleVrPlugin extends JavaPlugin {
             info("VR mod connected (" + client.role + ")");
             return;
         }
+        if (line.equals("AIM")) {
+            final PlayerRef player = vrPlayer();
+            final World world = player != null ? Universe.get().getWorld(player.getWorldUuid()) : null;
+            if (world == null) {
+                client.send("AIM none");
+                return;
+            }
+            world.execute(() -> {
+                String result;
+                try {
+                    result = SwingHandler.aim(player, world);
+                } catch (RuntimeException e) {
+                    result = "none";
+                }
+                client.send("AIM " + result);
+            });
+            return;
+        }
         if (line.startsWith("SWING ")) {
             final SwingMessage swing = SwingMessage.parse(line);
             if (swing == null) return;

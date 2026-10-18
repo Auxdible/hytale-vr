@@ -8,10 +8,13 @@
 #include <atomic>
 #include <bit>
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <mutex>
 
 #include "../core/controls.h"
 #include "../core/stereo_math.h"
+#include "avatar.h"
 #include "gl_api.h"
 #include "gl_hooks.h"
 #include "input.h"
@@ -238,6 +241,10 @@ PluginBridge& plugin() {
 }
 std::atomic<bool> g_plugin_connected{false};
 bool g_plugin_click = false;  // the plugin asked for Hytale's own attack (a weapon is held)
+// What Hytale will interact with: how far along its look, from the plugin.
+float g_aim_distance = -1;
+uint64_t g_aim_at = 0, g_aim_asked = 0;
+float g_light = 1;  // how lit the hands are, following the world's brightness
 
 void poll_plugin() {
     const bool was = plugin().connected();
@@ -246,11 +253,22 @@ void poll_plugin() {
             g_plugin_click = true;
             continue;
         }
+        if (line.rfind("AIM ", 0) == 0) {
+            g_aim_distance = line == "AIM none" ? -1.0f : std::strtof(line.c_str() + 4, nullptr);
+            g_aim_at = GetTickCount64();
+            continue;
+        }
         if (line != "HIT miss") logf("Plugin: %s", line.c_str());
     }
     const bool now = plugin().connected();
     if (now != was) logf(now ? "Connected to the Hytale VR server plugin" : "Lost the Hytale VR server plugin");
     g_plugin_connected = now;
+    // Ask what's in front often enough for the line to follow your gaze.
+    const uint64_t tick = GetTickCount64();
+    if (now && g_world_frame && tick - g_aim_asked >= 80) {
+        g_aim_asked = tick;
+        plugin().send_line("AIM");
+    }
 }
 
 // Sends a swing from the hand to the plugin: where the hand is from Hytale's
@@ -868,8 +886,18 @@ void prepare_world(const Settings& s, bool showed_world) {
         setup.grip_valid[hand] = g_view.hands[hand].valid && g_hmd_valid;
         if (!setup.grip_valid[hand]) continue;
         // The off hand mirrors the item hand's turn and tilt.
-        setup.grip[hand] = inverse_rigid(g_hmd) * g_view.hands[hand].pose * translation({0, -0.025f, 0.07f}) *
-                           rotation_x(-s.item_tilt * degrees) * rotation_y(s.item_turn * degrees);
+        setup.palm[hand] = inverse_rigid(g_hmd) * g_view.hands[hand].pose * translation(kPalm);
+        setup.grip[hand] = setup.palm[hand] * rotation_x(-s.item_tilt * degrees) * rotation_y(s.item_turn * degrees);
+    }
+    // With your character's arms, the item goes where its hand holds it.
+    const avatar::Model* character = s.character_arms ? avatar::ready() : nullptr;
+    setup.arm_unit = g_view.arm_scale;
+    if (character) {
+        const avatar::Arm& arm = character->arms[grip_hand];
+        setup.hand_valid = arm.has_hand && !arm.vertices.empty();
+        setup.attachment_valid = arm.has_attachment && !arm.vertices.empty();
+        std::memcpy(setup.hand.m, arm.hand, sizeof(arm.hand));
+        std::memcpy(setup.attachment.m, arm.attachment, sizeof(arm.attachment));
     }
     stereo::set_eyes(setup);
 }
@@ -923,6 +951,22 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
         const float target = settings.vignette * g_motion;
         g_vignette += (target - g_vignette) * std::fmin(1.0f, (target > g_vignette ? 6.0f : 3.0f) * g_frame_dt);
         g_view.vignette = g_vignette * 0.85f;
+        // The hands follow how bright the world is, so they don't glow at night.
+        const float brightness = g_scene.measure_brightness(world.eye_fbo[0], world.width, world.height);
+        if (brightness >= 0) {
+            const float target_light = std::clamp(brightness / 0.35f, 0.08f, 1.0f);
+            g_light += (target_light - g_light) * std::fmin(1.0f, 3.0f * g_frame_dt);
+        }
+        g_view.light = g_light;
+        // The line to what Hytale will interact with: along your gaze, as far as the plugin found.
+        const uint64_t tick = GetTickCount64();
+        const int item_hand = settings.left_handed ? 0 : 1;
+        g_view.target = settings.target_line && g_plugin_connected && g_aim_distance > 0 && tick - g_aim_at < 500 &&
+                        g_hmd_valid && !g_view.hands[item_hand].laser;
+        g_view.target_hand = item_hand;
+        if (g_view.target)
+            g_view.target_point = position_of(g_hmd) + normalize(transform_direction(g_hmd, {0, 0, -1})) *
+                                                           (g_aim_distance / std::max(settings.world_scale, 0.1f));
         for (int eye = 0; eye < 2; ++eye) {
             g_scene.render_overlay(world.eye_fbo[eye], world.width, world.height, eye_projection_near(eye), eye_view(eye),
                                    g_view, world.hud_texture);
@@ -935,6 +979,8 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
             set_status("Hytale is on the big screen. Point at it to use the mouse.");
         }
         g_world_frame = false;
+        g_view.light = 1;
+        g_view.target = false;
         g_scene.capture_window(pixels_w, pixels_h, stereo::virtual_backbuffer());
         if (g_hmd_valid) {
             g_cinema_screen = place_screen(g_anchor_head, g_anchor_forward, settings.screen_distance, settings.screen_width,

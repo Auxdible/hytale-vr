@@ -7,9 +7,20 @@
   hotbar slot (and touching the hotbar still works).
 - Each controller shows your character's own forearm and hand, built from
   Hytale's player model in Assets.zip and colored with the skin Hytale saved
-  for you (Your character's arms, World tab; Arm size adjusts it). Hytale's
-  first-person arms aren't used for this. If the files can't be read, the log
-  says why and the blocky hands below are used instead.
+  for you, with the clothes and gloves you wear on your arms (Your
+  character's arms, World tab; Hand size adjusts it, now smaller by default).
+  Hytale's first-person arms aren't shown. If the files can't be read, the
+  log says why and the blocky hands below are used instead.
+- The hands take on the world's light: they follow how bright the view in
+  front of you is, so they no longer glow at night or in caves.
+- Held items sit where your character's hand holds them in Hytale, read from
+  Hytale's own first-person hand each frame: a bow is held by its middle,
+  and eating, drawing a bow and placing blocks keep Hytale's own motion in
+  your hand. Item size scales it from there.
+- A faint line runs from your hand to what Hytale will interact with (the
+  block or mob you're looking at, within reach), with a mark on it. It needs
+  the server plugin (updated to 1.2.0); Line to what you'll interact with
+  turns it off.
 - Each controller shows a blocky hand (fist, thumb and sleeve cuff) in place
   of the gray block, and Hytale's own model of your held item sits in the
   right one (Held item in your hand, World tab). Hytale's first-person arms

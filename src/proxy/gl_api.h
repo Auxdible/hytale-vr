@@ -38,6 +38,7 @@ constexpr GLenum TEXTURE_MIN_FILTER = 0x2801, TEXTURE_MAG_FILTER = 0x2800, TEXTU
                  CLAMP_TO_EDGE = 0x812F, TEXTURE_MAX_ANISOTROPY = 0x84FE, TEXTURE_MAX_LEVEL = 0x813D;
 constexpr GLenum TEXTURE_WIDTH = 0x1000, TEXTURE_HEIGHT = 0x1001, TEXTURE_INTERNAL_FORMAT = 0x1003,
                  TEXTURE_SAMPLES = 0x9106;
+constexpr GLenum PIXEL_PACK_BUFFER = 0x88EB, PIXEL_PACK_BUFFER_BINDING = 0x88ED, STREAM_READ = 0x88E1;
 constexpr GLenum FRAMEBUFFER = 0x8D40, READ_FRAMEBUFFER = 0x8CA8, DRAW_FRAMEBUFFER = 0x8CA9,
                  RENDERBUFFER = 0x8D41, FRAMEBUFFER_COMPLETE = 0x8CD5, COLOR_ATTACHMENT0 = 0x8CE0,
                  DEPTH_ATTACHMENT = 0x8D00, STENCIL_ATTACHMENT = 0x8D20, DEPTH_STENCIL_ATTACHMENT = 0x821A,
@@ -95,6 +96,7 @@ constexpr GLenum VENDOR = 0x1F00, RENDERER = 0x1F01, VERSION = 0x1F02, SHADING_L
     X(void, glBlendFuncSeparate, (GLenum srgb, GLenum drgb, GLenum sa, GLenum da))                           \
     X(void, glBlendEquation, (GLenum mode))                                                                  \
     X(void, glPixelStorei, (GLenum pname, GLint param))                                                      \
+    X(void, glReadPixels, (GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLenum type, void* data))     \
     X(void, glGenTextures, (GLsizei n, GLuint * textures))                                                   \
     X(void, glDeleteTextures, (GLsizei n, const GLuint* textures))                                           \
     X(void, glBindTexture, (GLenum target, GLuint texture))                                                  \

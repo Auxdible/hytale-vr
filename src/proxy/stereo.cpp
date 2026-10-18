@@ -208,6 +208,7 @@ EyeSetup g_setup;
 Vec3 g_view_offset;  // body offset from the camera, last frame
 int g_setup_frame = -100;
 int g_frame = 0;
+GLsizei g_draw_indices = 0;  // the current draw's vertex or index count
 bool g_failed_frame = false;
 int g_main_w = 0, g_main_h = 0;    // Hytale's full-resolution 3D target size
 int g_window_w = 0, g_window_h = 0;
@@ -1571,6 +1572,7 @@ void note_first_person_draw(GLsizei count) {
 }
 
 bool draw_begin(GLenum mode, GLsizei count) {
+    g_draw_indices = count;
     g_pending = Pending{};
     if (!active()) return false;
     if (t.program) note_first_person_draw(count);
@@ -1623,15 +1625,144 @@ bool draw_begin(GLenum mode, GLsizei count) {
 //
 // First person is several models drawn one after another: the arm's pieces
 // share one uModelMatrix (a 1/64 scale turned to face the camera), and the
-// held item gets its own. The item is drawn at the controller's grip, at its
-// own model scale; the arm's pieces are hidden, since the hands are ours.
+// held item gets its own. The arm's pieces are hidden, since the hands are
+// ours. Their bones still say where Hytale's hand is: the item goes on your
+// hand the way it sits on the bone nearest it (the hand, or its item point),
+// so a bow is held by its middle and eating or drawing a bow keep Hytale's
+// motion. Until bones are seen, the item sits straight in the grip.
 
 GLint g_fp_moved_location = -1;
+
+struct FirstPersonBones {
+    int frame = -1000;
+    float size = 0;           // the arm's model scale
+    std::vector<Mat4> bones;  // first-person space, unit scale
+};
+FirstPersonBones g_bones_now, g_bones_last;
+int g_bone_checks = 3;        // shadow reads checked against the GPU copy
+bool g_bones_from_gpu = false;
+GLsizei g_logged_item = -1;   // the item whose hold was last logged (by index count)
 
 bool arm_shaped(const Mat4& m, float size) {
     const float slack = size * 0.1f;
     return std::fabs(m.at(0, 0) + size) < slack && std::fabs(m.at(1, 1) - size) < slack &&
            std::fabs(m.at(2, 2) + size) < slack;
+}
+
+// The current draw's bones, from our copy of the buffer when we keep one,
+// else read back from the GPU.
+bool read_bones(const ProgramInfo& info, std::vector<float>& out) {
+    GLint binding = -1;
+    if (info.node_block >= 0)
+        glr.glGetActiveUniformBlockiv(t.program, static_cast<GLuint>(info.node_block), gl::UNIFORM_BLOCK_BINDING,
+                                      &binding);
+    if (binding < 0 || binding >= kUboIndices || !t.ubo[binding].buffer) return false;
+    const UboBinding& ubo = t.ubo[binding];
+    GLsizeiptr bytes = ubo.size > 0 ? ubo.size : 1024;
+    bytes = std::min<GLsizeiptr>(bytes, 64 * 64) / 64 * 64;
+    if (bytes <= 0) return false;
+    out.resize(static_cast<size_t>(bytes) / sizeof(float));
+    bool have = false;
+    if (!g_bones_from_gpu) {
+        std::lock_guard lock(g_shadow_mutex);
+        auto it = g_shadows.find(ubo.buffer);
+        if (it == g_shadows.end()) {
+            g_shadows[ubo.buffer];  // keep a copy from now on
+        } else {
+            Shadow& shadow = it->second;
+            if (shadow.persistent && shadow.map) {
+                const size_t end = static_cast<size_t>(shadow.map_offset + shadow.map_length);
+                if (shadow.data.size() < end) shadow.data.resize(end);
+                std::memcpy(shadow.data.data() + shadow.map_offset, shadow.map, static_cast<size_t>(shadow.map_length));
+                shadow.written = true;
+            }
+            if (shadow.written && shadow.data.size() >= static_cast<size_t>(ubo.offset + bytes)) {
+                std::memcpy(out.data(), shadow.data.data() + ubo.offset, static_cast<size_t>(bytes));
+                have = true;
+            }
+        }
+    }
+    if (have && g_bone_checks > 0 && glr.glGetNamedBufferSubData) {
+        --g_bone_checks;
+        std::vector<float> gpu(out.size());
+        glr.glGetNamedBufferSubData(ubo.buffer, ubo.offset, bytes, gpu.data());
+        if (std::memcmp(gpu.data(), out.data(), static_cast<size_t>(bytes)) != 0) {
+            logf("Hands: our copy of first-person bones differs from the GPU's; reading them back instead");
+            g_bones_from_gpu = true;
+            have = false;
+        }
+    }
+    if (!have && g_bones_from_gpu && glr.glGetNamedBufferSubData) {
+        glr.glGetNamedBufferSubData(ubo.buffer, ubo.offset, bytes, out.data());
+        have = true;
+    }
+    return have;
+}
+
+Mat4 unit_scale(Mat4 m) {
+    for (int c = 0; c < 3; ++c) {
+        const float n = std::sqrt(m.at(0, c) * m.at(0, c) + m.at(1, c) * m.at(1, c) + m.at(2, c) * m.at(2, c));
+        if (n > 0)
+            for (int r = 0; r < 3; ++r) m.at(r, c) /= n;
+    }
+    return m;
+}
+
+// An arm piece: its bones, in first-person space, for the item to find its hand.
+void note_arm_bones(const ProgramInfo& info, const Mat4& model, float size) {
+    if (g_bones_now.frame != g_frame) {
+        if (!g_bones_now.bones.empty()) g_bones_last = g_bones_now;
+        g_bones_now.bones.clear();
+        g_bones_now.frame = g_frame;
+    }
+    static std::vector<float> raw;
+    if (!read_bones(info, raw)) return;
+    g_bones_now.size = size;
+    for (size_t at = 0; at + 16 <= raw.size(); at += 16) {
+        Mat4 bone;
+        std::memcpy(bone.m, raw.data() + at, sizeof(bone.m));
+        bone.m[3] = bone.m[7] = bone.m[11] = 0;  // the shader keeps a texture offset there
+        bone.m[15] = 1;
+        if (!std::isfinite(bone.m[12]) || !std::isfinite(bone.m[13]) || !std::isfinite(bone.m[14])) continue;
+        if (bone.m[0] == 0 && bone.m[5] == 0 && bone.m[10] == 0) continue;  // unused slot
+        const Mat4 world = model * bone;
+        if (position_of(world).z > 0) continue;  // behind the camera: the pieces Hytale never shows
+        g_bones_now.bones.push_back(unit_scale(world));
+    }
+}
+
+// Where the item goes on your hand, from where it sits on Hytale's.
+bool held_on_hand(const Mat4& model, Mat4& moved) {
+    const int side = g_setup.item_hand;
+    if (!g_setup.hand_valid || !g_setup.grip_valid[side]) return false;
+    const FirstPersonBones& bones = g_bones_now.frame == g_frame && !g_bones_now.bones.empty() ? g_bones_now : g_bones_last;
+    if (bones.bones.empty() || bones.size <= 0 || g_frame - bones.frame > 30) return false;
+    const Vec3 origin = position_of(model);
+    const Mat4* nearest = nullptr;
+    float best = 1e9f;
+    for (const Mat4& bone : bones.bones) {
+        const float d = length(position_of(bone) - origin);
+        if (d < best) best = d, nearest = &bone;
+    }
+    if (!nearest || best > 40 * bones.size) return false;  // not on a hand: 40 model units away
+    // The item in the bone's own axes, in model units.
+    const float k = 1.0f / bones.size;
+    const Mat4 on_bone = scale({k, k, k}) * inverse_rigid(*nearest) * model;
+    // The bone is the item point when the item sits right on it, else the hand.
+    const float offset = length(position_of(on_bone));
+    const Vec3 point = position_of(g_setup.attachment), hand = position_of(g_setup.hand);
+    const bool on_point = g_setup.attachment_valid && (!g_setup.hand_valid || offset < 0.5f * length(point - hand));
+    const Mat4& frame = on_point ? g_setup.attachment : g_setup.hand;
+    Mat4 palm = g_setup.palm[side];
+    for (int r = 0; r < 3; ++r) palm.at(r, 3) *= g_setup.world_scale;
+    const float unit = g_setup.arm_unit * g_setup.world_scale * g_setup.item_size;
+    moved = palm * scale({unit, unit, unit}) * frame * on_bone;
+    if (g_draw_indices != g_logged_item) {
+        g_logged_item = g_draw_indices;
+        logf("Hands: item (%d indices) held on %s, %.1f model units from that bone, %zu bones seen", g_draw_indices,
+             on_point ? "the item point" : "the hand", offset, bones.bones.size());
+    }
+    return true;
 }
 
 bool move_first_person() {
@@ -1645,10 +1776,12 @@ bool move_first_person() {
     Mat4 moved;
     for (float& v : moved.m) v = 0;  // hidden: every vertex at w = 0, clipped away
     const int side = g_setup.item_hand;
-    if (size > 0 && !arm_shaped(model, size) && g_setup.grip_valid[side]) {
+    if (size > 0 && arm_shaped(model, size)) {
+        if (g_setup.hand_valid) note_arm_bones(info, model, size);
+    } else if (size > 0 && g_setup.grip_valid[side] && !held_on_hand(model, moved)) {
         Mat4 grip = g_setup.grip[side];
         for (int r = 0; r < 3; ++r) grip.at(r, 3) *= g_setup.world_scale;
-        const float k = size * g_setup.item_size;
+        const float k = size * g_setup.item_size * 0.7f;
         moved = grip * scale({k, k, k});
     }
     glr.glUniformMatrix4fv(info.model_matrix, 1, gl::FALSE_, moved.m);

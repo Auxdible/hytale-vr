@@ -117,6 +117,51 @@ final class SwingHandler {
         return "none";
     }
 
+    /** How far Hytale's own interactions reach along the look, in blocks. */
+    static final double AIM_REACH = 5.0;
+
+    /**
+     * What a click would reach along the player's own look: the distance to
+     * the first mob or block, or "none". Must run on the player's world thread.
+     */
+    static String aim(PlayerRef playerRef, World world) {
+        final Ref<EntityStore> player = playerRef.getReference();
+        if (player == null || !player.isValid()) return "none";
+        final Store<EntityStore> store = world.getEntityStore().getStore();
+        final Transform look = TargetUtil.getLook(player, store);
+        if (look == null) return "none";
+        final Vector3d eye = look.getPosition();
+        final Vector3d lookVector = look.getDirection();
+        final double[] direction = RayMath.normalize(lookVector.x, lookVector.y, lookVector.z);
+        if (direction == null) return "none";
+        double best = Double.POSITIVE_INFINITY;
+
+        final Vector3d middle = new Vector3d(eye.x + direction[0] * AIM_REACH * 0.5,
+                eye.y + direction[1] * AIM_REACH * 0.5, eye.z + direction[2] * AIM_REACH * 0.5);
+        for (Ref<EntityStore> candidate : TargetUtil.getAllEntitiesInSphere(middle, AIM_REACH * 0.5 + 2.0, store)) {
+            if (candidate == null || !candidate.isValid() || candidate.getIndex() == player.getIndex()) continue;
+            final TransformComponent transform = store.getComponent(candidate, TransformComponent.getComponentType());
+            final BoundingBox bounds = store.getComponent(candidate, BoundingBox.getComponentType());
+            if (transform == null || bounds == null) continue;
+            final Vector3d position = transform.getPosition();
+            final Box box = bounds.getBoundingBox();
+            final double t = RayMath.rayBoxEntry(eye.x, eye.y, eye.z, direction[0], direction[1], direction[2],
+                    position.x + box.min.x, position.y + box.min.y, position.z + box.min.z,
+                    position.x + box.max.x, position.y + box.max.y, position.z + box.max.z);
+            if (!Double.isNaN(t) && t <= AIM_REACH && t < best) best = t;
+        }
+
+        final Vector3i block = TargetUtil.getTargetBlock(world.getChunkStore(),
+                (blockId, fluidId) -> blockId != BlockType.EMPTY_ID,
+                eye.x, eye.y, eye.z, direction[0], direction[1], direction[2], AIM_REACH);
+        if (block != null) {
+            final double t = RayMath.rayBoxEntry(eye.x, eye.y, eye.z, direction[0], direction[1], direction[2],
+                    block.x, block.y, block.z, block.x + 1, block.y + 1, block.z + 1);
+            if (!Double.isNaN(t) && t < best) best = t;
+        }
+        return Double.isFinite(best) ? String.format(java.util.Locale.ROOT, "%.3f", best) : "none";
+    }
+
     private static ItemStack heldItem(Ref<EntityStore> player, Store<EntityStore> store) {
         final InventoryComponent.Hotbar hotbar = store.getComponent(player, InventoryComponent.Hotbar.getComponentType());
         if (hotbar == null) return null;

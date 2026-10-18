@@ -1,5 +1,5 @@
 // Your character's forearms and hands, built from Hytale's own files: the
-// player model in Assets.zip, colored with the skin saved in
+// player model in Assets.zip and the clothes on its arms, colored with the skin saved in
 // %APPDATA%\Hytale\UserData\CachedPlayerSkins. Loads on a background thread.
 #pragma once
 
@@ -16,7 +16,11 @@ struct Vertex {
 // origin, the arm running back along +Z, the back of the hand up (+Y) when the
 // thumb points forward.
 struct Arm {
-    std::vector<Vertex> vertices;
+    std::vector<Vertex> vertices;  // clothes first, then skin
+    // Where the hand and its item point sit in the arm's frame: column-major
+    // matrices from each part's own axes (model units) into the arm's.
+    bool has_hand = false, has_attachment = false;
+    float hand[16] = {}, attachment[16] = {};
 };
 
 struct Model {
