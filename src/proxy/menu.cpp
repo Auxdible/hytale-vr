@@ -261,6 +261,8 @@ void tab_world(Settings& s) {
     changed |= ImGui::Checkbox("Your character's arms", &s.character_arms);
     if (s.character_arms) changed |= slider("Hand size", &s.arm_size, 0.4f, 2.0f, "%.2fx");
     changed |= ImGui::Checkbox("Line to what you'll interact with", &s.target_line);
+    changed |= ImGui::Checkbox("Use and place where your hand points", &s.aim_actions_by_hand);
+    hint("Hytale's camera turns to your hand's target for the moment you click.");
     changed |= ImGui::Checkbox("Held item in your hand", &s.hytale_hand);
     if (s.hytale_hand) {
         changed |= slider("Item size", &s.item_size, 0.2f, 2.0f, "%.2fx");

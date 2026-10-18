@@ -47,6 +47,7 @@ struct Settings {
     float item_turn = 180.0f;       // degrees it turns about the controller's up axis
     float item_tilt = 30.0f;        // degrees the item tips forward from the controller
     bool character_arms = true;     // your character's forearms and hands from Hytale's files, not blocky hands
+    bool aim_actions_by_hand = true;  // placing, using and shooting go where your hand points (needs the plugin for its target)
     bool target_line = true;        // a line from your hand to what you'll interact with (needs the plugin)
     float arm_size = 0.8f;          // of your character's size in the world
     bool hotbar_on_hand = true;     // the hotbar floats over the left controller

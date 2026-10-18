@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <string>
 
 #include "../core/controls.h"
 #include "../core/stereo_math.h"
@@ -241,9 +242,21 @@ PluginBridge& plugin() {
 }
 std::atomic<bool> g_plugin_connected{false};
 bool g_plugin_click = false;  // the plugin asked for Hytale's own attack (a weapon is held)
-// What Hytale will interact with: how far along its look, from the plugin.
+// What your hand will interact with: how far along its ray, from the plugin,
+// and what kind of item is held ("weapon", "tool", "bow", "food", "block",
+// "item" or "none").
 float g_aim_distance = -1;
 uint64_t g_aim_at = 0, g_aim_asked = 0;
+std::string g_held_kind = "none";
+// Hytale's interactions go along its camera, so while you use something the
+// camera turns to what your hand points at, and the click waits for it.
+struct HandAction {
+    bool aiming = false;    // the camera is following the hand's target
+    bool ready = false;     // the camera has arrived
+    bool pressing = false;  // the buttons are through to Hytale
+    int waited = 0;         // frames waited for the camera
+    Vec3 direction{0, 0, -1};  // where the camera should look, standing space
+} g_act;
 float g_light = 1;  // how lit the hands are, following the world's brightness
 
 void poll_plugin() {
@@ -254,7 +267,13 @@ void poll_plugin() {
             continue;
         }
         if (line.rfind("AIM ", 0) == 0) {
-            g_aim_distance = line == "AIM none" ? -1.0f : std::strtof(line.c_str() + 4, nullptr);
+            // "AIM <distance|none> <kind>"
+            const size_t kind = line.find(' ', 4);
+            const std::string distance = line.substr(4, kind == std::string::npos ? std::string::npos : kind - 4);
+            g_aim_distance = distance == "none" ? -1.0f : std::strtof(distance.c_str(), nullptr);
+            const std::string held = kind == std::string::npos ? "item" : line.substr(kind + 1);
+            if (held != g_held_kind) logf("Plugin: holding a %s", held.c_str());
+            g_held_kind = held;
             g_aim_at = GetTickCount64();
             continue;
         }
@@ -263,12 +282,51 @@ void poll_plugin() {
     const bool now = plugin().connected();
     if (now != was) logf(now ? "Connected to the Hytale VR server plugin" : "Lost the Hytale VR server plugin");
     g_plugin_connected = now;
-    // Ask what's in front often enough for the line to follow your gaze.
-    const uint64_t tick = GetTickCount64();
-    if (now && g_world_frame && tick - g_aim_asked >= 80) {
-        g_aim_asked = tick;
-        plugin().send_line("AIM");
+    if (!now) g_held_kind = "none";
+}
+
+// The hand that holds the item: a bow goes in your other hand, so the item
+// hand can draw the string.
+int item_hand(const Settings& s) {
+    const int main = s.left_handed ? 0 : 1;
+    return g_held_kind == "bow" ? 1 - main : main;
+}
+
+// The ray an action goes along, standing space: from the item hand, or for a
+// drawn bow from the bow through the string hand's pull.
+bool action_ray(const Settings& s, bool drawing, Vec3& origin, Vec3& direction) {
+    const int hand = item_hand(s);
+    const HandView& view = g_view.hands[hand];
+    if (!view.valid) return false;
+    origin = position_of(view.pose);
+    direction = normalize(transform_direction(view.pose, {0, 0, -1}));
+    const HandView& string = g_view.hands[1 - hand];
+    if (g_held_kind == "bow" && drawing && string.valid) {
+        const Vec3 pull = origin - position_of(string.pose);
+        if (length(pull) > 0.08f) direction = normalize(pull);
     }
+    return true;
+}
+
+// Asks the plugin how far the action ray reaches and what's held, often
+// enough for the line to follow your hand.
+void send_aim(const Settings& s, bool drawing) {
+    const uint64_t tick = GetTickCount64();
+    if (!plugin().connected() || !g_world_frame || tick - g_aim_asked < 80) return;
+    Mat4 engine_view;
+    Vec3 look, engine_position, origin, direction;
+    if (!g_hmd_valid || !stereo::engine_camera(engine_view, look, engine_position) ||
+        !action_ray(s, drawing, origin, direction))
+        return;
+    g_aim_asked = tick;
+    const Mat4 turn = rotation_y(g_yaw_offset);
+    const Vec3 offset = transform_direction(turn, origin - g_neutral) * s.world_scale + stereo::view_offset();
+    const Vec3 axes = transform_direction(turn, direction);
+    HandRay ray;
+    ray.origin[0] = offset.x, ray.origin[1] = offset.y, ray.origin[2] = offset.z;
+    ray.direction[0] = axes.x, ray.direction[1] = axes.y, ray.direction[2] = axes.z;
+    const float look_axes[3] = {look.x, look.y, look.z};
+    plugin().send_line(format_aim_message(ray, look_axes));
 }
 
 // Sends a swing from the hand to the plugin: where the hand is from Hytale's
@@ -432,12 +490,14 @@ void controls(const FrameContext& context, float dt) {
     const Pressed left_trigger = boolean(g_actions.secondary);
     const int attack_hand = s.left_handed ? 0 : 1;
     g_swing.cooldown = std::fmax(0.0f, g_swing.cooldown - dt);
-    if (g_swing.click_frames > 0) --g_swing.click_frames;
+    // A click waits for the camera to turn to your hand's target before it counts down.
+    if (g_swing.click_frames > 0 && (!g_act.aiming || g_act.pressing)) --g_swing.click_frames;
     if (g_plugin_click) {
         g_plugin_click = false;
         g_swing.click_frames = 3;
     }
-    if (s.swing_to_hit && g_world_frame && context.game_relative && !context.menu_open) {
+    // Not with a bow: pulling the string back would read as a swing.
+    if (s.swing_to_hit && g_world_frame && context.game_relative && !context.menu_open && g_held_kind != "bow") {
         const float speed = g_hand_speed[attack_hand];
         if (g_swing.armed && speed > s.swing_speed && g_swing.cooldown <= 0) {
             g_swing.armed = false;
@@ -452,8 +512,39 @@ void controls(const FrameContext& context, float dt) {
     } else {
         g_swing.click_frames = 0;
     }
-    input::mouse_button(1, (s.left_handed ? left_trigger.down : right_trigger.down) || g_swing.click_frames > 0);
-    input::mouse_button(3, s.left_handed ? right_trigger.down : left_trigger.down);
+    const bool primary = (s.left_handed ? left_trigger.down : right_trigger.down) || g_swing.click_frames > 0;
+    bool use = s.left_handed ? right_trigger.down : left_trigger.down;
+    const bool in_world = g_world_frame && !pointer_mode && !context.menu_open && context.game_relative;
+    // Food held up to your mouth is eaten: Hytale's use, held while it's there.
+    const int holder = item_hand(s);
+    bool eating = false;
+    if (in_world && g_held_kind == "food" && g_view.hands[holder].valid && g_hmd_valid) {
+        const Vec3 mouth = transform_point(g_hmd, {0, -0.09f, -0.06f});
+        eating = length(position_of(g_view.hands[holder].pose * translation(kPalm)) - mouth) < 0.16f;
+    }
+    // Using something turns Hytale's camera to what your hand points at
+    // first, so blocks go where you point and arrows fly where the bow aims.
+    const bool drawing = g_held_kind == "bow" && primary;
+    send_aim(s, drawing);
+    Vec3 origin, direction;
+    const bool act = s.aim_actions_by_hand && in_world && (primary || use) && !eating && g_hmd_valid &&
+                     action_ray(s, drawing, origin, direction);
+    if (act) {
+        const bool fresh = g_plugin_connected && g_aim_distance > 0 && GetTickCount64() - g_aim_at < 500;
+        // Aim from your eyes at the spot the hand's ray reaches, else along the ray.
+        g_act.direction = fresh && g_held_kind != "bow"
+                              ? normalize(origin + direction * (g_aim_distance / std::max(s.world_scale, 0.1f)) -
+                                          position_of(g_hmd))
+                              : direction;
+        if (!g_act.aiming) g_act.ready = false, g_act.waited = 0;
+        g_act.aiming = true;
+        if (!g_act.pressing && (g_act.ready || ++g_act.waited > 8)) g_act.pressing = true;
+    } else {
+        g_act = HandAction{};
+    }
+    const bool through = !g_act.aiming || g_act.pressing;
+    input::mouse_button(1, primary && through);
+    input::mouse_button(3, (use && through) || eating);
     // A light tick in the hand as you break or place in the world.
     if (g_world_frame && !pointer_mode && !context.menu_open) {
         const Pressed* triggers[2] = {&left_trigger, &right_trigger};
@@ -783,8 +874,11 @@ void prepare_world(const Settings& s, bool showed_world) {
         // camera faces, so pointing behind you would blank out your view.
         const HandView& aim_hand = g_view.hands[s.left_handed ? 0 : 1];
         const bool by_hand = s.aim_with_hand && aim_hand.valid && !g_plugin_connected;
-        const Vec3 aim = by_hand ? transform_direction(aim_hand.pose, {0, 0, -1}) : forward;
+        const Vec3 aim = g_act.aiming ? g_act.direction : by_hand ? transform_direction(aim_hand.pose, {0, 0, -1}) : forward;
         const float target_yaw = MouseFollower::wrap(yaw_of(aim) + g_yaw_offset);
+        if (g_act.aiming)
+            g_act.ready = std::fabs(MouseFollower::wrap(target_yaw - yaw_of(engine_forward))) < 0.05f &&
+                          std::fabs(pitch_of(aim) - pitch_of(engine_forward)) < 0.05f;
         int dx = 0, dy = 0;
         g_follower.step(yaw_of(engine_forward), pitch_of(engine_forward), target_yaw, pitch_of(aim), dx, dy);
         sdl::inject_mouse_motion(dx, dy);
@@ -877,7 +971,7 @@ void prepare_world(const Settings& s, bool showed_world) {
     setup.show_arms = s.show_arms;
     // Hytale's hand and item go on the attack hand: from the controller's tip
     // back to the palm, tipped forward by item_tilt.
-    const int grip_hand = s.left_handed ? 0 : 1;
+    const int grip_hand = item_hand(s);
     setup.hytale_hand = s.hytale_hand;
     setup.item_size = s.item_size;
     setup.item_hand = grip_hand;
@@ -960,13 +1054,14 @@ void end_frame(int pixels_w, int pixels_h, const Settings& settings) {
         g_view.light = g_light;
         // The line to what Hytale will interact with: along your gaze, as far as the plugin found.
         const uint64_t tick = GetTickCount64();
-        const int item_hand = settings.left_handed ? 0 : 1;
+        const int holder = item_hand(settings);
+        Vec3 origin, direction;
         g_view.target = settings.target_line && g_plugin_connected && g_aim_distance > 0 && tick - g_aim_at < 500 &&
-                        g_hmd_valid && !g_view.hands[item_hand].laser;
-        g_view.target_hand = item_hand;
+                        g_hmd_valid && !g_view.hands[holder].laser &&
+                        action_ray(settings, g_held_kind == "bow" && g_act.aiming, origin, direction);
+        g_view.target_hand = holder;
         if (g_view.target)
-            g_view.target_point = position_of(g_hmd) + normalize(transform_direction(g_hmd, {0, 0, -1})) *
-                                                           (g_aim_distance / std::max(settings.world_scale, 0.1f));
+            g_view.target_point = origin + direction * (g_aim_distance / std::max(settings.world_scale, 0.1f));
         for (int eye = 0; eye < 2; ++eye) {
             g_scene.render_overlay(world.eye_fbo[eye], world.width, world.height, eye_projection_near(eye), eye_view(eye),
                                    g_view, world.hud_texture);

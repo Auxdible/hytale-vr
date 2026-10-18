@@ -19,6 +19,8 @@ struct HandRay {
 
 // look is Hytale's own camera direction in the same axes as the ray.
 std::string format_swing_message(int hand, const HandRay& ray, float speed, const float look[3]);
+// Asks what the ray reaches: "AIM ox oy oz dx dy dz lx ly lz".
+std::string format_aim_message(const HandRay& ray, const float look[3]);
 // role names this client to the plugin.
 std::string format_hello_message(const std::string& role = "hytale-vr");
 

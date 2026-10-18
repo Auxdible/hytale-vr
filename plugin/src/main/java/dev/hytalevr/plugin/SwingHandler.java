@@ -121,23 +121,31 @@ final class SwingHandler {
     static final double AIM_REACH = 5.0;
 
     /**
-     * What a click would reach along the player's own look: the distance to
-     * the first mob or block, or "none". Must run on the player's world thread.
+     * What the hand's ray reaches and what's held: "distance kind", where the
+     * distance is to the first mob or block in reach (or "none") and the kind
+     * is weapon, tool, bow, food, block, item or none. Must run on the
+     * player's world thread.
      */
-    static String aim(PlayerRef playerRef, World world) {
+    static String aim(PlayerRef playerRef, World world, AimMessage aim) {
         final Ref<EntityStore> player = playerRef.getReference();
-        if (player == null || !player.isValid()) return "none";
+        if (player == null || !player.isValid()) return "none none";
         final Store<EntityStore> store = world.getEntityStore().getStore();
+        final String kind = heldKind(heldItem(player, store));
         final Transform look = TargetUtil.getLook(player, store);
-        if (look == null) return "none";
+        if (look == null) return "none " + kind;
         final Vector3d eye = look.getPosition();
-        final Vector3d lookVector = look.getDirection();
-        final double[] direction = RayMath.normalize(lookVector.x, lookVector.y, lookVector.z);
-        if (direction == null) return "none";
+        final Vector3d serverLookVector = look.getDirection();
+        final double[] serverLook = RayMath.normalize(serverLookVector.x, serverLookVector.y, serverLookVector.z);
+        if (serverLook == null) return "none " + kind;
+        final AxisMapping mapping = AxisMapping.find(aim.look(), serverLook);
+        if (mapping == null) return "none " + kind;
+        final double[] offset = mapping.apply(aim.origin());
+        final double[] direction = mapping.apply(aim.direction());
+        final double ox = eye.x + offset[0], oy = eye.y + offset[1], oz = eye.z + offset[2];
         double best = Double.POSITIVE_INFINITY;
 
-        final Vector3d middle = new Vector3d(eye.x + direction[0] * AIM_REACH * 0.5,
-                eye.y + direction[1] * AIM_REACH * 0.5, eye.z + direction[2] * AIM_REACH * 0.5);
+        final Vector3d middle = new Vector3d(ox + direction[0] * AIM_REACH * 0.5,
+                oy + direction[1] * AIM_REACH * 0.5, oz + direction[2] * AIM_REACH * 0.5);
         for (Ref<EntityStore> candidate : TargetUtil.getAllEntitiesInSphere(middle, AIM_REACH * 0.5 + 2.0, store)) {
             if (candidate == null || !candidate.isValid() || candidate.getIndex() == player.getIndex()) continue;
             final TransformComponent transform = store.getComponent(candidate, TransformComponent.getComponentType());
@@ -145,7 +153,7 @@ final class SwingHandler {
             if (transform == null || bounds == null) continue;
             final Vector3d position = transform.getPosition();
             final Box box = bounds.getBoundingBox();
-            final double t = RayMath.rayBoxEntry(eye.x, eye.y, eye.z, direction[0], direction[1], direction[2],
+            final double t = RayMath.rayBoxEntry(ox, oy, oz, direction[0], direction[1], direction[2],
                     position.x + box.min.x, position.y + box.min.y, position.z + box.min.z,
                     position.x + box.max.x, position.y + box.max.y, position.z + box.max.z);
             if (!Double.isNaN(t) && t <= AIM_REACH && t < best) best = t;
@@ -153,13 +161,33 @@ final class SwingHandler {
 
         final Vector3i block = TargetUtil.getTargetBlock(world.getChunkStore(),
                 (blockId, fluidId) -> blockId != BlockType.EMPTY_ID,
-                eye.x, eye.y, eye.z, direction[0], direction[1], direction[2], AIM_REACH);
+                ox, oy, oz, direction[0], direction[1], direction[2], AIM_REACH);
         if (block != null) {
-            final double t = RayMath.rayBoxEntry(eye.x, eye.y, eye.z, direction[0], direction[1], direction[2],
+            final double t = RayMath.rayBoxEntry(ox, oy, oz, direction[0], direction[1], direction[2],
                     block.x, block.y, block.z, block.x + 1, block.y + 1, block.z + 1);
             if (!Double.isNaN(t) && t < best) best = t;
         }
-        return Double.isFinite(best) ? String.format(java.util.Locale.ROOT, "%.3f", best) : "none";
+        final String distance = Double.isFinite(best) ? String.format(java.util.Locale.ROOT, "%.3f", best) : "none";
+        return distance + " " + kind;
+    }
+
+    /** What the VR mod needs to know about the held item to handle it. */
+    static String heldKind(ItemStack held) {
+        final Item item = held != null ? held.getItem() : null;
+        if (item == null) return "none";
+        final String animations = item.getPlayerAnimationsId() != null ? item.getPlayerAnimationsId() : "";
+        final String id = item.getId() != null ? item.getId() : "";
+        if (isBow(animations) || isBow(id)) return "bow";
+        if (item.getWeapon() != null) return "weapon";
+        if (item.getTool() != null) return "tool";
+        if (item.isConsumable()) return "food";
+        if (item.hasBlockType()) return "block";
+        return "item";
+    }
+
+    private static boolean isBow(String name) {
+        final String lower = name.toLowerCase(java.util.Locale.ROOT);
+        return lower.contains("bow") && !lower.contains("bowl");
     }
 
     private static ItemStack heldItem(Ref<EntityStore> player, Store<EntityStore> store) {

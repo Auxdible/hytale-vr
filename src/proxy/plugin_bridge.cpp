@@ -27,6 +27,14 @@ std::string format_swing_message(int hand, const HandRay& ray, float speed, cons
     return text;
 }
 
+std::string format_aim_message(const HandRay& ray, const float look[3]) {
+    char text[320]{};
+    std::snprintf(text, sizeof(text), "AIM %.4f %.4f %.4f %.5f %.5f %.5f %.5f %.5f %.5f\n", ray.origin[0],
+                  ray.origin[1], ray.origin[2], ray.direction[0], ray.direction[1], ray.direction[2], look[0], look[1],
+                  look[2]);
+    return text;
+}
+
 std::string format_hello_message(const std::string& role) {
     return "HELLO " + role + " " + std::to_string(kPluginBridgeProtocol) + "\n";
 }

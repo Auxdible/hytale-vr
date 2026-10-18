@@ -26,6 +26,7 @@ void visit_fields(Settings& s, Visit&& visit) {
     visit("item_tilt", s.item_tilt);
     visit("character_arms", s.character_arms);
     visit("target_line", s.target_line);
+    visit("aim_actions_by_hand", s.aim_actions_by_hand);
     visit("hand_size", s.arm_size);  // "arm_size" was 1.0 when the arms came in too big
     visit("hotbar_on_hand", s.hotbar_on_hand);
     visit("hotbar_width", s.hotbar_width);

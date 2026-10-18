@@ -17,10 +17,19 @@
   Hytale's own first-person hand each frame: a bow is held by its middle,
   and eating, drawing a bow and placing blocks keep Hytale's own motion in
   your hand. Item size scales it from there.
-- A faint line runs from your hand to what Hytale will interact with (the
-  block or mob you're looking at, within reach), with a mark on it. It needs
-  the server plugin (updated to 1.2.0); Line to what you'll interact with
-  turns it off.
+- A faint line runs from your hand to what it points at (the block or mob
+  within reach), with a mark on it. It needs the server plugin (updated to
+  1.3.0); Line to what you'll interact with turns it off.
+- Placing, using and attacking go where your hand points, not your head:
+  for the moment a trigger is held, Hytale's camera turns to the spot your
+  hand's line reaches and the click waits for it to arrive (Use and place
+  where your hand points, World tab).
+- Bows go in your other hand. Pull the string with your main hand's trigger
+  and let go to shoot; the arrow flies from the bow away from the pulling
+  hand.
+- Holding food up to your mouth eats it.
+- Fixed the plugin link filling up with unterminated requests, which could
+  stall swings and drop the connection.
 - Each controller shows a blocky hand (fist, thumb and sleeve cuff) in place
   of the gray block, and Hytale's own model of your held item sits in the
   right one (Held item in your hand, World tab). Hytale's first-person arms
